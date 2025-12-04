@@ -1,13 +1,22 @@
 from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer
 from login.user_crud import authentication, register_new_user
 from items.retrieve import all_items, get_item_by_id
 from schemas import UserSchema, ItemSchema
-from admin.upload import upload_item
+from admin.item_crud import upload_item, delete_item
 from login.user_crud import create_access_token
 
-# API Endpoints
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 @app.post('/login')
@@ -50,7 +59,7 @@ async def get_item(items: ItemSchema):
         return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
 
 @app.post('/items')
-def update(items: ItemSchema):
+def upload_item(items: ItemSchema):
     id: int = items.id
     name: str = items.name 
     description: str = items.description
@@ -62,3 +71,13 @@ def update(items: ItemSchema):
         return HTTPException(status_code=status.HTTP_201_CREATED, detail="Item created successfully")
     else:
         return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Item failed to upload")
+    
+@app.delete('/items')
+def delete_item(items: ItemSchema):
+    id: int = items.id
+    
+    item_delete_status = delete_item(id)
+    if item_delete_status:
+        return HTTPException(status_code=status.HTTP_200_OK, detail="Item deleted successfully")
+    else:
+        return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Item failed to delete")

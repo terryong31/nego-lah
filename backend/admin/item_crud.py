@@ -12,3 +12,10 @@ def upload_item(id, name, description, condition, image_path):
         return True
     else:
         return False
+
+def delete_item(id):
+    response = supabase.table('items').delete().eq("id", id).execute()
+    if response.data:
+        return True
+    else:
+        return False

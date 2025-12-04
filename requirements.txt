@@ -1,0 +1,6 @@
+fastapi
+dotenv
+mysql.connector
+uvicorn
+pydantic
+bcrypt

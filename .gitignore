@@ -1,0 +1,49 @@
+# ===== Environment & Secrets =====
+.env
+*.env
+.env.local
+.env.production
+
+# ===== Python Virtual Environment =====
+venv/
+.venv/
+env/
+ENV/
+
+# ===== Python Cache =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+.Python
+
+# ===== IDE / Editor =====
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ===== OS Files =====
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ===== Distribution / Build =====
+dist/
+build/
+*.egg-info/
+*.egg
+
+# ===== Logs =====
+*.log
+logs/
+
+# ===== Testing =====
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ===== Project Specific =====
+stripe-backup-code.txt

@@ -1,28 +1,14 @@
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-import os
-from dotenv import load_dotenv
 from login.user_crud import authentication, register_new_user
 from items.retrieve import all_items, get_item_by_id
-from datetime import datetime, timedelta
-from jose import jwt
 from schemas import UserSchema, ItemSchema
 from admin.upload import upload_item
-
-load_dotenv()
-SECRET_KEY = os.getenv("SECRET_KEY") 
-ALGORITHM = os.getenv("ALGORITHM") 
+from login.user_crud import create_access_token
 
 # API Endpoints
 app = FastAPI()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
-
-def create_access_token(data: dict):
-    to_encode = data.copy()
-    expire = datetime.now() + timedelta(minutes=30)
-    to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
 
 @app.post('/login')
 def login(user: UserSchema) -> dict:
@@ -54,7 +40,7 @@ async def get_all_items():
     else:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Items not found")
     
-@app.post('/items')
+@app.get('/items')
 async def get_item(items: ItemSchema):
     id = items.id
     item = get_item_by_id(id)
@@ -63,14 +49,16 @@ async def get_item(items: ItemSchema):
     else:
         return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
 
-@app.post('/checkout')
-def checkout(items: ItemSchema):
+@app.post('/items')
+def update(items: ItemSchema):
     id: int = items.id
     name: str = items.name 
     description: str = items.description
     condition: str = items.condition
     image_path: object = items.image_path
-    created_at: str = items.created_at
     
-    item_creation_status = upload_item(id, name, description, condition, image_path, created_at)
-    pass
+    item_creation_status = upload_item(id, name, description, condition, image_path)
+    if item_creation_status:
+        return HTTPException(status_code=status.HTTP_201_CREATED, detail="Item created successfully")
+    else:
+        return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Item failed to upload")

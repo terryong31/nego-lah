@@ -5,6 +5,20 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from database.connector import supabase
 import bcrypt
 from datetime import datetime
+from dotenv import load_dotenv
+from datetime import timedelta, datetime
+from jose import jwt
+
+load_dotenv()
+SECRET_KEY = os.getenv("SECRET_KEY") 
+ALGORITHM = os.getenv("ALGORITHM") 
+
+def create_access_token(data: dict):
+    to_encode = data.copy()
+    expire = datetime.now() + timedelta(minutes=30)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
 
 def authentication(username: str, password: str) -> bool:
     response = supabase.table('credentials').select("password").eq("username", username).execute()

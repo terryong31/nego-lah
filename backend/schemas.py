@@ -10,4 +10,3 @@ class ItemSchema(BaseModel):
     description: str
     condition: str
     image_path: str
-    created_at: str

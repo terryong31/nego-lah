@@ -4,3 +4,4 @@ mysql.connector
 uvicorn
 pydantic
 bcrypt
+python-multipart

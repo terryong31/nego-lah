@@ -1,12 +1,13 @@
 from pydantic import BaseModel
+from typing import List
 
 class UserSchema(BaseModel):
     username: str
     password: str
     
 class ItemSchema(BaseModel):
-    id: int
+    id: str
     name: str
     description: str
     condition: str
-    image_path: str
+    images: str

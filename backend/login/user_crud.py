@@ -2,16 +2,12 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from database.connector import supabase
+from database.connector import admin_supabase
 import bcrypt
 from datetime import datetime
-from dotenv import load_dotenv
+from environmental.env import SECRET_KEY, ALGORITHM
 from datetime import timedelta, datetime
 from jose import jwt
-
-load_dotenv()
-SECRET_KEY = os.getenv("SECRET_KEY") 
-ALGORITHM = os.getenv("ALGORITHM") 
 
 def create_access_token(data: dict):
     to_encode = data.copy()
@@ -21,9 +17,12 @@ def create_access_token(data: dict):
     return encoded_jwt
 
 def authentication(username: str, password: str) -> bool:
-    response = supabase.table('credentials').select("password").eq("username", username).execute()
-    if not response.data:
+    try:
+        response = admin_supabase.table('credentials').select("password").eq("username", username).execute()
+    except Exception as err:
+        print(f"Something wrong! Error: {err}")
         return False
+    
     stored_hash = response.data[0]["password"]
     if isinstance(stored_hash, str):
         stored_hash = stored_hash.encode("utf-8")
@@ -33,7 +32,7 @@ def authentication(username: str, password: str) -> bool:
         return False
     
 def register_new_user(username: str, password: str) -> bool:
-    response = supabase.table('credentials').select('username').eq("username", username).execute()
+    response = admin_supabase.table('credentials').select('username').eq("username", username).execute()
     
     if response.data:
         return False
@@ -43,7 +42,7 @@ def register_new_user(username: str, password: str) -> bool:
     hashed_password = bcrypt.hashpw(pwd_bytes, salt)
     hashed_password_str = hashed_password.decode('utf-8')
     try:
-        supabase.table('credentials').insert({'username' : username, 'password': hashed_password_str, 'created_at': datetime.now().isoformat()}).execute()
+        admin_supabase.table('credentials').insert({'username' : username, 'password': hashed_password_str, 'created_at': datetime.now().isoformat()}).execute()
         return True
     except Exception as e:
         print(f"An error has occured: {e}")

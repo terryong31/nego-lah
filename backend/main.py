@@ -1,11 +1,10 @@
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import OAuth2PasswordBearer
 from login.user_crud import authentication, register_new_user
-from items.retrieve import all_items, get_item_by_id
+from items.item_crud import all_items, get_item_by_name, upload_item, delete_item, update_item
 from schemas import UserSchema, ItemSchema
-from admin.item_crud import upload_item, delete_item
 from login.user_crud import create_access_token
+from typing import List, Annotated
 
 app = FastAPI()
 
@@ -16,8 +15,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 @app.post('/login')
 def login(user: UserSchema) -> dict:
@@ -42,42 +39,56 @@ def register(user: UserSchema) -> dict:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Username already exists")
     
 @app.get('/items')
-async def get_all_items():
-    items = all_items()
-    if items.data:
-        return items.data
-    else:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Items not found")
-    
-@app.get('/items')
-async def get_item(items: ItemSchema):
-    id = items.id
-    item = get_item_by_id(id)
-    if item:
-        return item.data
-    else:
-        return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
+async def get_all_items(items: ItemSchema, keyword: dict = None) -> dict:
+    if keyword is None:
+        items = all_items()
+        if len(items) > 0:
+            return items
+        else:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Items not found")
+    elif keyword is not None:
+        keyword = items.name
+        item = get_item_by_name(keyword)
+        if item:
+            return item.data
+        else:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
 
-@app.post('/items')
-def upload_item(items: ItemSchema):
-    id: int = items.id
-    name: str = items.name 
-    description: str = items.description
-    condition: str = items.condition
-    image_path: object = items.image_path
+@app.post('/items', status_code=status.HTTP_201_CREATED)
+async def upload(
+    name: Annotated[str, Form()],
+    description: Annotated[str, Form()],
+    condition: Annotated[str, Form()],
+    images: Annotated[List[UploadFile], File()]
+):
     
-    item_creation_status = upload_item(id, name, description, condition, image_path)
+    item_creation_status = await upload_item(name, description, condition, images)
+        
     if item_creation_status:
-        return HTTPException(status_code=status.HTTP_201_CREATED, detail="Item created successfully")
+        return {"message": "Item created successfully"}
     else:
-        return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Item failed to upload")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Item failed to upload")
     
 @app.delete('/items')
-def delete_item(items: ItemSchema):
-    id: int = items.id
+def delete_by_id(items: ItemSchema):
+    id = items.id
     
     item_delete_status = delete_item(id)
     if item_delete_status:
-        return HTTPException(status_code=status.HTTP_200_OK, detail="Item deleted successfully")
+        raise HTTPException(status_code=status.HTTP_200_OK, detail="Item deleted successfully")
     else:
-        return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Item failed to delete")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Item failed to delete")
+    
+@app.put('/items', status_code=status.HTTP_200_OK)
+def update(items: ItemSchema):
+    id: str = items.id
+    name: str = items.name 
+    description: str = items.description
+    condition: str = items.condition
+    images = items.images
+    
+    item_update_status = update_item(id, name, description, condition, images)
+    if item_update_status:
+        return {"message": "Item updated successfully"}
+    else:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Item failed to delete")

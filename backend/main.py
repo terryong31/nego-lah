@@ -71,9 +71,9 @@ async def upload(
     
 @app.delete('/items')
 def delete_by_id(items: ItemSchema):
-    id = items.id
+    item_id = items.item_id
     
-    item_delete_status = delete_item(id)
+    item_delete_status = delete_item(item_id)
     if item_delete_status:
         raise HTTPException(status_code=status.HTTP_200_OK, detail="Item deleted successfully")
     else:
@@ -81,13 +81,13 @@ def delete_by_id(items: ItemSchema):
     
 @app.put('/items', status_code=status.HTTP_200_OK)
 def update(items: ItemSchema):
-    id: str = items.id
+    item_id: str = items.item_id
     name: str = items.name 
     description: str = items.description
     condition: str = items.condition
     images = items.images
     
-    item_update_status = update_item(id, name, description, condition, images)
+    item_update_status = update_item(item_id, name, description, condition, images)
     if item_update_status:
         return {"message": "Item updated successfully"}
     else:

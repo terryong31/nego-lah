@@ -58,15 +58,15 @@ async def upload_item(name, description, condition, uploaded_images: List[Upload
         print(f"An error has occured! Error: {e}")
         return False
 
-def delete_item(id) -> bool:
+def delete_item(item_id: str) -> bool:
     try:
-        admin_supabase.table('items').delete().eq("id", id).execute()
+        admin_supabase.table('items').delete().eq("id", item_id).execute()
         return True
     except Exception as e:
         print(f"Something wrong! Error: {e}")
         return False
 
-def update_item(id, name = None, description = None, condition = None, images = None):
+def update_item(item_id, name = None, description = None, condition = None, images = None):
     try:
         update = {}
         if name:
@@ -77,7 +77,7 @@ def update_item(id, name = None, description = None, condition = None, images = 
             update["condition"] = condition
         if images:
             update[images] = images
-        admin_supabase.table('items').update(update).eq("id", id).execute()
+        admin_supabase.table('items').update(update).eq("id", item_id).execute()
         return True
     except Exception as e:
         print(f"Something wrong! Error: {e}")

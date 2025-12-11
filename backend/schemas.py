@@ -6,7 +6,7 @@ class UserSchema(BaseModel):
     password: str
     
 class ItemSchema(BaseModel):
-    id: str
+    item_id: str
     name: str
     description: str
     condition: str

@@ -720,8 +720,46 @@ a {
   background: var(--bg-tertiary);
 }
 
+
 .track__item img {
   height: 100%;
   width: 100%;
   object-fit: cover;
+}
+
+/* =========================================
+   View Transitions API - Theme Toggle Wipe
+   ========================================= */
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  /* Default View Transition behavior for non-theme updates (e.g. slight crossfade) */
+  /* We don't override global defaults here, only scope the wipe for theme */
+}
+
+/* Scoped specifically for theme toggle */
+.theme-transition::view-transition-old(root),
+.theme-transition::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+.theme-transition::view-transition-old(root) {
+  z-index: 1;
+}
+
+.theme-transition::view-transition-new(root) {
+  z-index: 9999;
+  animation: wipe-in 1s cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+/* Expand from bottom-left corner */
+@keyframes wipe-in {
+  from {
+    clip-path: circle(0% at 0% 100%);
+  }
+
+  to {
+    clip-path: circle(150% at 0% 100%);
+  }
 }

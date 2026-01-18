@@ -48,9 +48,16 @@ export function ThemeToggle({ className = '' }: ThemeToggleProps) {
         }
 
         // Use View Transitions API for smooth wipe effect
-        document.startViewTransition(() => {
+        document.documentElement.classList.add('theme-transition')
+        const transition = document.startViewTransition(() => {
             setTheme(newTheme)
         })
+
+        try {
+            await transition.finished
+        } finally {
+            document.documentElement.classList.remove('theme-transition')
+        }
     }
 
     return (

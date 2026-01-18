@@ -110,7 +110,7 @@ export function useChat(userId: string) {
                     .from('conversations')
                     .select('id')
                     .eq('user_id', userId)
-                    .single()
+                    .maybeSingle()
 
                 if (existing) {
                     await supabase

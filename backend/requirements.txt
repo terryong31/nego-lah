@@ -1,0 +1,15 @@
+fastapi
+dotenv
+uvicorn
+pydantic
+bcrypt
+python-multipart
+langchain-google-genai
+supabase
+stripe
+faiss-cpu
+langchain-community
+langchain
+langchain-core
+redis
+pydantic-settingsbcrypt

@@ -47,3 +47,4 @@ htmlcov/
 
 # ===== Project Specific =====
 stripe-backup-code.txt
+data/

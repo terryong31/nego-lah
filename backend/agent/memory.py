@@ -1,0 +1,109 @@
+import sqlite3
+from typing import List, Dict
+
+
+class ConversationMemory:
+    """SQLite-based conversation memory for storing chat history and sales."""
+    
+    def __init__(self, db_path: str = "conversations.db"):
+        self.conn = sqlite3.connect(db_path, check_same_thread=False)
+        self._create_tables()
+    
+    def _create_tables(self):
+        cursor = self.conn.cursor()
+        
+        # Store all conversation messages
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS conversations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                item_id TEXT,
+                role TEXT NOT NULL,
+                message TEXT NOT NULL,
+                source TEXT DEFAULT 'ai',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Add source column if not exists (migration for existing DBs)
+        try:
+            cursor.execute('ALTER TABLE conversations ADD COLUMN source TEXT DEFAULT "ai"')
+        except:
+            pass  # Column already exists
+        
+        # Store completed sales
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS sales (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                item_id TEXT NOT NULL,
+                original_price REAL,
+                final_price REAL,
+                checkout_url TEXT,
+                status TEXT DEFAULT 'pending',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        self.conn.commit()
+    
+    def add_message(self, user_id: str, role: str, message: str, item_id: str = None, source: str = 'ai'):
+        """Save a message to the conversation history.
+        
+        source: 'ai' | 'admin' | 'system' | 'human'
+        """
+        # Convert list to string if needed (sometimes LLM returns list content)
+        if isinstance(message, list):
+            import json
+            message = json.dumps(message)
+        cursor = self.conn.cursor()
+        cursor.execute(
+            'INSERT INTO conversations (user_id, item_id, role, message, source) VALUES (?, ?, ?, ?, ?)',
+            (user_id, item_id, role, message, source)
+        )
+        self.conn.commit()
+    
+    def get_history(self, user_id: str, limit: int = 10, offset: int = 0) -> List[Dict]:
+        """Get recent conversation history for a user."""
+        cursor = self.conn.cursor()
+        cursor.execute(
+            'SELECT role, message, source FROM conversations WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?',
+            (user_id, limit, offset)
+        )
+        rows = cursor.fetchall()
+        # Reverse to get chronological order (oldest first)
+        return [{"role": r[0], "content": r[1], "source": r[2] or 'ai'} for r in reversed(rows)]
+    
+    def save_sale(self, user_id: str, item_id: str, original_price: float, final_price: float, checkout_url: str):
+        """Record a sale when checkout link is created."""
+        cursor = self.conn.cursor()
+        cursor.execute(
+            'INSERT INTO sales (user_id, item_id, original_price, final_price, checkout_url) VALUES (?, ?, ?, ?, ?)',
+            (user_id, item_id, original_price, final_price, checkout_url)
+        )
+        self.conn.commit()
+    
+    def get_sales(self, status: str = None) -> List[Dict]:
+        """Get all sales, optionally filtered by status."""
+        cursor = self.conn.cursor()
+        if status:
+            cursor.execute('SELECT * FROM sales WHERE status = ?', (status,))
+        else:
+            cursor.execute('SELECT * FROM sales')
+        return cursor.fetchall()
+
+    def get_all_histories(self) -> Dict[str, List[Dict]]:
+        """Get all conversation histories grouped by user_id."""
+        cursor = self.conn.cursor()
+        cursor.execute('SELECT DISTINCT user_id FROM conversations')
+        user_ids = [row[0] for row in cursor.fetchall()]
+        
+        all_histories = {}
+        for user_id in user_ids:
+            all_histories[user_id] = self.get_history(user_id, limit=50)
+        
+        return all_histories
+
+
+# Singleton instance for use across the application
+conversation_memory = ConversationMemory()

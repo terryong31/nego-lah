@@ -1,7 +1,0 @@
-fastapi
-dotenv
-mysql.connector
-uvicorn
-pydantic
-bcrypt
-python-multipart

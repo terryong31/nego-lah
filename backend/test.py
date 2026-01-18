@@ -1,4 +1,14 @@
-from items.item_crud import get_item_by_name
+import supabase
+from env import SUPABASE_URL, USER_SUPABASE_KEY, ADMIN_SUPABASE_KEY
 
-item = get_item_by_name("f")
-print(item)
+try:
+    user_supabase = supabase.create_client(SUPABASE_URL, USER_SUPABASE_KEY)
+    admin_supabase = supabase.create_client(SUPABASE_URL, ADMIN_SUPABASE_KEY)
+
+    try:
+        response = user_supabase.table("items").select("*").execute()
+        print(response.data)
+    except Exception as e:
+        print(f"An error has occured! Error: {e}")
+except Exception as e:
+    print(f"An error has occured! Error: {e}")

@@ -49,3 +49,7 @@ htmlcov/
 stripe-backup-code.txt
 data/
 backend/data/
+
+# ===== Redis =====
+dump.rdb
+*.rdb

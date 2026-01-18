@@ -53,3 +53,5 @@ backend/data/
 # ===== Redis =====
 dump.rdb
 *.rdb
+
+.agent/

@@ -94,13 +94,28 @@ export function Orders() {
             <header className="sticky top-0 z-20 bg-[var(--header-bg)] backdrop-blur-md border-b border-[var(--border)]">
                 <div className="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">
                     <button
-                        onClick={() => navigate('/')}
+                        onClick={() => {
+                            if (document.startViewTransition) {
+                                document.documentElement.classList.add('back-transition')
+                                const transition = document.startViewTransition(() => {
+                                    navigate('/')
+                                })
+                                transition.finished.finally(() => {
+                                    document.documentElement.classList.remove('back-transition')
+                                })
+                            } else {
+                                navigate('/')
+                            }
+                        }}
                         className="flex items-center gap-2 text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors group"
                     >
                         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                             <path d="M19 12H5M12 19l-7-7 7-7" />
                         </svg>
-                        <span className="text-sm font-medium">Back</span>
+                        <span className="text-sm font-medium relative">
+                            Back
+                            <span className="absolute left-0 bottom-0 w-0 h-[1px] bg-[var(--text-primary)] transition-all duration-300 group-hover:w-full" />
+                        </span>
                     </button>
                     <h1 className="text-xl font-bold text-[var(--text-primary)]">My Orders</h1>
                     <ThemeToggle className="text-[var(--text-secondary)] hover:text-[var(--text-primary)]" />
@@ -121,7 +136,19 @@ export function Orders() {
                             When you purchase items, they'll appear here.
                         </p>
                         <button
-                            onClick={() => navigate('/')}
+                            onClick={() => {
+                                if (document.startViewTransition) {
+                                    document.documentElement.classList.add('back-transition')
+                                    const transition = document.startViewTransition(() => {
+                                        navigate('/')
+                                    })
+                                    transition.finished.finally(() => {
+                                        document.documentElement.classList.remove('back-transition')
+                                    })
+                                } else {
+                                    navigate('/')
+                                }
+                            }}
                             className="px-6 py-3 bg-[var(--btn-filled-bg)] text-[var(--btn-filled-text)] rounded-xl font-medium hover:bg-[var(--btn-filled-bg-hover)] transition-colors"
                         >
                             Browse Items

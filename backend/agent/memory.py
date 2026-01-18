@@ -5,7 +5,13 @@ from typing import List, Dict
 class ConversationMemory:
     """SQLite-based conversation memory for storing chat history and sales."""
     
-    def __init__(self, db_path: str = "conversations.db"):
+    def __init__(self, db_path: str = None):
+        if db_path is None:
+            import os
+            # Use absolute path relative to this file to ensure it works from anywhere
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            db_path = os.path.join(base_dir, "data", "conversations.db")
+            
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
         self._create_tables()
     
@@ -62,6 +68,88 @@ class ConversationMemory:
             (user_id, item_id, role, message, source)
         )
         self.conn.commit()
+        
+        # Broadcast real-time message
+        try:
+            self.broadcast_message(user_id, role, message, source)
+        except Exception as e:
+            print(f"Failed to broadcast: {e}")
+
+        # Sync to Supabase for persistence
+        try:
+            self.sync_to_supabase(user_id)
+        except Exception as e:
+            print(f"Failed to sync to Supabase: {e}")
+    
+    def sync_to_supabase(self, user_id: str):
+        """Sync entire conversation history for a user to Supabase."""
+        try:
+            # Avoid circular import
+            import sys
+            import os
+            # Add parent directory to path to find connector
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            parent_dir = os.path.dirname(current_dir)
+            if parent_dir not in sys.path:
+                sys.path.append(parent_dir)
+            
+            from connector import admin_supabase
+            
+            cursor = self.conn.cursor()
+            cursor.execute(
+                'SELECT id, role, message, source, created_at FROM conversations WHERE user_id = ? ORDER BY created_at ASC',
+                (user_id,)
+            )
+            rows = cursor.fetchall()
+            
+            messages = []
+            for r in rows:
+                messages.append({
+                    "id": str(r[0]),
+                    "role": r[1],
+                    "content": r[2],
+                    "source": r[3] or 'ai',
+                    "timestamp": r[4]
+                })
+            
+            admin_supabase.table('conversations').upsert({
+                'user_id': user_id,
+                'messages': messages,
+                'updated_at': 'now()'
+            }).execute()
+            
+        except Exception as e:
+            print(f"Error in sync_to_supabase: {e}")
+
+    def broadcast_message(self, user_id: str, role: str, message: str, source: str):
+        """Broadcast a new message to the user's channel."""
+        try:
+            # Avoid circular import
+            import sys
+            import os
+            # Add parent directory to path to find connector
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            parent_dir = os.path.dirname(current_dir)
+            if parent_dir not in sys.path:
+                sys.path.append(parent_dir)
+            
+            from connector import admin_supabase
+            
+            payload = {
+                "role": role,
+                "content": message,
+                "source": source,
+                "timestamp": "now()" # Client will parse this, or we can use datetime
+            }
+            
+            admin_supabase.channel(f'chat:{user_id}').send({
+                'type': 'broadcast',
+                'event': 'new_message',
+                'payload': payload
+            })
+            
+        except Exception as e:
+            print(f"Error in broadcast_message: {e}")
     
     def get_history(self, user_id: str, limit: int = 10, offset: int = 0) -> List[Dict]:
         """Get recent conversation history for a user."""

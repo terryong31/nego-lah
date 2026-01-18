@@ -152,11 +152,8 @@ async def chat_stream(request: Request):
         if not ai_enabled:
             # Save user message to memory but don't respond with AI
             conversation_memory.add_message(user_id, "human", message, source="human")
-            waiting_msg = "Please wait, Terry is reviewing your message..."
-            for char in waiting_msg:
-                yield f"data: {json.dumps({'char': char})}\n\n"
-                await asyncio.sleep(0.01)
-            yield f"data: {json.dumps({'done': True})}\n\n"
+            # Return empty response so frontend clears loading state but shows nothing
+            yield f"data: {json.dumps({'content': '', 'done': True})}\n\n"
             return
         
         # Get the full response first

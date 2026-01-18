@@ -268,11 +268,9 @@ export function ItemDetail({ item, onBack, onChat, onBuy }: ItemDetailProps) {
                                         className={`
                                             relative overflow-hidden rounded-xl font-medium transition-all duration-500 ease-out cursor-pointer
                                             bg-[var(--btn-filled-bg)] text-[var(--btn-filled-text)] hover:brightness-110 shadow-lg shadow-[var(--btn-filled-bg)]/20 border border-[var(--border)]
-                                            ${isBuying
-                                                ? 'w-14 rounded-full p-0 flex items-center justify-center'
-                                                : hoveredSection === 'buy' ? 'flex-[1] w-full' : 'flex-[0.4]'}
+                                            ${isBuying || hoveredSection === 'buy' ? 'flex-[1] w-full' : 'flex-[0.4]'}
                                         `}
-                                        style={isBuying ? { flex: '0 0 3.5rem' } : {}}
+                                        style={{}}
                                         onMouseEnter={() => !isBuying && setHoveredSection('buy')}
                                         onMouseLeave={() => !isBuying && setHoveredSection(null)}
                                         onClick={() => {
@@ -281,7 +279,9 @@ export function ItemDetail({ item, onBack, onChat, onBuy }: ItemDetailProps) {
                                         }}
                                     >
                                         {isBuying ? (
-                                            <div className="w-5 h-5 border-2 border-[var(--btn-filled-text)] border-t-transparent rounded-full animate-spin" />
+                                            <div className="flex items-center justify-center w-full h-full">
+                                                <div className="w-5 h-5 border-2 border-[var(--btn-filled-text)] border-t-transparent rounded-full animate-spin" />
+                                            </div>
                                         ) : (
                                             <span className="whitespace-nowrap flex items-center justify-center w-full px-4 gap-1.5">
                                                 <GlitchText

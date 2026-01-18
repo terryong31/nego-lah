@@ -112,7 +112,17 @@ function AppRoutes() {
   }, [navigate])
 
   const handleBackToHome = useCallback(() => {
-    navigate('/')
+    if (document.startViewTransition) {
+      document.documentElement.classList.add('back-transition')
+      const transition = document.startViewTransition(() => {
+        navigate('/')
+      })
+      transition.finished.finally(() => {
+        document.documentElement.classList.remove('back-transition')
+      })
+    } else {
+      navigate('/')
+    }
   }, [navigate])
 
   const handleOpenLogin = useCallback(() => {

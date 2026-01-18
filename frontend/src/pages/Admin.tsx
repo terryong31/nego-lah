@@ -7,6 +7,7 @@ import { ThemeToggle } from '../components/ThemeToggle'
 import { ChatBubble } from '../components/ChatBubble'
 import { ConfirmationModal } from '../components/ConfirmationModal'
 import { api } from '../lib/api'
+import { supabase } from '../lib/supabase'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000'
 const CHATS_URL = `${API_URL}/admin/chats`
@@ -98,7 +99,7 @@ export function Admin({ onBack }: AdminProps) {
     const ordersTabRef = useRef<HTMLButtonElement>(null)
     const [underlineStyle, setUnderlineStyle] = useState({ left: 0, width: 0 })
 
-    useEffect(() => {
+    const updateUnderline = () => {
         const refs = {
             items: itemsTabRef,
             users: usersTabRef,
@@ -111,7 +112,18 @@ export function Admin({ onBack }: AdminProps) {
                 width: currentRef.offsetWidth
             })
         }
-    }, [activeTab])
+    }
+
+    useEffect(() => {
+        updateUnderline()
+        window.addEventListener('resize', updateUnderline)
+        // Small timeout to ensure fonts/layout are stable
+        const timer = setTimeout(updateUnderline, 50)
+        return () => {
+            window.removeEventListener('resize', updateUnderline)
+            clearTimeout(timer)
+        }
+    }, [activeTab, isLoggedIn])
 
 
     // User management state
@@ -143,6 +155,20 @@ export function Admin({ onBack }: AdminProps) {
 
     const [adminReply, setAdminReply] = useState('')
     const messagesEndRef = useRef<HTMLDivElement>(null)
+
+    // Confirmation Modal State
+    const [confirmation, setConfirmation] = useState<{
+        isOpen: boolean
+        title: string
+        message: string
+        onConfirm: () => void
+        isLoading?: boolean
+    }>({
+        isOpen: false,
+        title: '',
+        message: '',
+        onConfirm: () => { }
+    })
 
     // Check if already logged in
     useEffect(() => {
@@ -184,6 +210,96 @@ export function Admin({ onBack }: AdminProps) {
             // Token invalid
         }
     }
+
+    // Real-time Chat Logic
+    const [isUserTyping, setIsUserTyping] = useState(false)
+    const typingTimeoutRef = useRef<any>(null)
+
+    const sendTyping = async () => {
+        if (!selectedUserChat) return
+        await supabase.channel(`chat:${selectedUserChat.userId}`).send({
+            type: 'broadcast',
+            event: 'typing',
+            payload: { source: 'admin' }
+        })
+    }
+
+    useEffect(() => {
+        if (!selectedUserChat) return
+
+        const userId = selectedUserChat.userId
+        const channel = supabase.channel(`chat:${userId}`)
+
+        channel
+            .on(
+                'postgres_changes',
+                {
+                    event: 'UPDATE',
+                    schema: 'public',
+                    table: 'conversations',
+                    filter: `user_id=eq.${userId}`
+                },
+                (payload) => {
+                    // Update messages
+                    const newMessages = payload.new.messages
+                    if (newMessages && Array.isArray(newMessages)) {
+                        setSelectedUserChat(prev => {
+                            if (!prev || prev.userId !== userId) return prev
+                            return {
+                                ...prev,
+                                messages: newMessages
+                            }
+                        })
+                    }
+                }
+            )
+            .on(
+                'broadcast',
+                { event: 'typing' },
+                (payload) => {
+                    if (payload.payload.source === 'user') {
+                        setIsUserTyping(true)
+                        if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current)
+                        typingTimeoutRef.current = setTimeout(() => setIsUserTyping(false), 3000)
+                    }
+                }
+            )
+            .on(
+                'broadcast',
+                { event: 'new_message' },
+                (payload) => {
+                    const msg = payload.payload
+                    // Ignore own messages
+                    if (msg.source === 'admin') return
+
+                    setSelectedUserChat(prev => {
+                        if (!prev || prev.userId !== userId) return prev
+
+                        // Check if message already exists to avoid duplication
+                        const lastMsg = prev.messages[prev.messages.length - 1]
+                        if (lastMsg && lastMsg.content === msg.content && lastMsg.source === msg.source) {
+                            return prev
+                        }
+
+                        return {
+                            ...prev,
+                            messages: [...prev.messages, {
+                                role: msg.role,
+                                content: msg.content,
+                                source: msg.source,
+                                timestamp: msg.timestamp || new Date().toISOString()
+                            }]
+                        }
+                    })
+                }
+            )
+            .subscribe()
+
+        return () => {
+            supabase.removeChannel(channel)
+            if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current)
+        }
+    }, [selectedUserChat?.userId])
 
     const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault()
@@ -279,9 +395,17 @@ export function Admin({ onBack }: AdminProps) {
         }
     }
 
-    const handleDelete = async (itemId: string) => {
-        if (!confirm('Delete this item?')) return
+    const handleDelete = (itemId: string) => {
+        setConfirmation({
+            isOpen: true,
+            title: 'Delete Item',
+            message: 'Are you sure you want to delete this item? This action cannot be undone.',
+            onConfirm: () => performDeleteItem(itemId)
+        })
+    }
 
+    const performDeleteItem = async (itemId: string) => {
+        setConfirmation(prev => ({ ...prev, isLoading: true }))
         try {
             const res = await fetch(`${API_URL}/items`, {
                 method: 'DELETE',
@@ -295,6 +419,7 @@ export function Admin({ onBack }: AdminProps) {
         } catch {
             setError('Failed to delete')
         }
+        setConfirmation(prev => ({ ...prev, isOpen: false, isLoading: false }))
     }
 
     const handleUpdate = async (e: React.FormEvent) => {
@@ -347,10 +472,19 @@ export function Admin({ onBack }: AdminProps) {
         })
     }
 
-    const handleDeleteImage = async (imageIndex: number) => {
-        if (!editingItem) return
-        if (!confirm('Delete this image?')) return
+    const handleDeleteImage = (imageIndex: number) => {
+        setConfirmation({
+            isOpen: true,
+            title: 'Delete Image',
+            message: 'Are you sure you want to delete this image?',
+            onConfirm: () => performDeleteImage(imageIndex)
+        })
+    }
 
+    const performDeleteImage = async (imageIndex: number) => {
+        if (!editingItem) return
+
+        setConfirmation(prev => ({ ...prev, isLoading: true }))
         try {
             const res = await fetch(`${API_URL}/items/${editingItem.id}/images/${imageIndex}`, {
                 method: 'DELETE'
@@ -365,6 +499,7 @@ export function Admin({ onBack }: AdminProps) {
         } catch {
             setError('Connection error')
         }
+        setConfirmation(prev => ({ ...prev, isOpen: false, isLoading: false }))
     }
 
     const handleAddImages = async (files: FileList) => {
@@ -483,8 +618,29 @@ export function Admin({ onBack }: AdminProps) {
         }
     }
 
+    const [scrollState, setScrollState] = useState<{ height: number, top: number } | null>(null)
+    const chatContainerRef = useRef<HTMLDivElement>(null)
+
+    useEffect(() => {
+        if (scrollState && chatContainerRef.current) {
+            const newHeight = chatContainerRef.current.scrollHeight
+            const diff = newHeight - scrollState.height
+            chatContainerRef.current.scrollTop = scrollState.top + diff
+            setScrollState(null)
+        }
+    }, [selectedUserChat, scrollState])
+
     const loadMoreMessages = () => {
         if (!selectedUserChat || isLoadingHistory || !hasMoreMessages) return
+
+        // Capture scroll state before loading
+        if (chatContainerRef.current) {
+            setScrollState({
+                height: chatContainerRef.current.scrollHeight,
+                top: chatContainerRef.current.scrollTop
+            })
+        }
+
         const newOffset = chatOffset + 10
         setChatOffset(newOffset)
         fetchUserChat(selectedUserChat.userId, newOffset)
@@ -555,6 +711,18 @@ export function Admin({ onBack }: AdminProps) {
             if (res.ok) {
                 setAdminReply('')
                 fetchUserChat(selectedUserChat.userId)
+
+                // Broadcast to user
+                await supabase.channel(`chat:${selectedUserChat.userId}`).send({
+                    type: 'broadcast',
+                    event: 'new_message',
+                    payload: {
+                        role: 'ai', // Admin appears as 'ai' / 'assistant' in user chat typically, or 'admin' source
+                        source: 'admin',
+                        content: adminReply,
+                        timestamp: new Date().toISOString()
+                    }
+                })
             }
         } catch {
             setError('Failed to send message')
@@ -674,7 +842,6 @@ export function Admin({ onBack }: AdminProps) {
                     {/* Desktop Actions */}
                     <div className="hidden md:flex gap-3 items-center ml-auto">
                         <ThemeToggle className="text-[var(--text-secondary)] hover:text-[var(--text-primary)]" />
-                        <ThemeToggle className="text-[var(--text-secondary)] hover:text-[var(--text-primary)]" />
                         <Button variant="ghost" size="sm" onClick={handleLogoutClick}>
                             Logout
                         </Button>
@@ -766,10 +933,16 @@ export function Admin({ onBack }: AdminProps) {
                 {activeTab === 'items' && (
                     <div className={tabDirection === 'left' ? 'animate-slide-in-left' : 'animate-slide-in-right'}>
                         <div className="flex justify-end mb-4">
-                            <Button variant="primary" size="sm" onClick={() => setShowAddForm(true)} className="flex items-center gap-2 group">
+                            <button
+                                onClick={() => setShowAddForm(true)}
+                                className="flex items-center gap-2 py-2 px-4 text-sm font-medium text-[var(--text-primary)] hover:text-[var(--text-primary)] transition-colors group relative"
+                            >
                                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-                                <span className="group-hover:underline">Add New Item</span>
-                            </Button>
+                                <span className="relative">
+                                    Add New Item
+                                    <span className="absolute left-0 bottom-0 w-0 h-[1px] bg-current transition-all duration-300 group-hover:w-full" />
+                                </span>
+                            </button>
                         </div>
 
                         {/* Items Table */}
@@ -1097,7 +1270,7 @@ export function Admin({ onBack }: AdminProps) {
                     </header>
 
                     {/* Messages - Scrollable middle section */}
-                    <main className="flex-1 overflow-y-auto relative z-10">
+                    <main ref={chatContainerRef} className="flex-1 overflow-y-auto relative z-10">
                         <div className="max-w-2xl mx-auto px-4 py-6 space-y-4">
                             {/* Load More Button */}
                             {hasMoreMessages && (
@@ -1125,6 +1298,9 @@ export function Admin({ onBack }: AdminProps) {
                                         </div>
                                     )
                                 }
+
+                                // Skip empty messages (e.g. file uploads without text, or glitches)
+                                if (!msg.content) return null
 
                                 const isAdmin = msg.source === 'admin'
                                 const user = users.find(u => u.id === selectedUserChat.userId)
@@ -1159,6 +1335,21 @@ export function Admin({ onBack }: AdminProps) {
                                 )
                             })}
 
+                            {isUserTyping && (
+                                <div className="flex justify-start my-4">
+                                    <div className="flex gap-3 max-w-[80%]">
+                                        <div className="w-8 h-8 rounded-full bg-[var(--bg-secondary)] flex-shrink-0 flex items-center justify-center text-xs font-medium border border-[var(--border)] text-[var(--text-secondary)]">
+                                            {(users.find(u => u.id === selectedUserChat.userId)?.display_name || 'U').charAt(0).toUpperCase()}
+                                        </div>
+                                        <div className="flex items-center">
+                                            <span className="text-[var(--text-muted)] text-sm italic animate-pulse">
+                                                Typing...
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
                             <div ref={messagesEndRef} />
                         </div>
                     </main>
@@ -1170,7 +1361,10 @@ export function Admin({ onBack }: AdminProps) {
                                 <input
                                     type="text"
                                     value={adminReply}
-                                    onChange={(e) => setAdminReply(e.target.value)}
+                                    onChange={(e) => {
+                                        setAdminReply(e.target.value)
+                                        sendTyping()
+                                    }}
                                     placeholder="Enter your message"
                                     className="flex-1 px-4 py-3 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded-xl text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--input-focus-border)]"
                                     onKeyDown={(e) => e.key === 'Enter' && handleSendAdminMessage()}
@@ -1349,7 +1543,7 @@ export function Admin({ onBack }: AdminProps) {
                                                     <button
                                                         type="button"
                                                         onClick={() => handleDeleteImage(idx)}
-                                                        className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center text-xs hover:bg-red-600 transition-colors opacity-0 group-hover:opacity-100"
+                                                        className="absolute -top-2 -right-2 w-5 h-5 bg-gray-500 text-white rounded-full flex items-center justify-center text-xs hover:bg-gray-600 transition-colors opacity-0 group-hover:opacity-100"
                                                     >
                                                         ×
                                                     </button>
@@ -1378,6 +1572,26 @@ export function Admin({ onBack }: AdminProps) {
                         </div>
                     </div>
                 )}
+            {/* Confirmation Modal */}
+            <ConfirmationModal
+                isOpen={confirmation.isOpen}
+                onClose={() => setConfirmation(prev => ({ ...prev, isOpen: false }))}
+                onConfirm={confirmation.onConfirm}
+                title={confirmation.title}
+                message={confirmation.message}
+                isLoading={confirmation.isLoading}
+            />
+
+            {/* Logout Confirmation Modal */}
+            <ConfirmationModal
+                isOpen={showLogoutConfirm}
+                onClose={() => setShowLogoutConfirm(false)}
+                onConfirm={confirmLogout}
+                title="Logout"
+                message="Are you sure you want to logout?"
+                confirmText="Logout"
+                isLoading={isLoggingOut}
+            />
         </div>
     )
 }

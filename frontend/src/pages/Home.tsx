@@ -87,7 +87,19 @@ export function Home({ onChat, onLogin, onOpenProfile, isAuthenticated, onLogout
         return (
             <ItemDetail
                 item={selectedItem}
-                onBack={() => setSelectedItem(null)}
+                onBack={() => {
+                    if (document.startViewTransition) {
+                        document.documentElement.classList.add('back-transition')
+                        const transition = document.startViewTransition(() => {
+                            setSelectedItem(null)
+                        })
+                        transition.finished.finally(() => {
+                            document.documentElement.classList.remove('back-transition')
+                        })
+                    } else {
+                        setSelectedItem(null)
+                    }
+                }}
                 onChat={onChat}
                 onBuy={handleBuy}
             />
@@ -107,10 +119,10 @@ export function Home({ onChat, onLogin, onOpenProfile, isAuthenticated, onLogout
             {/* Header */}
             <header className="border-b border-[var(--border)] bg-[var(--header-bg)] backdrop-blur-sm sticky top-0 z-20 relative">
                 <div className="max-w-6xl mx-auto px-6 md:px-4 py-4 flex items-center justify-between">
-                    <div className="flex items-center gap-2">
+                    <a href="/" className="flex items-center gap-2 hover:opacity-80 transition-opacity">
                         <img src="/logo.png" alt="Logo" className="w-8 h-8 object-contain" />
                         <h1 className="text-xl font-semibold text-[var(--text-primary)]">Nego-lah</h1>
-                    </div>
+                    </a>
 
                     {/* Desktop Navigation */}
                     <div className="hidden md:flex items-center gap-4">
@@ -439,7 +451,13 @@ export function Home({ onChat, onLogin, onOpenProfile, isAuthenticated, onLogout
                                             item={item}
                                             onClick={() => {
                                                 if (isAuthenticated) {
-                                                    setSelectedItem(item)
+                                                    if (document.startViewTransition) {
+                                                        document.startViewTransition(() => {
+                                                            setSelectedItem(item)
+                                                        })
+                                                    } else {
+                                                        setSelectedItem(item)
+                                                    }
                                                 } else {
                                                     onLogin()
                                                 }
@@ -472,9 +490,14 @@ export function Home({ onChat, onLogin, onOpenProfile, isAuthenticated, onLogout
 
             {/* Footer - Sticky to bottom */}
             <footer className="border-t border-[var(--border)] py-6 relative z-10 mt-auto">
-                <p className="text-center text-sm text-[var(--text-muted)]">
-                    Second Hand Store
-                </p>
+                <div className="max-w-6xl mx-auto px-6 flex justify-between items-center text-sm text-[var(--text-muted)]">
+                    <p>
+                        &copy; Nego-lah {new Date().getFullYear()}
+                    </p>
+                    <p>
+                        Created by Terry Ong
+                    </p>
+                </div>
             </footer>
             {/* Logout Confirmation Modal */}
             <ConfirmationModal

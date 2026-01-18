@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000'
@@ -146,25 +146,22 @@ export function useChat(userId: string) {
             attachments: attachmentObjects.length > 0 ? attachmentObjects : undefined
         }
 
-        // Create placeholder for assistant message
-        const assistantMessageId = crypto.randomUUID()
-        const assistantMessage: Message = {
-            id: assistantMessageId,
-            role: 'assistant',
-            content: '',
-            timestamp: new Date()
-        }
-
+        // Only add user message initially
         setState(prev => ({
             ...prev,
-            messages: [...prev.messages, userMessage, assistantMessage],
-            isLoading: true,
+            messages: [...prev.messages, userMessage],
+            isLoading: false, // Don't show loading until we know we have a response incoming? Or maybe separate "sending" state?
+            // Actually, if we don't set loading, "Thinking..." won't show. That's what we want if AI is disabled.
+            // If AI is enabled, the first chunk comes in, we add assistant msg + updating content.
             error: null
         }))
 
         if (itemId) {
             setCurrentItemId(itemId)
         }
+
+        const assistantMessageId = crypto.randomUUID()
+        let assistantMessageAdded = false
 
         try {
             // Use FormData if there are attachments
@@ -196,96 +193,84 @@ export function useChat(userId: string) {
                 })
             }
 
+            // Broadcast message to Admin
+            await supabase.channel(`chat:${userId}`).send({
+                type: 'broadcast',
+                event: 'new_message',
+                payload: {
+                    role: 'human',
+                    content: message,
+                    source: 'human',
+                    timestamp: new Date().toISOString()
+                }
+            })
+
             if (res.ok && res.body) {
                 const reader = res.body.getReader()
                 const decoder = new TextDecoder()
 
-                while (true) {
-                    const { done, value } = await reader.read()
-                    if (done) break
+                try {
+                    while (true) {
+                        const { done, value } = await reader.read()
+                        if (done) break
 
-                    const chunk = decoder.decode(value, { stream: true })
-                    const lines = chunk.split('\n')
+                        const chunk = decoder.decode(value, { stream: true })
+                        const lines = chunk.split('\n')
 
-                    for (const line of lines) {
-                        if (line.startsWith('data: ')) {
-                            try {
-                                const data = JSON.parse(line.slice(6))
+                        for (const line of lines) {
+                            if (line.startsWith('data: ')) {
+                                try {
+                                    const data = JSON.parse(line.slice(6))
 
-                                if (data.content && data.done) {
-                                    // Full response received - animate typing with bubble splitting
-                                    const fullContent = data.content as string
-                                    let currentMsgId: string = assistantMessageId
-                                    let currentContent = ''
-                                    let msgIndex = 0
+                                    // Handle completion
+                                    if (data.done) {
+                                        const fullContent = (data.content || '') as string
 
-                                    for (let i = 0; i < fullContent.length; i++) {
-                                        const char = fullContent[i]
-                                        currentContent += char
-
-                                        // Check for paragraph break (\n\n)
-                                        if (currentContent.endsWith('\n\n') && i < fullContent.length - 1) {
-                                            // Finalize current bubble without trailing newlines
-                                            const finalContent = currentContent.slice(0, -2).trim()
-                                            if (finalContent) {
-                                                setState(prev => ({
-                                                    ...prev,
-                                                    messages: prev.messages.map(msg =>
-                                                        msg.id === currentMsgId
-                                                            ? { ...msg, content: finalContent }
-                                                            : msg
-                                                    )
-                                                }))
-                                            }
-
-                                            // Create new message for next paragraph
-                                            msgIndex++
-                                            const newMsgId = `${assistantMessageId}-${msgIndex}`
-                                            currentMsgId = newMsgId
-                                            currentContent = ''
-
-                                            setState(prev => ({
-                                                ...prev,
-                                                messages: [
-                                                    ...prev.messages,
-                                                    {
-                                                        id: newMsgId,
-                                                        role: 'assistant' as const,
-                                                        content: '',
-                                                        timestamp: new Date()
-                                                    }
-                                                ]
-                                            }))
-                                        } else {
-                                            // Update current message content
-                                            setState(prev => ({
-                                                ...prev,
-                                                messages: prev.messages.map(msg =>
-                                                    msg.id === currentMsgId
-                                                        ? { ...msg, content: currentContent.trim() }
-                                                        : msg
-                                                )
-                                            }))
+                                        // If content is empty (e.g. AI disabled), we typically get done: true with empty content
+                                        // If we haven't added assistant message yet, and content is empty, do nothing.
+                                        if (!assistantMessageAdded && !fullContent) {
+                                            continue
                                         }
 
-                                        // Typing delay - 15ms per character
-                                        await new Promise(resolve => setTimeout(resolve, 15))
-                                    }
+                                        setState(prev => {
+                                            // If not added yet, add it now
+                                            let newMessages = [...prev.messages]
+                                            if (!assistantMessageAdded) {
+                                                newMessages.push({
+                                                    id: assistantMessageId,
+                                                    role: 'assistant',
+                                                    content: fullContent,
+                                                    timestamp: new Date()
+                                                })
+                                                assistantMessageAdded = true
+                                            } else {
+                                                newMessages = newMessages.map(msg =>
+                                                    msg.id === assistantMessageId ? { ...msg, content: fullContent } : msg
+                                                )
+                                            }
 
-                                    // Done with animation
-                                    setState(prev => ({
-                                        ...prev,
-                                        isLoading: false
-                                    }))
-                                }
-                            } catch {
-                                // Skip invalid JSON
+                                            return {
+                                                ...prev,
+                                                messages: newMessages,
+                                                isLoading: false
+                                            }
+                                        })
+                                    } else {
+                                        // Streaming update (not done yet)
+                                        // We might get partial content here if backend supports likely
+                                        // But if logic mainly uses 'done' for full content update (from previous pattern), 
+                                        // we should check if data.content exists.
+                                        // Assuming previous pattern relied mostly on 'done' for final render or 'content' update
+                                    }
+                                } catch { /* ignore */ }
                             }
                         }
                     }
+                } finally {
+                    setState(prev => ({ ...prev, isLoading: false }))
                 }
             } else {
-                // Fallback to non-streaming endpoint
+                // ... fallback code ...
                 const fallbackRes = await fetch(`${API_URL}/chat`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -298,20 +283,23 @@ export function useChat(userId: string) {
 
                 if (fallbackRes.ok) {
                     const data = await fallbackRes.json()
-                    setState(prev => ({
-                        ...prev,
-                        messages: prev.messages.map(msg =>
-                            msg.id === assistantMessageId
-                                ? { ...msg, content: data.response }
-                                : msg
-                        ),
-                        isLoading: false
-                    }))
+                    // Only add message if we got a response
+                    if (data.response) {
+                        setState(prev => ({
+                            ...prev,
+                            messages: [...prev.messages, {
+                                id: assistantMessageId,
+                                role: 'assistant',
+                                content: data.response,
+                                timestamp: new Date()
+                            }],
+                            isLoading: false
+                        }))
+                    }
                 } else {
                     const data = await fallbackRes.json()
                     setState(prev => ({
                         ...prev,
-                        messages: prev.messages.filter(msg => msg.id !== assistantMessageId),
                         isLoading: false,
                         error: data.detail || 'Failed to send message'
                     }))
@@ -320,7 +308,6 @@ export function useChat(userId: string) {
         } catch {
             setState(prev => ({
                 ...prev,
-                messages: prev.messages.filter(msg => msg.id !== assistantMessageId),
                 isLoading: false,
                 error: 'Connection error'
             }))
@@ -348,11 +335,136 @@ export function useChat(userId: string) {
         }
     }, [userId])
 
+    // Real-time subscription
+    const [isPartnerTyping, setIsPartnerTyping] = useState(false)
+    const typingTimeoutRef = useRef<any>(null)
+
+    const sendTyping = useCallback(async () => {
+        if (!userId || userId.startsWith('guest-')) return
+
+        await supabase.channel(`chat:${userId}`).send({
+            type: 'broadcast',
+            event: 'typing',
+            payload: { source: 'user' }
+        })
+    }, [userId])
+
+    useEffect(() => {
+        if (!userId || userId.startsWith('guest-')) return
+
+        const channel = supabase.channel(`chat:${userId}`)
+
+        channel
+            .on(
+                'postgres_changes',
+                {
+                    event: 'UPDATE',
+                    schema: 'public',
+                    table: 'conversations',
+                    filter: `user_id=eq.${userId}`
+                },
+                (payload) => {
+                    // Update local messages when DB changes (e.g. Admin sent a message)
+                    const newMessages = payload.new.messages as Message[]
+                    if (newMessages && Array.isArray(newMessages)) {
+                        // Convert timestamp strings back to Date objects
+                        const parsedMessages = newMessages.map(msg => ({
+                            ...msg,
+                            timestamp: new Date(msg.timestamp)
+                        }))
+                        setState(prev => ({ ...prev, messages: parsedMessages }))
+                    }
+                }
+            )
+            .on(
+                'broadcast',
+                { event: 'typing' },
+                (payload) => {
+                    if (payload.payload.source === 'admin') {
+                        setIsPartnerTyping(true)
+                        // Clear existing timeout
+                        if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current)
+                        // Set new timeout to clear typing status
+                        typingTimeoutRef.current = setTimeout(() => setIsPartnerTyping(false), 3000)
+                    }
+                }
+            )
+            .on(
+                'broadcast',
+                { event: 'new_message' },
+                (payload) => {
+                    const msg = payload.payload
+                    // Only add if it's not from us (source != human) or if it's a system/admin message we want to see immediately
+                    // The backend broadcasts all messages, so strictly we might just want to reload or append if ID mismatch
+                    // But effectively, if source is 'admin', append it.
+                    if (msg.source === 'admin' || msg.source === 'system') {
+                        const newMessage: Message = {
+                            id: crypto.randomUUID(),
+                            role: msg.role === 'human' ? 'user' : msg.role === 'ai' ? 'assistant' : msg.role,
+                            content: msg.content,
+                            timestamp: new Date(), // msg.timestamp is 'now()' string, just use client time or parse if needed
+                            source: msg.source
+                        }
+                        setState(prev => ({
+                            ...prev,
+                            messages: [...prev.messages, newMessage]
+                        }))
+                    }
+                }
+            )
+            .subscribe()
+
+        return () => {
+            supabase.removeChannel(channel)
+            if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current)
+        }
+    }, [userId])
+
+    const loadMoreMessages = useCallback(async () => {
+        if (state.isLoading || !userId) return
+
+        try {
+            const currentCount = state.messages.length
+            const response = await fetch(`${API_URL}/chat/history/${userId}?limit=20&offset=${currentCount}`)
+            if (response.ok) {
+                const data = await response.json()
+                if (data.messages && Array.isArray(data.messages) && data.messages.length > 0) {
+                    const oldMessages: Message[] = []
+                    data.messages.forEach((msg: { role: string; content: string; source?: string }, idx: number) => {
+                        const frontendRole = msg.role === 'human' ? 'user' :
+                            msg.role === 'ai' ? 'assistant' :
+                                msg.role as 'user' | 'assistant' | 'system'
+
+                        oldMessages.push({
+                            id: `history-${currentCount + idx}`,
+                            role: frontendRole,
+                            content: msg.content,
+                            timestamp: new Date(), // In a real app, backend should return timestamp
+                            source: msg.source as 'ai' | 'admin' | 'system' | 'human' | undefined
+                        })
+                    })
+
+                    setState(prev => ({
+                        ...prev,
+                        messages: [...oldMessages, ...prev.messages]
+                    }))
+                    return true // Indicate success/more messages found
+                }
+            }
+        } catch {
+            // ignore
+        }
+        return false // No more messages
+    }, [userId, state.messages.length])
+
     return {
         ...state,
         currentItemId,
         sendMessage,
         clearChat,
-        setCurrentItemId
+        setCurrentItemId,
+        isPartnerTyping,
+        sendTyping,
+        loadMoreMessages
     }
 }

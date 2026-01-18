@@ -13,7 +13,7 @@ interface ChatProps {
 }
 
 export function Chat({ userId, itemId, itemName, onBack, userAvatar, userName }: ChatProps) {
-    const { messages, isLoading, error, sendMessage } = useChat(userId)
+    const { messages, isLoading, error, sendMessage, isPartnerTyping, sendTyping, loadMoreMessages } = useChat(userId)
     const [input, setInput] = useState('')
     const [attachments, setAttachments] = useState<File[]>([])
     const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -125,6 +125,18 @@ export function Chat({ userId, itemId, itemName, onBack, userAvatar, userName }:
             {/* Messages - Scrollable middle section */}
             <main className="flex-1 overflow-y-auto relative z-10">
                 <div className="max-w-2xl mx-auto px-4 py-6 space-y-4">
+                    {/* Load More Button */}
+                    <div className="flex justify-center">
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={loadMoreMessages}
+                            className="text-[var(--text-muted)] hover:text-[var(--text-primary)] text-xs"
+                        >
+                            Load previous messages
+                        </Button>
+                    </div>
+
                     {messages.length === 0 && !isLoading && (
                         <div className="text-center py-12">
                             <p className="text-[var(--text-muted)] mb-2">
@@ -194,7 +206,7 @@ export function Chat({ userId, itemId, itemName, onBack, userAvatar, userName }:
                             {/* Typing indicator */}
                             <div className="flex items-center">
                                 <span className="text-[var(--text-muted)] text-sm italic animate-pulse">
-                                    AI is typing...
+                                    Thinking...
                                 </span>
                             </div>
                         </div>
@@ -202,6 +214,22 @@ export function Chat({ userId, itemId, itemName, onBack, userAvatar, userName }:
 
                     {error && (
                         <p className="text-center text-red-500 text-sm">{error}</p>
+                    )}
+
+                    {/* Admin Typing Indicator */}
+                    {isPartnerTyping && (
+                        <div className="flex gap-3">
+                            <div className="flex-shrink-0">
+                                <div className="w-8 h-8 rounded-full bg-blue-600/20 text-blue-400 flex items-center justify-center text-xs font-medium border border-blue-500/30">
+                                    T
+                                </div>
+                            </div>
+                            <div className="flex items-center">
+                                <span className="text-[var(--text-muted)] text-sm italic animate-pulse">
+                                    Terry is typing...
+                                </span>
+                            </div>
+                        </div>
                     )}
 
                     <div ref={messagesEndRef} />
@@ -261,7 +289,10 @@ export function Chat({ userId, itemId, itemName, onBack, userAvatar, userName }:
                         <input
                             type="text"
                             value={input}
-                            onChange={(e) => setInput(e.target.value)}
+                            onChange={(e) => {
+                                setInput(e.target.value)
+                                sendTyping()
+                            }}
                             onPaste={handlePaste}
                             placeholder={placeholderText}
                             disabled={isLoading}

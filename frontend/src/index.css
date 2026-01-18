@@ -375,24 +375,54 @@ a {
   animation: toastSlideOut 0.4s cubic-bezier(0.25, 1, 0.5, 1) forwards;
 }
 
-/* View Transitions API - Theme wipe from bottom-left to top-right */
-::view-transition-old(root) {
-  animation: none;
-  z-index: 1;
+/* View Transitions API - Slide Animations */
+::view-transition-group(root) {
+  animation-duration: 0.4s;
 }
 
-::view-transition-new(root) {
-  animation: wipe-from-bottom-left 1s cubic-bezier(0.25, 1, 0.5, 1);
+/* Default Forward Navigation: Old page slides left, New page slides in from right */
+:root:not(.back-transition) ::view-transition-old(root) {
+  animation: 0.4s ease-out both slide-out-to-left;
+}
+
+:root:not(.back-transition) ::view-transition-new(root) {
+  animation: 0.4s ease-out both slide-in-from-right;
+}
+
+/* Backward Navigation: Old page slides right, New page slides in from left */
+:root.back-transition ::view-transition-old(root) {
+  animation: 0.4s ease-out both slide-out-to-right;
   z-index: 2;
 }
 
-@keyframes wipe-from-bottom-left {
-  from {
-    clip-path: polygon(0% 100%, 0% 100%, 0% 100%);
-  }
+:root.back-transition ::view-transition-new(root) {
+  animation: 0.4s ease-out both slide-in-from-left;
+  z-index: 1;
+}
 
+@keyframes slide-out-to-left {
   to {
-    clip-path: polygon(-100% 100%, 0% -100%, 200% 100%);
+    transform: translateX(-20%);
+    opacity: 0;
+  }
+}
+
+@keyframes slide-in-from-right {
+  from {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes slide-out-to-right {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes slide-in-from-left {
+  from {
+    transform: translateX(-20%);
+    opacity: 0;
   }
 }
 

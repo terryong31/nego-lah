@@ -71,7 +71,22 @@ html.light {
 }
 
 html.light .user-chat-bubble {
-  background-color: #e9d5ff;
+  background-color: #ca9aff;
+  /* Lavender */
+  color: white;
+}
+
+/* Buyer/AI chat bubble styling - Light Yellow */
+.buyer-chat-bubble {
+  background-color: #fef9c3;
+  /* Light yellow (yellow-100) */
+  color: #1a1a2e;
+  /* Dark text for contrast */
+}
+
+/* Ensure good contrast in both modes since yellow is light */
+html.light .buyer-chat-bubble {
+  background-color: #fef9c3;
   color: #1a1a2e;
 }
 
@@ -288,6 +303,38 @@ a {
 
 .animate-slide-in {
   animation: slideIn 0.3s ease forwards;
+}
+
+@keyframes slideInLeft {
+  from {
+    opacity: 0;
+    transform: translateX(-20px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes slideInRight {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.animate-slide-in-left {
+  animation: slideInLeft 0.3s ease forwards;
+}
+
+.animate-slide-in-right {
+  animation: slideInRight 0.3s ease forwards;
 }
 
 /* Slide up with fade - starts invisible and animates in */

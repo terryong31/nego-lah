@@ -141,6 +141,7 @@ function AppRoutes() {
               isAuthenticated={!!user}
               onLogout={signOut}
               userAvatar={user?.user_metadata?.avatar_url}
+              userName={user?.user_metadata?.full_name || user?.email}
             />
           }
         />

@@ -197,7 +197,7 @@ export function Profile() {
                         </div>
 
                         <div className="pt-4">
-                            <Button type="submit" fullWidth disabled={isUpdating}>
+                            <Button type="submit" fullWidth disabled={isUpdating} variant="filled">
                                 {isUpdating ? 'Saving...' : 'Save Changes'}
                             </Button>
                         </div>

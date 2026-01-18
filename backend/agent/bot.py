@@ -258,7 +258,7 @@ Buyer: {message}"""
         messages.append(HumanMessage(content=input_message))
     
     # Save user message to memory (text only for now)
-    conversation_memory.add_message(user_id, "human", message, item_id)
+    conversation_memory.add_message(user_id, "human", message, item_id, source="human")
     
     # Get agent response
     result = agent.invoke({"messages": messages})

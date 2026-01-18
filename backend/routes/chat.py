@@ -150,8 +150,8 @@ async def chat_stream(request: Request):
             pass  # Default to AI enabled if check fails
         
         if not ai_enabled:
-            # Save user message but don't respond with AI
-            conversation_memory.add_message(user_id, "human", message)
+            # Save user message to memory but don't respond with AI
+            conversation_memory.add_message(user_id, "human", message, source="human")
             waiting_msg = "Please wait, Terry is reviewing your message..."
             for char in waiting_msg:
                 yield f"data: {json.dumps({'char': char})}\n\n"
@@ -184,9 +184,5 @@ async def chat_stream(request: Request):
     )
 
 
-@router.get("/chat/history/{user_id}")
-def get_chat_history(user_id: str, item_id: Optional[str] = None):
-    """Get conversation history for a user."""
-    history = get_conversation_history(user_id, item_id)
-    return {"messages": history}
+
 

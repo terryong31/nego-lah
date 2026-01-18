@@ -1,8 +1,8 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from admin_auth import verify_admin
 import secrets
-from typing import Optional, List
+from typing import Optional, List, Annotated
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
 
@@ -110,6 +110,63 @@ def update_user_profile(user_id: str, request: UserProfileUpdateRequest):
     admin_supabase.table('user_profiles').upsert(updates).execute()
     
     return {"message": "User profile updated successfully"}
+
+
+@router.post("/users/{user_id}/avatar")
+async def upload_user_avatar(
+    user_id: str,
+    avatar: Annotated[UploadFile, File()]
+):
+    """Upload a user avatar."""
+    from connector import admin_supabase
+    from fastapi import UploadFile, File
+    import base64
+    import uuid
+    
+    contents = await avatar.read()
+    
+    # Try to use storage first
+    try:
+        unique_id = str(uuid.uuid4())[:8]
+        filename = f"{user_id}_{unique_id}_{avatar.filename}"
+        file_path = f"avatars/{filename}"
+        
+        # Upload to 'user-avatars' bucket (create if needed in Supabase)
+        # Using 'item-images' as a shared bucket if users don't have one, 
+        # or better, assuming 'avatars' or similar exists. 
+        # For safety/simplicity in this environment, let's try 'item-images' 
+        # since we know it exists, but organized under 'avatars/' folder.
+        
+        bucket_name = 'item-images' 
+        
+        admin_supabase.storage.from_(bucket_name).upload(
+            file_path, 
+            contents,
+            {"content-type": avatar.content_type}
+        )
+        public_url = admin_supabase.storage.from_(bucket_name).get_public_url(file_path)
+        
+        # Update profile with URL
+        admin_supabase.table('user_profiles').upsert({
+            'id': user_id,
+            'avatar_url': public_url,
+            'updated_at': 'now()'
+        }).execute()
+        
+        return {"message": "Avatar uploaded successfully", "avatar_url": public_url}
+        
+    except Exception:
+        # Fallback to base64 data URL if storage fails
+        base64_image = base64.b64encode(contents).decode('utf-8')
+        data_url = f"data:{avatar.content_type};base64,{base64_image}"
+        
+        admin_supabase.table('user_profiles').upsert({
+            'id': user_id,
+            'avatar_url': data_url,
+            'updated_at': 'now()'
+        }).execute()
+        
+        return {"message": "Avatar uploaded (base64)", "avatar_url": data_url}
 
 
 @router.put("/users/{user_id}/ban")

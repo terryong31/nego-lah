@@ -56,7 +56,7 @@ export function ThemeToggle({ className = '' }: ThemeToggleProps) {
     return (
         <button
             onClick={handleToggle}
-            className={`p-2 rounded-lg transition-colors ${className}`}
+            className={`p-2 rounded-lg transition-colors cursor-pointer ${className}`}
             aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
         >
             {theme === 'dark' ? (

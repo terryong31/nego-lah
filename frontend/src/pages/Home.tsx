@@ -3,6 +3,7 @@ import { ItemCard } from '../components/ItemCard'
 import { ItemDetail } from './ItemDetail'
 import { Button } from '../components/Button'
 import { ThemeToggle } from '../components/ThemeToggle'
+import { ConfirmationModal } from '../components/ConfirmationModal'
 import { useItems } from '../hooks/useItems'
 
 interface HomeProps {
@@ -12,9 +13,10 @@ interface HomeProps {
     isAuthenticated: boolean
     onLogout: () => void
     userAvatar?: string
+    userName?: string
 }
 
-export function Home({ onChat, onLogin, onOpenProfile, isAuthenticated, onLogout, userAvatar }: HomeProps) {
+export function Home({ onChat, onLogin, onOpenProfile, isAuthenticated, onLogout, userAvatar, userName }: HomeProps) {
     const { items, isLoading, error, fetchItems, getCheckoutUrl } = useItems()
     const [searchExpanded, setSearchExpanded] = useState(false)
     const [searchQuery, setSearchQuery] = useState('')
@@ -25,6 +27,10 @@ export function Home({ onChat, onLogin, onOpenProfile, isAuthenticated, onLogout
     const itemsSectionRef = useRef<HTMLDivElement>(null)
     const searchInputRef = useRef<HTMLInputElement>(null)
     const searchContainerRef = useRef<HTMLDivElement>(null)
+
+    // Logout Modal State
+    const [showLogoutConfirm, setShowLogoutConfirm] = useState(false)
+    const [isLoggingOut, setIsLoggingOut] = useState(false)
 
     // Track scroll position to auto-expand search when at items section
     useEffect(() => {
@@ -101,7 +107,10 @@ export function Home({ onChat, onLogin, onOpenProfile, isAuthenticated, onLogout
             {/* Header */}
             <header className="border-b border-[var(--border)] bg-[var(--header-bg)] backdrop-blur-sm sticky top-0 z-20 relative">
                 <div className="max-w-6xl mx-auto px-6 md:px-4 py-4 flex items-center justify-between">
-                    <h1 className="text-xl font-semibold text-[var(--text-primary)]">Nego-Lah</h1>
+                    <div className="flex items-center gap-2">
+                        <img src="/logo.png" alt="Logo" className="w-8 h-8 object-contain" />
+                        <h1 className="text-xl font-semibold text-[var(--text-primary)]">Nego-lah</h1>
+                    </div>
 
                     {/* Desktop Navigation */}
                     <div className="hidden md:flex items-center gap-4">
@@ -115,7 +124,7 @@ export function Home({ onChat, onLogin, onOpenProfile, isAuthenticated, onLogout
                         >
                             <button
                                 onClick={handleSearchClick}
-                                className="p-2 text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors flex-shrink-0"
+                                className="p-2 text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors flex-shrink-0 cursor-pointer"
                                 aria-label="Search"
                             >
                                 <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -165,7 +174,7 @@ export function Home({ onChat, onLogin, onOpenProfile, isAuthenticated, onLogout
                                         />
                                     ) : (
                                         <div className="w-8 h-8 rounded-full bg-[var(--bg-tertiary)] flex items-center justify-center text-sm font-medium text-[var(--text-secondary)] hover:opacity-80 transition-opacity cursor-pointer">
-                                            U
+                                            {(userName || 'U').charAt(0).toUpperCase()}
                                         </div>
                                     )}
                                 </button>
@@ -191,7 +200,7 @@ export function Home({ onChat, onLogin, onOpenProfile, isAuthenticated, onLogout
                                             <button
                                                 onClick={() => {
                                                     setProfileMenuOpen(false)
-                                                    onLogout()
+                                                    setShowLogoutConfirm(true)
                                                 }}
                                                 className="w-full px-4 py-2 text-left text-sm text-red-500 hover:bg-[var(--bg-tertiary)] transition-colors"
                                             >
@@ -280,13 +289,8 @@ export function Home({ onChat, onLogin, onOpenProfile, isAuthenticated, onLogout
                                 <a
                                     href="/orders"
                                     onClick={() => setMobileMenuOpen(false)}
-                                    className="flex items-center gap-2 w-full py-2.5 px-3 rounded-lg hover:bg-[var(--bg-tertiary)] transition-colors"
+                                    className="flex items-center justify-between w-full py-2.5 px-3 rounded-lg hover:bg-[var(--bg-tertiary)] transition-colors"
                                 >
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                        <path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z" />
-                                        <path d="M3 6h18" />
-                                        <path d="M16 10a4 4 0 0 1-8 0" />
-                                    </svg>
                                     <span className="text-base font-medium text-[var(--text-primary)]">My Orders</span>
                                 </a>
                                 <button
@@ -472,6 +476,24 @@ export function Home({ onChat, onLogin, onOpenProfile, isAuthenticated, onLogout
                     Second Hand Store
                 </p>
             </footer>
+            {/* Logout Confirmation Modal */}
+            <ConfirmationModal
+                isOpen={showLogoutConfirm}
+                onClose={() => setShowLogoutConfirm(false)}
+                onConfirm={() => {
+                    setIsLoggingOut(true)
+                    setTimeout(() => {
+                        onLogout()
+                        setShowLogoutConfirm(false)
+                        setIsLoggingOut(false)
+                    }, 800)
+                }}
+                title="Confirm Logout"
+                message="Are you sure you want to log out?"
+                isLoading={isLoggingOut}
+                confirmText="Yes"
+                cancelText="No"
+            />
         </div>
     )
 }

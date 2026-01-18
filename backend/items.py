@@ -54,12 +54,12 @@ async def upload_item(
             img_extension = img.filename.split(".")[-1] if img.filename else "dat"
             img_name =f"{i}.{img_extension}"
             file_content = await img.read()
-            admin_supabase.storage.from_(f"item_images").upload(
+            admin_supabase.storage.from_(f"images").upload(
                 file = file_content,
                 path = f"items/{random_uuid}/{img_name}",
                 file_options={"content-type": img.content_type or "application/octet-stream"}
             )
-            public_url_response = admin_supabase.storage.from_('item_images').get_public_url(path=f"items/{random_uuid}/{img_name}")
+            public_url_response = admin_supabase.storage.from_('images').get_public_url(path=f"items/{random_uuid}/{img_name}")
             urls[f'{img_name}'] = public_url_response
             
         item_data = {

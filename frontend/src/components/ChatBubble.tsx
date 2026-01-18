@@ -13,13 +13,14 @@ interface ChatBubbleProps {
     avatarUrl?: string
     userName?: string
     avatarText?: string  // Explicit avatar text override
+    isAi?: boolean
     attachments?: Attachment[]
 }
 
-export function ChatBubble({ message, isUser, timestamp, avatarUrl, userName, avatarText, attachments }: ChatBubbleProps) {
+export function ChatBubble({ message, isUser, isAi, timestamp, avatarUrl, userName, avatarText, attachments }: ChatBubbleProps) {
     const initials = avatarText || (userName
         ? userName.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase()
-        : isUser ? 'U' : 'AI')
+        : isUser ? 'ME' : isAi ? 'AI' : 'U')
 
     return (
         <div className={`flex gap-3 ${isUser ? 'flex-row-reverse' : 'flex-row'}`}>
@@ -32,10 +33,7 @@ export function ChatBubble({ message, isUser, timestamp, avatarUrl, userName, av
                         className="w-8 h-8 rounded-full object-cover"
                     />
                 ) : (
-                    <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium ${isUser
-                        ? 'bg-[var(--accent)] text-white'
-                        : 'bg-[var(--bg-tertiary)] text-[var(--text-secondary)]'
-                        }`}>
+                    <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium bg-[var(--bg-tertiary)] text-[var(--text-secondary)]`}>
                         {initials}
                     </div>
                 )}
@@ -47,7 +45,9 @@ export function ChatBubble({ message, isUser, timestamp, avatarUrl, userName, av
                     max-w-[75%] px-4 py-3 rounded-2xl
                     ${isUser
                         ? 'user-chat-bubble rounded-tr-md'
-                        : 'bg-[var(--bg-tertiary)] text-[var(--text-primary)] rounded-tl-md'
+                        : isAi
+                            ? 'bg-[var(--bg-tertiary)] text-[var(--text-primary)] rounded-tl-md'
+                            : 'buyer-chat-bubble rounded-tl-md'
                     }
                 `}
             >

@@ -5,6 +5,7 @@ import { Input } from '../components/Input'
 import { Card } from '../components/Card'
 import { ThemeToggle } from '../components/ThemeToggle'
 import { ChatBubble } from '../components/ChatBubble'
+import { ConfirmationModal } from '../components/ConfirmationModal'
 import { api } from '../lib/api'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000'
@@ -64,11 +65,15 @@ export function Admin({ onBack }: AdminProps) {
     const [error, setError] = useState<string | null>(null)
     const [editingItem, setEditingItem] = useState<Item | null>(null)
     const [showAddForm, setShowAddForm] = useState(false)
+    const [isMenuOpen, setIsMenuOpen] = useState(false)
+
 
     // Login form
     const [username, setUsername] = useState('')
     const [password, setPassword] = useState('')
     const [loginLoading, setLoginLoading] = useState(false)
+    const [showLogoutConfirm, setShowLogoutConfirm] = useState(false)
+    const [isLoggingOut, setIsLoggingOut] = useState(false)
 
     // Form state
     const [formData, setFormData] = useState({
@@ -83,6 +88,31 @@ export function Admin({ onBack }: AdminProps) {
 
     // Tab state
     const [activeTab, setActiveTab] = useState<'items' | 'users' | 'orders'>('items')
+
+    const [tabDirection, setTabDirection] = useState<'left' | 'right'>('right')
+    const prevTabRef = useRef<'items' | 'users' | 'orders'>('items')
+
+    // Sliding Underline Refs
+    const itemsTabRef = useRef<HTMLButtonElement>(null)
+    const usersTabRef = useRef<HTMLButtonElement>(null)
+    const ordersTabRef = useRef<HTMLButtonElement>(null)
+    const [underlineStyle, setUnderlineStyle] = useState({ left: 0, width: 0 })
+
+    useEffect(() => {
+        const refs = {
+            items: itemsTabRef,
+            users: usersTabRef,
+            orders: ordersTabRef
+        }
+        const currentRef = refs[activeTab]?.current
+        if (currentRef) {
+            setUnderlineStyle({
+                left: currentRef.offsetLeft,
+                width: currentRef.offsetWidth
+            })
+        }
+    }, [activeTab])
+
 
     // User management state
     const [users, setUsers] = useState<User[]>([]) // Changed to User[]
@@ -120,6 +150,18 @@ export function Admin({ onBack }: AdminProps) {
             verifyToken()
         }
     }, [])
+
+    useEffect(() => {
+        const order = { items: 0, users: 1, orders: 2 }
+        const prev = order[prevTabRef.current]
+        const curr = order[activeTab]
+        if (curr > prev) {
+            setTabDirection('left')
+        } else {
+            setTabDirection('right')
+        }
+        prevTabRef.current = activeTab
+    }, [activeTab])
 
     useEffect(() => {
         if (selectedUserChat && messagesEndRef.current && chatOffset === 0) {
@@ -171,11 +213,21 @@ export function Admin({ onBack }: AdminProps) {
         setLoginLoading(false)
     }
 
-    const handleLogout = () => {
-        localStorage.removeItem('adminToken')
-        setAdminToken(null)
-        setIsLoggedIn(false)
-        setItems([])
+    const handleLogoutClick = () => {
+        setShowLogoutConfirm(true)
+    }
+
+    const confirmLogout = () => {
+        setIsLoggingOut(true)
+        // Simulate server request delay
+        setTimeout(() => {
+            localStorage.removeItem('adminToken')
+            setAdminToken(null)
+            setIsLoggedIn(false)
+            setItems([])
+            setIsLoggingOut(false)
+            setShowLogoutConfirm(false)
+        }, 800)
     }
 
     const fetchItems = async () => {
@@ -446,6 +498,36 @@ export function Admin({ onBack }: AdminProps) {
         })
     }
 
+    const handleAvatarUpload = async (files: FileList) => {
+        if (!editingUser || !files.length) return
+
+        const file = files[0]
+        const formData = new FormData()
+        formData.append('avatar', file)
+
+        try {
+            const res = await fetch(`${API_URL}/admin/users/${editingUser.id}/avatar`, {
+                method: 'POST',
+                body: formData
+            })
+
+            if (res.ok) {
+                const data = await res.json()
+                setEditForm(prev => ({ ...prev, avatarUrl: data.avatar_url }))
+                // Update local user state immediately
+                setUsers(prev => prev.map(u =>
+                    u.id === editingUser.id
+                        ? { ...u, avatar_url: data.avatar_url }
+                        : u
+                ))
+            } else {
+                setError('Failed to upload avatar')
+            }
+        } catch {
+            setError('Connection error')
+        }
+    }
+
     const handleSaveProfile = async () => {
         if (!editingUser) return
         try {
@@ -479,7 +561,9 @@ export function Admin({ onBack }: AdminProps) {
         }
     }
 
-    // Login Screen
+
+
+    // Conditional Render
     if (!isLoggedIn) {
         return (
             <div className="min-h-screen flex items-center justify-center p-4" style={{ background: 'inherit' }}>
@@ -586,22 +670,52 @@ export function Admin({ onBack }: AdminProps) {
                         </button>
                         <h1 className="text-xl font-semibold text-[var(--text-primary)] whitespace-nowrap">Admin Panel</h1>
                     </div>
-                    <div className="flex gap-3 items-center ml-auto">
+
+                    {/* Desktop Actions */}
+                    <div className="hidden md:flex gap-3 items-center ml-auto">
                         <ThemeToggle className="text-[var(--text-secondary)] hover:text-[var(--text-primary)]" />
-                        {activeTab === 'items' && (
-                            <Button variant="primary" size="sm" onClick={() => setShowAddForm(true)} className="whitespace-nowrap">
-                                Add Item
-                            </Button>
-                        )}
-                        <Button variant="ghost" size="sm" onClick={handleLogout}>
+                        <ThemeToggle className="text-[var(--text-secondary)] hover:text-[var(--text-primary)]" />
+                        <Button variant="ghost" size="sm" onClick={handleLogoutClick}>
                             Logout
                         </Button>
                     </div>
+
+                    {/* Mobile Hamburger */}
+                    <button
+                        className="md:hidden p-2 text-[var(--text-primary)]"
+                        onClick={() => setIsMenuOpen(!isMenuOpen)}
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <line x1="3" y1="12" x2="21" y2="12"></line>
+                            <line x1="3" y1="6" x2="21" y2="6"></line>
+                            <line x1="3" y1="18" x2="21" y2="18"></line>
+                        </svg>
+                    </button>
                 </div>
+
+                {/* Mobile Menu Dropdown */}
+                {isMenuOpen && (
+                    <div className="md:hidden border-t border-[var(--border)] bg-[var(--bg-secondary)] px-4 py-2 animate-slide-down">
+                        <div className="flex items-center justify-between py-2">
+                            <span className="text-sm text-[var(--text-primary)]">Theme</span>
+                            <ThemeToggle />
+                        </div>
+                        <div className="py-2">
+                            <div className="py-2">
+                                <Button variant="ghost" size="sm" fullWidth onClick={handleLogoutClick}>
+                                    Logout
+                                </Button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
                 {/* Tab Navigation */}
                 <div className="max-w-4xl mx-auto px-4">
-                    <div className="flex gap-4 border-t border-[var(--border)]">
+                    {/* Sliding Underline Tabs */}
+                    <div className="flex gap-4 border-b border-[var(--border)] relative">
                         <button
+                            ref={itemsTabRef}
                             onClick={() => setActiveTab('items')}
                             className={`py-3 px-4 text-sm font-medium transition-colors relative ${activeTab === 'items'
                                 ? 'text-[var(--text-primary)]'
@@ -609,11 +723,9 @@ export function Admin({ onBack }: AdminProps) {
                                 }`}
                         >
                             Items
-                            {activeTab === 'items' && (
-                                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-[var(--btn-filled-bg)]" />
-                            )}
                         </button>
                         <button
+                            ref={usersTabRef}
                             onClick={() => { setActiveTab('users'); fetchUsers(); }}
                             className={`py-3 px-4 text-sm font-medium transition-colors relative ${activeTab === 'users'
                                 ? 'text-[var(--text-primary)]'
@@ -621,11 +733,9 @@ export function Admin({ onBack }: AdminProps) {
                                 }`}
                         >
                             Users
-                            {activeTab === 'users' && (
-                                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-[var(--btn-filled-bg)]" />
-                            )}
                         </button>
                         <button
+                            ref={ordersTabRef}
                             onClick={() => { setActiveTab('orders'); fetchOrders(); }}
                             className={`py-3 px-4 text-sm font-medium transition-colors relative ${activeTab === 'orders'
                                 ? 'text-[var(--text-primary)]'
@@ -633,10 +743,13 @@ export function Admin({ onBack }: AdminProps) {
                                 }`}
                         >
                             Orders
-                            {activeTab === 'orders' && (
-                                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-[var(--btn-filled-bg)]" />
-                            )}
                         </button>
+
+                        {/* Floating Sliding Underline - Lavender/White */}
+                        <div
+                            className="absolute bottom-0 h-[2px] bg-[var(--btn-filled-bg)] transition-all duration-300 ease-in-out"
+                            style={{ left: underlineStyle.left, width: underlineStyle.width }}
+                        />
                     </div>
                 </div>
             </header>
@@ -649,91 +762,520 @@ export function Admin({ onBack }: AdminProps) {
                     </div>
                 )}
 
-                {/* Add Form Modal */}
-                {showAddForm && (
-                    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in">
-                        <div className="w-full max-w-md animate-slide-up flex flex-col items-start">
-                            {/* Return to items link above the card */}
-                            <button
-                                onClick={() => setShowAddForm(false)}
-                                className="flex items-center gap-2 text-white hover:text-white/80 transition-colors group mb-4"
-                            >
-                                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <path d="M19 12H5M12 19l-7-7 7-7" />
-                                </svg>
-                                <span className="text-sm font-medium relative">
-                                    Return to items
-                                    <span className="absolute left-0 bottom-0 w-0 h-[1px] bg-white transition-all duration-300 group-hover:w-full" />
-                                </span>
-                            </button>
-
-                            <Card className="w-full max-h-[85vh] overflow-y-auto">
-                                <h2 className="text-xl font-semibold text-[var(--text-primary)] mb-4">Add New Item</h2>
-                                <form onSubmit={handleAdd} className="space-y-4">
-                                    <Input
-                                        label="Name"
-                                        value={formData.name}
-                                        onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                                        required
-                                    />
-                                    <Input
-                                        label="Description"
-                                        value={formData.description}
-                                        onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                                        required
-                                    />
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <Input
-                                            label="Listed Price (RM)"
-                                            type="number"
-                                            value={formData.price}
-                                            onChange={(e) => setFormData({ ...formData, price: e.target.value })}
-                                            required
-                                        />
-                                        <Input
-                                            label="Base Price (RM)"
-                                            type="number"
-                                            placeholder="Min acceptable"
-                                            value={formData.min_price}
-                                            onChange={(e) => setFormData({ ...formData, min_price: e.target.value })}
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1.5">Condition</label>
-                                        <select
-                                            value={formData.condition}
-                                            onChange={(e) => setFormData({ ...formData, condition: e.target.value })}
-                                            className="w-full px-4 py-2.5 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded-lg text-[var(--text-primary)] focus:outline-none focus:border-[var(--input-focus-border)] transition-colors"
-                                        >
-                                            <option value="New">New</option>
-                                            <option value="Like New">Like New</option>
-                                            <option value="Good">Good</option>
-                                            <option value="Fair">Fair</option>
-                                        </select>
-                                    </div>
-                                    <div>
-                                        <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1.5">Images</label>
-                                        <input
-                                            type="file"
-                                            multiple
-                                            accept="image/*"
-                                            onChange={(e) => setImages(e.target.files)}
-                                            className="w-full text-[var(--text-secondary)] file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-[var(--bg-tertiary)] file:text-[var(--text-primary)] hover:file:bg-[var(--border)] transition-colors"
-                                        />
-                                    </div>
-                                    <div className="pt-2">
-                                        <Button type="submit" fullWidth variant="filled">
-                                            Add Item
-                                        </Button>
-                                    </div>
-                                </form>
-                            </Card>
+                {/* Items Tab Content */}
+                {activeTab === 'items' && (
+                    <div className={tabDirection === 'left' ? 'animate-slide-in-left' : 'animate-slide-in-right'}>
+                        <div className="flex justify-end mb-4">
+                            <Button variant="primary" size="sm" onClick={() => setShowAddForm(true)} className="flex items-center gap-2 group">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                                <span className="group-hover:underline">Add New Item</span>
+                            </Button>
                         </div>
+
+                        {/* Items Table */}
+                        {isLoading ? (
+                            <div className="flex justify-center py-16">
+                                <div className="w-6 h-6 border-2 border-[var(--text-secondary)] border-t-[var(--text-primary)] rounded-full animate-spin" />
+                            </div>
+                        ) : items.length === 0 ? (
+                            <p className="text-center text-[var(--text-muted)] py-16">No items found</p>
+                        ) : (
+                            <div className="bg-[var(--bg-tertiary)] border border-[var(--border)] rounded-xl overflow-hidden backdrop-blur-sm">
+                                <div className="overflow-x-auto">
+                                    <table className="w-full min-w-[600px] text-left">
+                                        <thead className="bg-[var(--header-bg)] border-b border-[var(--border)]">
+                                            <tr>
+                                                <th className="px-4 py-3 text-sm font-medium text-[var(--text-secondary)] whitespace-nowrap">Image</th>
+                                                <th className="px-4 py-3 text-sm font-medium text-[var(--text-secondary)] whitespace-nowrap">Name</th>
+                                                <th className="px-4 py-3 text-sm font-medium text-[var(--text-secondary)] whitespace-nowrap">Price</th>
+                                                <th className="px-4 py-3 text-sm font-medium text-[var(--text-secondary)] whitespace-nowrap">Base</th>
+                                                <th className="px-4 py-3 text-sm font-medium text-[var(--text-secondary)] whitespace-nowrap">Status</th>
+                                                <th className="px-4 py-3 text-sm font-medium text-[var(--text-secondary)] text-right whitespace-nowrap">Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-[var(--border)]">
+                                            {items.map((item) => {
+                                                let imageUrl = null
+                                                if (item.image_path) {
+                                                    try {
+                                                        const parsed = JSON.parse(item.image_path)
+                                                        imageUrl = Object.values(parsed)[0] as string
+                                                    } catch { /* ignore */ }
+                                                }
+                                                return (
+                                                    <tr key={item.id} className="hover:bg-[var(--header-bg)] transition-colors">
+                                                        <td className="px-4 py-3">
+                                                            <div className="w-12 h-12 rounded bg-[var(--bg-secondary)] overflow-hidden">
+                                                                {imageUrl ? (
+                                                                    <img src={imageUrl} alt={item.name} className="w-full h-full object-cover" />
+                                                                ) : (
+                                                                    <div className="w-full h-full flex items-center justify-center text-[var(--text-muted)]">📷</div>
+                                                                )}
+                                                            </div>
+                                                        </td>
+                                                        <td className="px-4 py-3">
+                                                            <span className="font-medium text-[var(--text-primary)]">{item.name}</span>
+                                                        </td>
+                                                        <td className="px-4 py-3 text-[var(--text-secondary)]">RM{item.price}</td>
+                                                        <td className="px-4 py-3 text-[var(--text-muted)]">
+                                                            {item.min_price ? `RM${item.min_price}` : '-'}
+                                                        </td>
+                                                        <td className="px-4 py-3">
+                                                            <span className="px-2 py-1 text-xs rounded-full bg-green-600 text-white">
+                                                                Available
+                                                            </span>
+                                                        </td>
+                                                        <td className="px-4 py-3 text-right space-x-2">
+                                                            <Button variant="ghost" size="sm" onClick={() => startEdit(item)}>
+                                                                Edit
+                                                            </Button>
+                                                            <Button variant="danger" size="sm" onClick={() => handleDelete(item.id)}>
+                                                                Delete
+                                                            </Button>
+                                                        </td>
+                                                    </tr>
+                                                )
+                                            })}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        )}
                     </div>
                 )}
 
-                {/* Edit Form Modal */}
-                {editingItem && (
+                {/* Users Table */}
+                {activeTab === 'users' && (
+                    <div className={tabDirection === 'left' ? 'animate-slide-in-left' : 'animate-slide-in-right'}>
+                        {users.length === 0 ? (
+                            <p className="text-center text-[var(--text-muted)] py-16">No users found</p>
+                        ) : (
+                            <div className="bg-[var(--bg-tertiary)] border border-[var(--border)] rounded-xl overflow-hidden backdrop-blur-sm">
+                                <div className="overflow-x-auto">
+                                    <table className="w-full min-w-[600px] text-left">
+                                        <thead className="bg-[var(--header-bg)] border-b border-[var(--border)]">
+                                            <tr>
+                                                <th className="px-4 py-3 text-sm font-medium text-[var(--text-secondary)] whitespace-nowrap">User</th>
+                                                <th className="px-4 py-3 text-sm font-medium text-[var(--text-secondary)] whitespace-nowrap">Status</th>
+                                                <th className="px-4 py-3 text-sm font-medium text-[var(--text-secondary)] whitespace-nowrap">AI</th>
+                                                <th className="px-4 py-3 text-sm font-medium text-[var(--text-secondary)] text-right whitespace-nowrap">Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-[var(--border)]">
+                                            {users.map((user) => (
+                                                <tr key={user.id} className="hover:bg-[var(--header-bg)] transition-colors">
+                                                    <td className="px-4 py-3">
+                                                        <div>
+                                                            <span className="font-medium text-[var(--text-primary)]">{user.display_name}</span>
+                                                            <p className="text-xs text-[var(--text-muted)]">{user.email}</p>
+                                                        </div>
+                                                    </td>
+                                                    <td className="px-4 py-3">
+                                                        {user.is_banned ? (
+                                                            <span className="px-2 py-1 text-xs rounded-full bg-red-600 text-white">Banned</span>
+                                                        ) : (
+                                                            <span className="px-2 py-1 text-xs rounded-full bg-green-600 text-white">Active</span>
+                                                        )}
+                                                    </td>
+                                                    <td className="px-4 py-3">
+                                                        <Toggle
+                                                            checked={user.ai_enabled}
+                                                            onChange={(checked) => handleToggleAI(user.id, checked)}
+                                                        />
+                                                    </td>
+                                                    <td className="px-4 py-3 text-right space-x-2">
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="sm"
+                                                            onClick={() => fetchUserChat(user.id)}
+                                                        >
+                                                            Chat
+                                                        </Button>
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="sm"
+                                                            onClick={() => handleEditUser(user)}
+                                                        >
+                                                            Edit
+                                                        </Button>
+                                                        <Button
+                                                            variant={user.is_banned ? 'primary' : 'danger'}
+                                                            size="sm"
+                                                            onClick={() => handleBanUser(user.id, !user.is_banned)}
+                                                        >
+                                                            {user.is_banned ? 'Unban' : 'Ban'}
+                                                        </Button>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        )}
+                    </div >
+                )}
+
+                {/* Orders Tab */}
+                {activeTab === 'orders' && (
+                    <div className={tabDirection === 'left' ? 'animate-slide-in-left' : 'animate-slide-in-right'}>
+                        {/* Orders Summary */}
+                        {ordersSummary && (
+                            <div className="grid grid-cols-2 gap-4 mb-6">
+                                <div className="bg-[var(--card-bg)] border border-[var(--border)] rounded-xl p-4">
+                                    <p className="text-[var(--text-muted)] text-sm">Total Sales</p>
+                                    <p className="text-2xl font-bold text-green-400">RM {ordersSummary.total_sales.toFixed(2)}</p>
+                                </div>
+                                <div className="bg-[var(--card-bg)] border border-[var(--border)] rounded-xl p-4">
+                                    <p className="text-[var(--text-muted)] text-sm">Total Orders</p>
+                                    <p className="text-2xl font-bold text-[var(--text-primary)]">{ordersSummary.total_transactions}</p>
+                                </div>
+                            </div>
+                        )}
+
+                        {ordersLoading ? (
+                            <div className="flex items-center justify-center py-12">
+                                <div className="w-8 h-8 border-2 border-zinc-700 border-t-white rounded-full animate-spin" />
+                            </div>
+                        ) : orders.length === 0 ? (
+                            <div className="text-center py-12 text-[var(--text-muted)]">
+                                <div className="text-5xl mb-4">📦</div>
+                                <p>No orders yet</p>
+                            </div>
+                        ) : (
+                            <div className="space-y-3">
+                                {orders.map((order) => {
+                                    let imageUrl = null
+                                    if (order.item_image) {
+                                        try {
+                                            const parsed = JSON.parse(order.item_image)
+                                            imageUrl = Object.values(parsed)[0] as string
+                                        } catch { /* ignore */ }
+                                    }
+
+                                    return (
+                                        <div key={order.id} className="bg-[var(--card-bg)] border border-[var(--border)] rounded-xl p-4 flex gap-4">
+                                            {/* Item Image */}
+                                            <div className="w-16 h-16 flex-shrink-0 rounded-lg overflow-hidden bg-[var(--bg-tertiary)]">
+                                                {imageUrl ? (
+                                                    <img src={imageUrl} alt={order.item_name} className="w-full h-full object-cover" />
+                                                ) : (
+                                                    <div className="w-full h-full flex items-center justify-center text-2xl">📦</div>
+                                                )}
+                                            </div>
+
+                                            {/* Order Details */}
+                                            <div className="flex-1 min-w-0">
+                                                <div className="flex items-start justify-between gap-2">
+                                                    <h3 className="font-semibold text-[var(--text-primary)] truncate">{order.item_name}</h3>
+                                                    <span className={`px-2 py-0.5 text-xs font-medium rounded border ${order.status === 'completed' ? 'bg-green-500/20 text-green-400 border-green-500/30' :
+                                                        order.status === 'refunded' ? 'bg-red-500/20 text-red-400 border-red-500/30' :
+                                                            'bg-yellow-500/20 text-yellow-400 border-yellow-500/30'
+                                                        }`}>
+                                                        {order.status.charAt(0).toUpperCase() + order.status.slice(1)}
+                                                    </span>
+                                                </div>
+                                                <p className="text-sm text-[var(--text-muted)] truncate">{order.buyer_email}</p>
+                                                <div className="flex items-center justify-between mt-2">
+                                                    <span className="font-bold text-[var(--accent)]">RM {order.amount_paid.toFixed(2)}</span>
+                                                    <span className="text-xs text-[var(--text-muted)]">
+                                                        {new Date(order.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )
+                                })}
+                            </div>
+                        )}
+                    </div>
+                )}
+            </main>
+
+
+            {editingUser && (
+                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in">
+                    <div className="w-full max-w-md animate-slide-up flex flex-col items-start">
+                        {/* Return to users link */}
+                        <button
+                            onClick={() => setEditingUser(null)}
+                            className="flex items-center gap-2 text-white hover:text-white/80 transition-colors group mb-4"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M19 12H5M12 19l-7-7 7-7" />
+                            </svg>
+                            <span className="text-sm font-medium relative">
+                                Return to users
+                                <span className="absolute left-0 bottom-0 w-0 h-[1px] bg-white transition-all duration-300 group-hover:w-full" />
+                            </span>
+                        </button>
+
+                        <Card className="w-full">
+                            <h2 className="text-lg font-semibold text-[var(--text-primary)] mb-4">Edit User</h2>
+                            <div className="space-y-6">
+                                <Input
+                                    label="Display Name"
+                                    value={editForm.displayName}
+                                    onChange={(e) => setEditForm(prev => ({ ...prev, displayName: e.target.value }))}
+                                />
+
+                                {/* Avatar Upload */}
+                                <div>
+                                    <label className="block text-sm font-medium text-[var(--text-secondary)] mb-2">Avatar</label>
+                                    <div className="flex items-center gap-4">
+                                        <div className="w-20 h-20 rounded-full bg-[var(--bg-secondary)] overflow-hidden border border-[var(--border)] relative group">
+                                            {editForm.avatarUrl ? (
+                                                <img
+                                                    src={editForm.avatarUrl}
+                                                    alt="Avatar"
+                                                    className="w-full h-full object-cover"
+                                                />
+                                            ) : (
+                                                <div className="w-full h-full flex items-center justify-center text-[var(--text-muted)] text-xl">
+                                                    {(editForm.displayName || '?').charAt(0).toUpperCase()}
+                                                </div>
+                                            )}
+                                            {/* Overlay on hover */}
+                                        </div>
+
+                                        <label className="px-4 py-2 border border-[var(--border)] rounded-lg hover:bg-[var(--bg-secondary)] hover:text-[var(--text-primary)] text-[var(--text-secondary)] transition-colors cursor-pointer text-sm font-medium">
+                                            Upload Image
+                                            <input
+                                                type="file"
+                                                accept="image/*"
+                                                onChange={(e) => e.target.files && handleAvatarUpload(e.target.files)}
+                                                className="hidden"
+                                            />
+                                        </label>
+                                    </div>
+                                </div>
+
+                                <div className="pt-2">
+                                    <Button fullWidth variant="filled" onClick={handleSaveProfile}>
+                                        Save Changes
+                                    </Button>
+                                </div>
+                            </div>
+                        </Card>
+                    </div>
+                </div>
+            )}
+
+            {/* Full Chat View - Replaces entire screen when active */}
+            {selectedUserChat && (
+                <div
+                    className="h-screen flex flex-col overflow-hidden fixed inset-0 z-50"
+                    style={{ background: 'var(--chat-bg-gradient)' }}
+                >
+                    {/* Stars Background */}
+                    <div className="stars-container">
+                        <div className="shooting-star"></div>
+                        <div className="shooting-star"></div>
+                        <div className="shooting-star"></div>
+                        <div className="stars"></div>
+                    </div>
+
+                    {/* Header - Fixed at top */}
+                    <header className="flex-shrink-0 border-b border-[var(--border)] bg-[var(--header-bg)] backdrop-blur-sm z-20">
+                        <div className="max-w-2xl mx-auto px-4 py-4 flex items-center gap-4">
+                            <button
+                                onClick={() => setSelectedUserChat(null)}
+                                className="p-2 text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
+                                aria-label="Back"
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M19 12H5M12 19l-7-7 7-7" />
+                                </svg>
+                            </button>
+                            <div className="flex-1">
+                                <h1 className="text-lg font-semibold text-[var(--text-primary)]">Chat</h1>
+                                <p className="text-sm text-[var(--text-muted)]">
+                                    {users.find(u => u.id === selectedUserChat.userId)?.display_name || 'User'}
+                                </p>
+                            </div>
+                        </div>
+                    </header>
+
+                    {/* Messages - Scrollable middle section */}
+                    <main className="flex-1 overflow-y-auto relative z-10">
+                        <div className="max-w-2xl mx-auto px-4 py-6 space-y-4">
+                            {/* Load More Button */}
+                            {hasMoreMessages && (
+                                <div className="flex justify-center py-2">
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={loadMoreMessages}
+                                        className="text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                                        disabled={isLoadingHistory}
+                                    >
+                                        {isLoadingHistory ? 'Loading...' : 'Load previous messages'}
+                                    </Button>
+                                </div>
+                            )}
+
+                            {selectedUserChat.messages.map((msg, idx) => {
+                                // System Message
+                                if (msg.source === 'system') {
+                                    return (
+                                        <div key={idx} className="flex justify-center my-4">
+                                            <span className="text-xs text-[var(--text-muted)] bg-[var(--bg-secondary)] px-3 py-1 rounded-full border border-[var(--border)]">
+                                                {msg.content}
+                                            </span>
+                                        </div>
+                                    )
+                                }
+
+                                const isAdmin = msg.source === 'admin'
+                                const user = users.find(u => u.id === selectedUserChat.userId)
+
+                                const getUserName = () => {
+                                    if (msg.source === 'admin') return 'Me'
+                                    if (msg.source === 'ai') return 'AI Assistant'
+                                    return user?.display_name || 'User'
+                                }
+
+                                const getAvatarText = () => {
+                                    if (msg.source === 'admin') return 'A'
+                                    if (msg.source === 'ai') return 'AI'
+                                    return (user?.display_name || 'U').charAt(0)
+                                }
+
+                                // Admin on Right (isUser=true), User/AI on Left (isUser=false)
+                                return (
+                                    <ChatBubble
+                                        key={idx}
+                                        message={msg.content}
+                                        isUser={isAdmin}
+                                        isAi={msg.source === 'ai'}
+                                        timestamp={new Date().toLocaleTimeString([], {
+                                            hour: '2-digit',
+                                            minute: '2-digit'
+                                        })}
+                                        avatarUrl={!isAdmin && msg.source === 'human' ? user?.avatar_url : undefined}
+                                        userName={getUserName()}
+                                        avatarText={getAvatarText()}
+                                    />
+                                )
+                            })}
+
+                            <div ref={messagesEndRef} />
+                        </div>
+                    </main>
+
+                    {/* Input - Fixed at bottom */}
+                    <footer className="flex-shrink-0 border-t border-[var(--border)] bg-[var(--header-bg)] backdrop-blur-sm z-20">
+                        <div className="max-w-2xl mx-auto px-4 py-4">
+                            <div className="flex gap-3 items-center">
+                                <input
+                                    type="text"
+                                    value={adminReply}
+                                    onChange={(e) => setAdminReply(e.target.value)}
+                                    placeholder="Enter your message"
+                                    className="flex-1 px-4 py-3 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded-xl text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--input-focus-border)]"
+                                    onKeyDown={(e) => e.key === 'Enter' && handleSendAdminMessage()}
+                                />
+                                <Button
+                                    variant="filled"
+                                    onClick={handleSendAdminMessage}
+                                    disabled={!adminReply.trim()}
+                                >
+                                    Send
+                                </Button>
+                            </div>
+                        </div>
+                    </footer>
+                </div>
+            )}
+
+            {/* Modals outside the main container for proper z-index */}
+            {/* Add Form Modal */}
+            {showAddForm && (
+                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in">
+                    <div className="w-full max-w-md animate-slide-up flex flex-col items-start">
+                        {/* Return to items link above the card */}
+                        <button
+                            onClick={() => setShowAddForm(false)}
+                            className="flex items-center gap-2 text-white hover:text-white/80 transition-colors group mb-4"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M19 12H5M12 19l-7-7 7-7" />
+                            </svg>
+                            <span className="text-sm font-medium relative">
+                                Return to items
+                                <span className="absolute left-0 bottom-0 w-0 h-[1px] bg-white transition-all duration-300 group-hover:w-full" />
+                            </span>
+                        </button>
+
+                        <Card className="w-full max-h-[85vh] overflow-y-auto">
+                            <h2 className="text-xl font-semibold text-[var(--text-primary)] mb-4">Add New Item</h2>
+                            <form onSubmit={handleAdd} className="space-y-4">
+                                <Input
+                                    label="Name"
+                                    value={formData.name}
+                                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                                    required
+                                />
+                                <Input
+                                    label="Description"
+                                    value={formData.description}
+                                    onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                                    required
+                                />
+                                <div className="grid grid-cols-2 gap-4">
+                                    <Input
+                                        label="Listed Price (RM)"
+                                        type="number"
+                                        value={formData.price}
+                                        onChange={(e) => setFormData({ ...formData, price: e.target.value })}
+                                        required
+                                    />
+                                    <Input
+                                        label="Base Price (RM)"
+                                        type="number"
+                                        placeholder="Min acceptable"
+                                        value={formData.min_price}
+                                        onChange={(e) => setFormData({ ...formData, min_price: e.target.value })}
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1.5">Condition</label>
+                                    <select
+                                        value={formData.condition}
+                                        onChange={(e) => setFormData({ ...formData, condition: e.target.value })}
+                                        className="w-full px-4 py-2.5 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded-lg text-[var(--text-primary)] focus:outline-none focus:border-[var(--input-focus-border)] transition-colors"
+                                    >
+                                        <option value="New">New</option>
+                                        <option value="Like New">Like New</option>
+                                        <option value="Good">Good</option>
+                                        <option value="Fair">Fair</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1.5">Images</label>
+                                    <input
+                                        type="file"
+                                        multiple
+                                        accept="image/*"
+                                        onChange={(e) => setImages(e.target.files)}
+                                        className="w-full text-[var(--text-secondary)] file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-[var(--bg-tertiary)] file:text-[var(--text-primary)] hover:file:bg-[var(--border)] transition-colors"
+                                    />
+                                </div>
+                                <div className="pt-2">
+                                    <Button type="submit" fullWidth variant="filled">
+                                        Add Item
+                                    </Button>
+                                </div>
+                            </form>
+                        </Card>
+                    </div >
+                </div >
+            )
+            }
+
+            {/* Edit Form Modal */}
+            {
+                editingItem && (
                     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in">
                         <div className="w-full max-w-md animate-slide-up flex flex-col items-start">
                             {/* Return to items link above the card */}
@@ -836,368 +1378,6 @@ export function Admin({ onBack }: AdminProps) {
                         </div>
                     </div>
                 )}
-
-                {/* Items Table */}
-                {activeTab === 'items' && (
-                    <>
-                        {isLoading ? (
-                            <div className="flex justify-center py-16">
-                                <div className="w-6 h-6 border-2 border-[var(--text-secondary)] border-t-[var(--text-primary)] rounded-full animate-spin" />
-                            </div>
-                        ) : items.length === 0 ? (
-                            <p className="text-center text-[var(--text-muted)] py-16">No items found</p>
-                        ) : (
-                            <div className="bg-[var(--bg-tertiary)] border border-[var(--border)] rounded-xl overflow-hidden backdrop-blur-sm">
-                                <div className="overflow-x-auto">
-                                    <table className="w-full min-w-[600px] text-left">
-                                        <thead className="bg-[var(--header-bg)] border-b border-[var(--border)]">
-                                            <tr>
-                                                <th className="px-4 py-3 text-sm font-medium text-[var(--text-secondary)] whitespace-nowrap">Image</th>
-                                                <th className="px-4 py-3 text-sm font-medium text-[var(--text-secondary)] whitespace-nowrap">Name</th>
-                                                <th className="px-4 py-3 text-sm font-medium text-[var(--text-secondary)] whitespace-nowrap">Price</th>
-                                                <th className="px-4 py-3 text-sm font-medium text-[var(--text-secondary)] whitespace-nowrap">Base</th>
-                                                <th className="px-4 py-3 text-sm font-medium text-[var(--text-secondary)] whitespace-nowrap">Status</th>
-                                                <th className="px-4 py-3 text-sm font-medium text-[var(--text-secondary)] text-right whitespace-nowrap">Actions</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-[var(--border)]">
-                                            {items.map((item) => {
-                                                let imageUrl = null
-                                                if (item.image_path) {
-                                                    try {
-                                                        const parsed = JSON.parse(item.image_path)
-                                                        imageUrl = Object.values(parsed)[0] as string
-                                                    } catch { /* ignore */ }
-                                                }
-                                                return (
-                                                    <tr key={item.id} className="hover:bg-[var(--header-bg)] transition-colors">
-                                                        <td className="px-4 py-3">
-                                                            <div className="w-12 h-12 rounded bg-[var(--bg-secondary)] overflow-hidden">
-                                                                {imageUrl ? (
-                                                                    <img src={imageUrl} alt={item.name} className="w-full h-full object-cover" />
-                                                                ) : (
-                                                                    <div className="w-full h-full flex items-center justify-center text-[var(--text-muted)]">📷</div>
-                                                                )}
-                                                            </div>
-                                                        </td>
-                                                        <td className="px-4 py-3">
-                                                            <span className="font-medium text-[var(--text-primary)]">{item.name}</span>
-                                                        </td>
-                                                        <td className="px-4 py-3 text-[var(--text-secondary)]">RM{item.price}</td>
-                                                        <td className="px-4 py-3 text-[var(--text-muted)]">
-                                                            {item.min_price ? `RM${item.min_price}` : '-'}
-                                                        </td>
-                                                        <td className="px-4 py-3">
-                                                            <span className="px-2 py-1 text-xs rounded-full bg-green-600 text-white">
-                                                                Available
-                                                            </span>
-                                                        </td>
-                                                        <td className="px-4 py-3 text-right space-x-2">
-                                                            <Button variant="ghost" size="sm" onClick={() => startEdit(item)}>
-                                                                Edit
-                                                            </Button>
-                                                            <Button variant="danger" size="sm" onClick={() => handleDelete(item.id)}>
-                                                                Delete
-                                                            </Button>
-                                                        </td>
-                                                    </tr>
-                                                )
-                                            })}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </div>
-                        )}
-                    </>
-                )}
-
-                {/* Users Table */}
-                {activeTab === 'users' && (
-                    <>
-                        {users.length === 0 ? (
-                            <p className="text-center text-[var(--text-muted)] py-16">No users found</p>
-                        ) : (
-                            <div className="bg-[var(--bg-tertiary)] border border-[var(--border)] rounded-xl overflow-hidden backdrop-blur-sm">
-                                <div className="overflow-x-auto">
-                                    <table className="w-full min-w-[600px] text-left">
-                                        <thead className="bg-[var(--header-bg)] border-b border-[var(--border)]">
-                                            <tr>
-                                                <th className="px-4 py-3 text-sm font-medium text-[var(--text-secondary)] whitespace-nowrap">User</th>
-                                                <th className="px-4 py-3 text-sm font-medium text-[var(--text-secondary)] whitespace-nowrap">Status</th>
-                                                <th className="px-4 py-3 text-sm font-medium text-[var(--text-secondary)] whitespace-nowrap">AI</th>
-                                                <th className="px-4 py-3 text-sm font-medium text-[var(--text-secondary)] text-right whitespace-nowrap">Actions</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-[var(--border)]">
-                                            {users.map((user) => (
-                                                <tr key={user.id} className="hover:bg-[var(--header-bg)] transition-colors">
-                                                    <td className="px-4 py-3">
-                                                        <div>
-                                                            <span className="font-medium text-[var(--text-primary)]">{user.display_name}</span>
-                                                            <p className="text-xs text-[var(--text-muted)]">{user.email}</p>
-                                                        </div>
-                                                    </td>
-                                                    <td className="px-4 py-3">
-                                                        {user.is_banned ? (
-                                                            <span className="px-2 py-1 text-xs rounded-full bg-red-600 text-white">Banned</span>
-                                                        ) : (
-                                                            <span className="px-2 py-1 text-xs rounded-full bg-green-600 text-white">Active</span>
-                                                        )}
-                                                    </td>
-                                                    <td className="px-4 py-3">
-                                                        <Toggle
-                                                            checked={user.ai_enabled}
-                                                            onChange={(checked) => handleToggleAI(user.id, checked)}
-                                                        />
-                                                    </td>
-                                                    <td className="px-4 py-3 text-right space-x-2">
-                                                        <Button
-                                                            variant="ghost"
-                                                            size="sm"
-                                                            onClick={() => fetchUserChat(user.id)}
-                                                        >
-                                                            Chat
-                                                        </Button>
-                                                        <Button
-                                                            variant="ghost"
-                                                            size="sm"
-                                                            onClick={() => handleEditUser(user)}
-                                                        >
-                                                            Edit
-                                                        </Button>
-                                                        <Button
-                                                            variant={user.is_banned ? 'primary' : 'danger'}
-                                                            size="sm"
-                                                            onClick={() => handleBanUser(user.id, !user.is_banned)}
-                                                        >
-                                                            {user.is_banned ? 'Unban' : 'Ban'}
-                                                        </Button>
-                                                    </td>
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </div>
-                        )}
-                    </>
-                )}
-
-                {/* Orders Tab */}
-                {activeTab === 'orders' && (
-                    <>
-                        {/* Orders Summary */}
-                        {ordersSummary && (
-                            <div className="grid grid-cols-2 gap-4 mb-6">
-                                <div className="bg-[var(--card-bg)] border border-[var(--border)] rounded-xl p-4">
-                                    <p className="text-[var(--text-muted)] text-sm">Total Sales</p>
-                                    <p className="text-2xl font-bold text-green-400">RM {ordersSummary.total_sales.toFixed(2)}</p>
-                                </div>
-                                <div className="bg-[var(--card-bg)] border border-[var(--border)] rounded-xl p-4">
-                                    <p className="text-[var(--text-muted)] text-sm">Total Orders</p>
-                                    <p className="text-2xl font-bold text-[var(--text-primary)]">{ordersSummary.total_transactions}</p>
-                                </div>
-                            </div>
-                        )}
-
-                        {ordersLoading ? (
-                            <div className="flex items-center justify-center py-12">
-                                <div className="w-8 h-8 border-2 border-zinc-700 border-t-white rounded-full animate-spin" />
-                            </div>
-                        ) : orders.length === 0 ? (
-                            <div className="text-center py-12 text-[var(--text-muted)]">
-                                <div className="text-5xl mb-4">📦</div>
-                                <p>No orders yet</p>
-                            </div>
-                        ) : (
-                            <div className="space-y-3">
-                                {orders.map((order) => {
-                                    let imageUrl = null
-                                    if (order.item_image) {
-                                        try {
-                                            const parsed = JSON.parse(order.item_image)
-                                            imageUrl = Object.values(parsed)[0] as string
-                                        } catch { /* ignore */ }
-                                    }
-
-                                    return (
-                                        <div key={order.id} className="bg-[var(--card-bg)] border border-[var(--border)] rounded-xl p-4 flex gap-4">
-                                            {/* Item Image */}
-                                            <div className="w-16 h-16 flex-shrink-0 rounded-lg overflow-hidden bg-[var(--bg-tertiary)]">
-                                                {imageUrl ? (
-                                                    <img src={imageUrl} alt={order.item_name} className="w-full h-full object-cover" />
-                                                ) : (
-                                                    <div className="w-full h-full flex items-center justify-center text-2xl">📦</div>
-                                                )}
-                                            </div>
-
-                                            {/* Order Details */}
-                                            <div className="flex-1 min-w-0">
-                                                <div className="flex items-start justify-between gap-2">
-                                                    <h3 className="font-semibold text-[var(--text-primary)] truncate">{order.item_name}</h3>
-                                                    <span className={`px-2 py-0.5 text-xs font-medium rounded border ${order.status === 'completed' ? 'bg-green-500/20 text-green-400 border-green-500/30' :
-                                                        order.status === 'refunded' ? 'bg-red-500/20 text-red-400 border-red-500/30' :
-                                                            'bg-yellow-500/20 text-yellow-400 border-yellow-500/30'
-                                                        }`}>
-                                                        {order.status.charAt(0).toUpperCase() + order.status.slice(1)}
-                                                    </span>
-                                                </div>
-                                                <p className="text-sm text-[var(--text-muted)] truncate">{order.buyer_email}</p>
-                                                <div className="flex items-center justify-between mt-2">
-                                                    <span className="font-bold text-[var(--accent)]">RM {order.amount_paid.toFixed(2)}</span>
-                                                    <span className="text-xs text-[var(--text-muted)]">
-                                                        {new Date(order.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                                                    </span>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    )
-                                })}
-                            </div>
-                        )}
-                    </>
-                )}
-            </main>
-
-            {/* Edit User Modal */}
-            {editingUser && (
-                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-                    <Card className="w-full max-w-md">
-                        <h2 className="text-lg font-semibold text-[var(--text-primary)] mb-4">Edit User</h2>
-                        <div className="space-y-4">
-                            <Input
-                                label="Display Name"
-                                value={editForm.displayName}
-                                onChange={(e) => setEditForm(prev => ({ ...prev, displayName: e.target.value }))}
-                            />
-                            <Input
-                                label="Avatar URL"
-                                value={editForm.avatarUrl}
-                                onChange={(e) => setEditForm(prev => ({ ...prev, avatarUrl: e.target.value }))}
-                            />
-                            <div className="flex justify-end gap-2 mt-6">
-                                <Button variant="ghost" onClick={() => setEditingUser(null)}>Cancel</Button>
-                                <Button variant="filled" onClick={handleSaveProfile}>Save Changes</Button>
-                            </div>
-                        </div>
-                    </Card>
-                </div>
-            )}
-
-            {/* Full Chat View - Replaces entire screen when active */}
-            {selectedUserChat && (
-                <div
-                    className="h-screen flex flex-col overflow-hidden fixed inset-0 z-50"
-                    style={{ background: 'var(--chat-bg-gradient)' }}
-                >
-                    {/* Stars Background */}
-                    <div className="stars-container">
-                        <div className="shooting-star"></div>
-                        <div className="shooting-star"></div>
-                        <div className="shooting-star"></div>
-                        <div className="stars"></div>
-                    </div>
-
-                    {/* Header - Fixed at top */}
-                    <header className="flex-shrink-0 border-b border-[var(--border)] bg-[var(--header-bg)] backdrop-blur-sm z-20">
-                        <div className="max-w-2xl mx-auto px-4 py-4 flex items-center gap-4">
-                            <button
-                                onClick={() => setSelectedUserChat(null)}
-                                className="p-2 text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
-                                aria-label="Back"
-                            >
-                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <path d="M19 12H5M12 19l-7-7 7-7" />
-                                </svg>
-                            </button>
-                            <div className="flex-1">
-                                <h1 className="text-lg font-semibold text-[var(--text-primary)]">Chat</h1>
-                                <p className="text-sm text-[var(--text-muted)]">
-                                    {users.find(u => u.id === selectedUserChat.userId)?.display_name || 'User'}
-                                </p>
-                            </div>
-                        </div>
-                    </header>
-
-                    {/* Messages - Scrollable middle section */}
-                    <main className="flex-1 overflow-y-auto relative z-10">
-                        <div className="max-w-2xl mx-auto px-4 py-6 space-y-4">
-                            {/* Load More Button */}
-                            {hasMoreMessages && (
-                                <div className="flex justify-center py-2">
-                                    <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        onClick={loadMoreMessages}
-                                        className="text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-                                        disabled={isLoadingHistory}
-                                    >
-                                        {isLoadingHistory ? 'Loading...' : 'Load previous messages'}
-                                    </Button>
-                                </div>
-                            )}
-
-                            {selectedUserChat.messages.map((msg, idx) => {
-                                const isCustomer = msg.source === 'human'
-                                const user = users.find(u => u.id === selectedUserChat.userId)
-                                const getUserName = () => {
-                                    if (msg.source === 'human') return user?.display_name || 'User'
-                                    if (msg.source === 'ai') return 'AI Assistant'
-                                    if (msg.source === 'system') return 'System'
-                                    return 'Admin'
-                                }
-
-                                const getAvatarText = () => {
-                                    if (msg.source === 'human') return (user?.display_name || 'U').charAt(0)
-                                    if (msg.source === 'ai') return 'AI'
-                                    if (msg.source === 'system') return 'S'
-                                    return 'A'
-                                }
-
-                                return (
-                                    <ChatBubble
-                                        key={idx}
-                                        message={msg.content}
-                                        isUser={isCustomer}
-                                        timestamp={new Date().toLocaleTimeString([], {
-                                            hour: '2-digit',
-                                            minute: '2-digit'
-                                        })}
-                                        avatarUrl={isCustomer ? user?.avatar_url : undefined}
-                                        userName={getUserName()}
-                                        avatarText={getAvatarText()}
-                                    />
-                                )
-                            })}
-
-                            <div ref={messagesEndRef} />
-                        </div>
-                    </main>
-
-                    {/* Input - Fixed at bottom */}
-                    <footer className="flex-shrink-0 border-t border-[var(--border)] bg-[var(--header-bg)] backdrop-blur-sm z-20">
-                        <div className="max-w-2xl mx-auto px-4 py-4">
-                            <div className="flex gap-3 items-center">
-                                <input
-                                    type="text"
-                                    value={adminReply}
-                                    onChange={(e) => setAdminReply(e.target.value)}
-                                    placeholder="Enter your message"
-                                    className="flex-1 px-4 py-3 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded-xl text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--input-focus-border)]"
-                                    onKeyDown={(e) => e.key === 'Enter' && handleSendAdminMessage()}
-                                />
-                                <Button
-                                    variant="filled"
-                                    onClick={handleSendAdminMessage}
-                                    disabled={!adminReply.trim()}
-                                >
-                                    Send
-                                </Button>
-                            </div>
-                        </div>
-                    </footer>
-                </div>
-            )}
         </div>
     )
 }

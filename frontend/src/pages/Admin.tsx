@@ -10,7 +10,7 @@ import { api } from '../lib/api'
 import { supabase } from '../lib/supabase'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000'
-const CHATS_URL = `${API_URL}/admin/chats`
+const CHATS_URL = '/admin/chats'
 
 interface Item {
     id: string

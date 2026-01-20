@@ -1,0 +1,53 @@
+
+name: Deploy to Lightsail
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to Server
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          key: ${{ secrets.SSH_KEY }}
+          script: |
+            cd ~/nego-lah
+            # Pull latest changes
+            # Note: We assume the user has set up git on the server or we can copy files via scp
+            # Since we are using rsync in the local workflow, for CI/CD we first need to get the files onto the server.
+            # However, simpler if the server repo is a clone. 
+            # Alternatively, we can use scp-action.
+            # Let's assume the user will push to git, and we want to deploy FROM git.
+            
+            # If directory exists and is a git repo, pull. Else clone?
+            # Actually easier: Since we transferred files manually initially, it's not a git repo linked to YOUR github probably.
+            # Best approach for this setup: use scp-action to copy files, then ssh to run docker.
+            echo "Deploying..."
+            
+      - name: Copy files via SCP
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          key: ${{ secrets.SSH_KEY }}
+          source: "."
+          target: "~/nego-lah"
+          exclude: "node_modules,venv,.git,__pycache__,dist"
+
+      - name: Restart Docker Compose
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          key: ${{ secrets.SSH_KEY }}
+          script: |
+            cd ~/nego-lah
+            sudo docker compose up -d --build --remove-orphans
+            sudo docker system prune -f # Clean up old images

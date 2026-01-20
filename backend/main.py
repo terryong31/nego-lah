@@ -15,9 +15,20 @@ app = FastAPI(
 )
 
 # CORS middleware
+origins = [
+    "http://localhost",
+    "http://localhost:5173",
+    "http://localhost:8000",
+    "http://127.0.0.1",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:8000",
+    "https://nego-lah.terryong.me",
+    "http://nego-lah.terryong.me",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

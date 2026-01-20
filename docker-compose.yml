@@ -1,0 +1,42 @@
+
+
+services:
+  caddy:
+    image: caddy:2.7
+    container_name: nego-lah-caddy
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - frontend
+      - backend
+
+  backend:
+    build: ./backend
+    container_name: nego-lah-backend
+    restart: always
+    expose:
+      - "8000"
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+
+  frontend:
+    build: ./frontend
+    container_name: nego-lah-frontend
+    restart: always
+    expose:
+      - "80"
+    depends_on:
+      - backend
+
+volumes:
+  caddy_data:
+  caddy_config:
+

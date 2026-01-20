@@ -1,0 +1,8 @@
+
+{
+    email terryong30@gmail.com
+}
+
+nego-lah.terryong.me {
+    reverse_proxy frontend:80
+}

@@ -26,6 +26,17 @@ services:
       - .env
     environment:
       - PYTHONUNBUFFERED=1
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - redis
+
+  redis:
+    image: redis:alpine
+    container_name: nego-lah-redis
+    restart: always
+    expose:
+      - "6379"
+
 
   frontend:
     build: ./frontend

@@ -14,9 +14,10 @@ interface ItemCardProps {
     item: Item
     onClick?: () => void
     onBuy?: (itemId: string) => void
+    isBuying?: boolean
 }
 
-export function ItemCard({ item, onClick, onBuy }: ItemCardProps) {
+export function ItemCard({ item, onClick, onBuy, isBuying = false }: ItemCardProps) {
     const isSold = item.status === 'sold'
 
     // Parse first image URL
@@ -37,7 +38,7 @@ export function ItemCard({ item, onClick, onBuy }: ItemCardProps) {
 
     const handleBuyClick = (e: React.MouseEvent) => {
         e.stopPropagation() // Prevent card click
-        if (onBuy) onBuy(item.id)
+        if (onBuy && !isBuying) onBuy(item.id)
     }
 
     return (
@@ -82,10 +83,15 @@ export function ItemCard({ item, onClick, onBuy }: ItemCardProps) {
                             <Button
                                 variant="filled"
                                 size="sm"
-                                className="!rounded-full !px-6"
+                                className="!rounded-full !px-6 flex items-center gap-2 min-w-[80px] h-8 justify-center hover:text-white transition-colors"
                                 onClick={handleBuyClick}
+                                disabled={isBuying}
                             >
-                                Buy
+                                {isBuying ? (
+                                    <div className="w-4 h-4 border-2 border-[var(--btn-filled-text)] border-t-transparent rounded-full animate-spin" />
+                                ) : (
+                                    'Buy'
+                                )}
                             </Button>
                         ) : (
                             <span className="text-sm font-bold text-red-400 bg-red-900/30 px-3 py-1 rounded border border-red-500/30">

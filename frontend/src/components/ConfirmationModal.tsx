@@ -26,7 +26,7 @@ export function ConfirmationModal({
 
     return (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in">
-            <div className="bg-[var(--card-bg)] border border-[var(--border)] rounded-2xl p-6 max-w-sm w-full shadow-2xl animate-slide-up transform transition-all">
+            <div className="liquid-glass-menu rounded-2xl p-6 max-w-sm w-full shadow-2xl animate-slide-up transform transition-all">
                 <h3 className="text-xl font-bold text-[var(--text-primary)] mb-2">
                     {title}
                 </h3>

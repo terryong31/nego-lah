@@ -17,6 +17,7 @@
   --success: #22c55e;
   --error: #ef4444;
   --card-bg: rgba(24, 24, 27, 0.8);
+  --card-bg-rgb: 24, 24, 27;
   --header-bg: rgba(15, 15, 35, 0.7);
   /* Filled button: light in dark mode */
   --btn-filled-bg: #ffffff;
@@ -31,6 +32,8 @@
   --card-light-glow: rgba(134, 239, 172, 0.6);
   /* Chat background gradient */
   --chat-bg-gradient: linear-gradient(to bottom, #0b0b2b, #1b2735 70%, #090a0f);
+  /* Barang Cun gradient - Dark Mode */
+  --barang-gradient: linear-gradient(to right, #99f2c8, #1f4037);
   color-scheme: dark;
 }
 
@@ -48,19 +51,22 @@ html.light {
   --success: #22c55e;
   --error: #ef4444;
   --card-bg: rgba(255, 255, 255, 0.9);
+  --card-bg-rgb: 255, 255, 255;
   --header-bg: rgba(255, 255, 255, 0.7);
   /* Filled button: dark in light mode */
   --btn-filled-bg: #ca9aff;
   --btn-filled-bg-hover: #b573fe;
   --btn-filled-text: #ffffff;
-  --btn-filled-text-hover: #515163;
+  --btn-filled-text-hover: #ffffff;
   /* Input focus border */
   --input-focus-border: #ca9aff;
-  /* Card top light: pink in light mode */
-  --card-light-color: #f9a8d4;
-  --card-light-glow: rgba(249, 168, 212, 0.6);
+  /* Card top light: lavender in light mode */
+  --card-light-color: #ca9aff;
+  --card-light-glow: rgba(202, 154, 255, 0.6);
   /* Chat background gradient */
   --chat-bg-gradient: linear-gradient(to bottom, #ffffff, #e0e6ff 70%, #e9d5ff);
+  /* Barang Cun gradient - Light Mode */
+  --barang-gradient: linear-gradient(to right, #5433ff, #20bdff, #a5fecb);
   color-scheme: light;
 }
 
@@ -88,6 +94,69 @@ html.light .user-chat-bubble {
 html.light .buyer-chat-bubble {
   background-color: #fef9c3;
   color: #1a1a2e;
+}
+
+/* Payment Bubble - Liquid Glass */
+.payment-bubble {
+  /* Dark Mode: deep blue glass matching #1b2735 */
+  background: rgba(27, 39, 53, 0.6);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.3);
+  color: #ffffff;
+}
+
+html.light .payment-bubble {
+  /* Light Mode: White/Lavender glass matching #e0e6ff */
+  background: rgba(255, 255, 255, 0.65);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(224, 230, 255, 0.8);
+  box-shadow: 0 8px 32px rgba(224, 230, 255, 0.5);
+  color: #0f172a;
+}
+
+/* Payment Button */
+.payment-button {
+  /* Dark Mode: sleek blue/purple gradient */
+  background: linear-gradient(135deg, #4c1d95 0%, #3b82f6 100%);
+  color: white;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 15px rgba(59, 130, 246, 0.4);
+}
+
+.payment-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(59, 130, 246, 0.6);
+}
+
+html.light .payment-button {
+  /* Light Mode: Lavender gradient matching theme */
+  background: linear-gradient(135deg, #ca9aff 0%, #b573fe 100%);
+  color: white;
+  box-shadow: 0 4px 15px rgba(181, 115, 254, 0.4);
+}
+
+html.light .payment-button:hover {
+  box-shadow: 0 6px 20px rgba(181, 115, 254, 0.6);
+}
+
+/* Payment Icon Colors */
+.payment-icon-bg {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+html.light .payment-icon-bg {
+  background: rgba(202, 154, 255, 0.2);
+}
+
+.payment-text-accent {
+  color: #60a5fa;
+}
+
+html.light .payment-text-accent {
+  color: #9333ea;
 }
 
 /* Base styles */
@@ -695,7 +764,6 @@ a {
   list-style-type: none;
   margin: 0;
   padding: 1rem 33%;
-  scroll-snap-type: x mandatory;
   scrollbar-width: none;
   -ms-overflow-style: none;
   -webkit-mask: radial-gradient(#0000 0 30%, #000 30.5%) 50% calc(var(--size) * 0.5) / 300% 100%,
@@ -716,7 +784,6 @@ a {
   flex-shrink: 0;
   border-radius: 8px;
   overflow: hidden;
-  scroll-snap-align: center;
   background: var(--bg-tertiary);
 }
 
@@ -731,11 +798,8 @@ a {
    View Transitions API - Theme Toggle Wipe
    ========================================= */
 
-::view-transition-old(root),
-::view-transition-new(root) {
-  /* Default View Transition behavior for non-theme updates (e.g. slight crossfade) */
-  /* We don't override global defaults here, only scope the wipe for theme */
-}
+/* Default View Transition behavior for non-theme updates (e.g. slight crossfade).
+   We don't override global defaults here, only scope the wipe for theme. */
 
 /* Scoped specifically for theme toggle */
 .theme-transition::view-transition-old(root),
@@ -755,6 +819,98 @@ a {
 
 /* Expand from bottom-left corner */
 @keyframes wipe-in {
+  from {
+    clip-path: circle(0% at 0% 100%);
+  }
+
+  to {
+    clip-path: circle(150% at 0% 100%);
+  }
+}
+
+@layer components {
+  .liquid-glass-header {
+    background: transparent;
+    backdrop-filter: blur(8px) saturate(180%);
+    -webkit-backdrop-filter: blur(8px) saturate(180%);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.5);
+    box-shadow:
+      0 8px 32px 0 rgba(0, 0, 0, 0.1),
+      inset 0 -15px 15px -10px rgba(255, 255, 255, 0.3),
+      inset 0 10px 20px -10px rgba(255, 255, 255, 0.1);
+    border-radius: 0;
+    margin: 0;
+    width: 100%;
+  }
+
+  .liquid-glass-pill {
+    background: transparent;
+    backdrop-filter: blur(12px) saturate(180%);
+    -webkit-backdrop-filter: blur(12px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.4);
+    box-shadow:
+      inset 0 4px 6px rgba(255, 255, 255, 0.4),
+      inset 0 -4px 6px rgba(0, 0, 0, 0.1),
+      0 4px 10px rgba(0, 0, 0, 0.05);
+    border-radius: 9999px;
+    color: var(--text-primary);
+    position: relative;
+    overflow: hidden;
+    text-shadow: 0 1px 2px rgba(255, 255, 255, 0.2);
+  }
+
+  .liquid-glass-pill::before {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 4px;
+    right: 4px;
+    height: 40%;
+    background: linear-gradient(to bottom, rgba(255, 255, 255, 0.8), rgba(255, 255, 255, 0.1));
+    border-radius: 9999px;
+    opacity: 0.6;
+    pointer-events: none;
+  }
+
+  .text-gradient-barang {
+    background: var(--barang-gradient);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    display: inline-block;
+    /* Ensure gradient applies correctly */
+  }
+
+  .liquid-glass-menu {
+    background: rgba(var(--card-bg-rgb), 0.85);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    box-shadow:
+      0 4px 6px -1px rgba(0, 0, 0, 0.15),
+      0 10px 15px -3px rgba(0, 0, 0, 0.2),
+      inset 0 1px 0 rgba(255, 255, 255, 0.15);
+  }
+}
+
+/* View Transition Animation: Wipe from Bottom-Left to Top-Right */
+.theme-transition::view-transition-old(root),
+.theme-transition::view-transition-new(root) {
+  animation-duration: 0.5s;
+  mix-blend-mode: normal;
+}
+
+.theme-transition::view-transition-old(root) {
+  animation: none;
+  z-index: 1;
+}
+
+.theme-transition::view-transition-new(root) {
+  z-index: 9999;
+  animation-name: theme-wipe;
+}
+
+@keyframes theme-wipe {
   from {
     clip-path: circle(0% at 0% 100%);
   }

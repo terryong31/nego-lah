@@ -70,6 +70,7 @@ export function ItemDetail({ item, onBack, onChat, onBuy }: ItemDetailProps) {
     const [currentImageIndex, setCurrentImageIndex] = useState(0)
     const [hoveredSection, setHoveredSection] = useState<'chat' | 'buy' | null>(null)
     const [isBuying, setIsBuying] = useState(false)
+    const [isZoomed, setIsZoomed] = useState(false)
     const isSold = item.status === 'sold'
 
     // Parse all image URLs
@@ -81,14 +82,6 @@ export function ItemDetail({ item, onBack, onChat, onBuy }: ItemDetailProps) {
                 if (typeof url === 'string') images.push(url)
             })
         } catch { /* ignore */ }
-    }
-
-    const nextImage = () => {
-        setCurrentImageIndex((prev) => (prev + 1) % images.length)
-    }
-
-    const prevImage = () => {
-        setCurrentImageIndex((prev) => (prev - 1 + images.length) % images.length)
     }
 
     return (
@@ -124,73 +117,32 @@ export function ItemDetail({ item, onBack, onChat, onBuy }: ItemDetailProps) {
             <main className="relative z-10 max-w-7xl mx-auto px-4 py-4 h-[calc(100vh-80px)] overflow-hidden">
                 <div className="flex flex-col lg:flex-row gap-6 h-full">
 
-                    {/* Image Section - Left Column */}
+                    {/* Image Section - Left Column with Carousel */}
                     <div className="flex-[1.2] flex flex-col min-h-0">
-                        {/* Main Image Container */}
-                        <div className="relative flex-1 rounded-2xl overflow-hidden bg-[var(--bg-tertiary)] border border-[var(--border)] group">
-                            {images.length > 0 ? (
-                                <>
-                                    <img
-                                        src={images[currentImageIndex]}
-                                        alt={item.name}
-                                        className="w-full h-full object-contain p-2"
-                                    />
-
-                                    {/* Navigation Arrows (Only if multiple images) */}
-                                    {images.length > 1 && (
-                                        <>
-                                            <button
-                                                onClick={prevImage}
-                                                className="absolute left-4 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-black/50 hover:bg-black/70 text-white flex items-center justify-center transition-colors opacity-0 group-hover:opacity-100"
+                        {/* Carousel Image Container */}
+                        {images.length > 0 ? (
+                            <div className="flex-1 flex items-center justify-center">
+                                <div className="track-wrapper w-full max-w-none">
+                                    <ul className="track">
+                                        {images.map((url, idx) => (
+                                            <li
+                                                key={idx}
+                                                className="track__item cursor-zoom-in"
+                                                onClick={() => {
+                                                    setCurrentImageIndex(idx)
+                                                    setIsZoomed(true)
+                                                }}
                                             >
-                                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                                    <path d="M15 18l-6-6 6-6" />
-                                                </svg>
-                                            </button>
-                                            <button
-                                                onClick={nextImage}
-                                                className="absolute right-4 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-black/50 hover:bg-black/70 text-white flex items-center justify-center transition-colors opacity-0 group-hover:opacity-100"
-                                            >
-                                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                                    <path d="M9 18l6-6-6-6" />
-                                                </svg>
-                                            </button>
-                                        </>
-                                    )}
-
-                                    {/* Dots Indicator */}
-                                    {images.length > 1 && (
-                                        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-2">
-                                            {images.map((_, idx) => (
-                                                <button
-                                                    key={idx}
-                                                    onClick={() => setCurrentImageIndex(idx)}
-                                                    className={`w-2 h-2 rounded-full transition-colors ${idx === currentImageIndex ? 'bg-white' : 'bg-white/40'}`}
-                                                />
-                                            ))}
-                                        </div>
-                                    )}
-                                </>
-                            ) : (
-                                <div className="flex flex-col items-center justify-center h-full text-[var(--text-muted)]">
-                                    <span className="text-6xl mb-4">📦</span>
-                                    <span>No Image Available</span>
+                                                <img src={url} alt={`${item.name} ${idx + 1}`} />
+                                            </li>
+                                        ))}
+                                    </ul>
                                 </div>
-                            )}
-                        </div>
-
-                        {/* Thumbnail Strip - Compact */}
-                        {images.length > 1 && (
-                            <div className="flex gap-2 mt-3 overflow-x-auto pb-1 px-1 h-20 flex-shrink-0">
-                                {images.map((url, idx) => (
-                                    <button
-                                        key={idx}
-                                        onClick={() => setCurrentImageIndex(idx)}
-                                        className={`flex-shrink-0 w-16 h-16 rounded-lg overflow-hidden border-2 transition-colors ${idx === currentImageIndex ? 'border-[var(--accent)]' : 'border-transparent opacity-60 hover:opacity-100'}`}
-                                    >
-                                        <img src={url} alt="" className="w-full h-full object-cover" />
-                                    </button>
-                                ))}
+                            </div>
+                        ) : (
+                            <div className="flex-1 flex flex-col items-center justify-center h-full text-[var(--text-muted)] rounded-2xl bg-[var(--bg-tertiary)] border border-[var(--border)]">
+                                <span className="text-6xl mb-4">📦</span>
+                                <span>No Image Available</span>
                             </div>
                         )}
                     </div>
@@ -220,7 +172,7 @@ export function ItemDetail({ item, onBack, onChat, onBuy }: ItemDetailProps) {
                             {/* Condition */}
                             <div className="mb-6">
                                 <h2 className="text-xs font-medium text-[var(--text-muted)] uppercase tracking-wide mb-2">Condition</h2>
-                                <span className="inline-flex text-sm text-[var(--text-secondary)] bg-[var(--bg-tertiary)] px-4 py-2 rounded-full border border-[var(--border)]">
+                                <span className="inline-flex px-6 py-2 text-sm font-medium liquid-glass-pill">
                                     {item.condition}
                                 </span>
                             </div>
@@ -242,7 +194,7 @@ export function ItemDetail({ item, onBack, onChat, onBuy }: ItemDetailProps) {
                                     <div
                                         className={`
                                             flex items-center justify-center cursor-pointer group/link relative transition-all duration-500 ease-out overflow-hidden
-                                            ${hoveredSection === 'buy' ? 'flex-[0] opacity-0 w-0 p-0' : 'flex-[1] opacity-100'}
+                                            ${hoveredSection === 'buy' ? 'flex-[0] opacity-0 w-0 p-0' : 'flex-[35] opacity-100'}
                                         `}
                                         onMouseEnter={() => setHoveredSection('chat')}
                                         onMouseLeave={() => setHoveredSection(null)}
@@ -268,7 +220,7 @@ export function ItemDetail({ item, onBack, onChat, onBuy }: ItemDetailProps) {
                                         className={`
                                             relative overflow-hidden rounded-xl font-medium transition-all duration-500 ease-out cursor-pointer
                                             bg-[var(--btn-filled-bg)] text-[var(--btn-filled-text)] hover:brightness-110 shadow-lg shadow-[var(--btn-filled-bg)]/20 border border-[var(--border)]
-                                            ${isBuying || hoveredSection === 'buy' ? 'flex-[1] w-full' : 'flex-[0.4]'}
+                                            ${isBuying || hoveredSection === 'buy' ? 'flex-[100] w-full' : 'flex-[65]'}
                                         `}
                                         style={{}}
                                         onMouseEnter={() => !isBuying && setHoveredSection('buy')}
@@ -305,6 +257,20 @@ export function ItemDetail({ item, onBack, onChat, onBuy }: ItemDetailProps) {
                     </div>
                 </div>
             </main>
+
+            {/* Lightbox / Zoom View - Simple click anywhere to close */}
+            {isZoomed && (
+                <div
+                    className="fixed inset-0 z-[100] bg-black/80 flex items-center justify-center cursor-pointer"
+                    onClick={() => setIsZoomed(false)}
+                >
+                    <img
+                        src={images[currentImageIndex]}
+                        alt={item.name}
+                        className="max-w-[90vw] max-h-[90vh] object-contain"
+                    />
+                </div>
+            )}
         </div>
     )
 }

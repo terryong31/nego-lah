@@ -146,13 +146,20 @@ export function useChat(userId: string) {
             attachments: attachmentObjects.length > 0 ? attachmentObjects : undefined
         }
 
-        // Only add user message initially
+        const assistantMessageId = crypto.randomUUID()
+        const assistantPlaceholder: Message = {
+            id: assistantMessageId,
+            role: 'assistant',
+            content: '',
+            timestamp: new Date(),
+            source: 'ai'
+        }
+
+        // Add user message AND empty assistant placeholder immediately
         setState(prev => ({
             ...prev,
-            messages: [...prev.messages, userMessage],
-            isLoading: false, // Don't show loading until we know we have a response incoming? Or maybe separate "sending" state?
-            // Actually, if we don't set loading, "Thinking..." won't show. That's what we want if AI is disabled.
-            // If AI is enabled, the first chunk comes in, we add assistant msg + updating content.
+            messages: [...prev.messages, userMessage, assistantPlaceholder],
+            isLoading: true,
             error: null
         }))
 
@@ -160,8 +167,7 @@ export function useChat(userId: string) {
             setCurrentItemId(itemId)
         }
 
-        const assistantMessageId = crypto.randomUUID()
-        let assistantMessageAdded = false
+        let assistantMessageAdded = true
 
         try {
             // Use FormData if there are attachments
@@ -232,35 +238,72 @@ export function useChat(userId: string) {
                                             continue
                                         }
 
-                                        setState(prev => {
-                                            // If not added yet, add it now
-                                            let newMessages = [...prev.messages]
-                                            if (!assistantMessageAdded) {
-                                                newMessages.push({
-                                                    id: assistantMessageId,
-                                                    role: 'assistant',
-                                                    content: fullContent,
-                                                    timestamp: new Date()
-                                                })
-                                                assistantMessageAdded = true
-                                            } else {
-                                                newMessages = newMessages.map(msg =>
-                                                    msg.id === assistantMessageId ? { ...msg, content: fullContent } : msg
-                                                )
-                                            }
+                                        // Stop loading immediately
+                                        setState(prev => ({ ...prev, isLoading: false }))
 
-                                            return {
-                                                ...prev,
-                                                messages: newMessages,
-                                                isLoading: false
+                                        // Pre-split content into paragraphs for natural bubble separation
+                                        const paragraphs = fullContent.includes('\n\n')
+                                            ? fullContent.split('\n\n').filter((p: string) => p.trim())
+                                            : [fullContent]
+
+                                        const typingSpeed = 15 // ms per char
+                                        let paragraphIndex = 0
+                                        let charIndex = 0
+
+                                        // Create placeholder messages for all paragraphs
+                                        setState(prev => {
+                                            const newMessages: Message[] = []
+                                            for (const msg of prev.messages) {
+                                                if (msg.id === assistantMessageId) {
+                                                    // Replace placeholder with first paragraph placeholder
+                                                    paragraphs.forEach((_, pIdx) => {
+                                                        newMessages.push({
+                                                            id: paragraphs.length > 1 ? `${assistantMessageId}-${pIdx}` : assistantMessageId,
+                                                            role: 'assistant' as const,
+                                                            content: '', // Start empty
+                                                            timestamp: new Date(),
+                                                            source: 'ai' as const
+                                                        })
+                                                    })
+                                                } else {
+                                                    newMessages.push(msg)
+                                                }
                                             }
+                                            return { ...prev, messages: newMessages }
                                         })
+
+                                        const typeChar = () => {
+                                            if (paragraphIndex >= paragraphs.length) return
+
+                                            const currentParagraph = paragraphs[paragraphIndex]
+                                            charIndex += Math.floor(Math.random() * 2) + 1
+                                            if (charIndex > currentParagraph.length) charIndex = currentParagraph.length
+
+                                            const currentMsgId = paragraphs.length > 1
+                                                ? `${assistantMessageId}-${paragraphIndex}`
+                                                : assistantMessageId
+                                            const currentText = currentParagraph.substring(0, charIndex)
+
+                                            setState(prev => {
+                                                const newMessages = prev.messages.map(msg =>
+                                                    msg.id === currentMsgId ? { ...msg, content: currentText } : msg
+                                                )
+                                                return { ...prev, messages: newMessages }
+                                            })
+
+                                            if (charIndex < currentParagraph.length) {
+                                                setTimeout(typeChar, typingSpeed)
+                                            } else if (paragraphIndex < paragraphs.length - 1) {
+                                                // Move to next paragraph after a small pause
+                                                paragraphIndex++
+                                                charIndex = 0
+                                                setTimeout(typeChar, 200) // Pause between bubbles
+                                            }
+                                        }
+
+                                        typeChar()
                                     } else {
-                                        // Streaming update (not done yet)
-                                        // We might get partial content here if backend supports likely
-                                        // But if logic mainly uses 'done' for full content update (from previous pattern), 
-                                        // we should check if data.content exists.
-                                        // Assuming previous pattern relied mostly on 'done' for final render or 'content' update
+                                        // Streaming update (not done yet) - ignore if we are simulating
                                     }
                                 } catch { /* ignore */ }
                             }

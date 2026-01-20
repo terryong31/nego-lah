@@ -27,22 +27,42 @@ def invalidate_session(user_id: str):
 
 
 # ============================================
-# ITEM CACHING
+# ITEM CACHING (with SHA validation)
 # ============================================
 
-def cache_items(items: List[Dict], ttl: int = 300):
-    """Cache all items list (5 min default)"""
-    redis_client.setex("items:all", ttl, json.dumps(items))
+def cache_items_with_hash(items: List[Dict], data_hash: str, ttl: int = 3600):
+    """
+    Cache all items list with a hash for validation.
+    Hash is computed from count + max timestamp to detect changes.
+    """
+    redis_client.hset("items:all", mapping={
+        "data": json.dumps(items),
+        "hash": data_hash
+    })
+    redis_client.expire("items:all", ttl)
+
+
+def get_cached_items_with_hash() -> tuple[Optional[List[Dict]], Optional[str]]:
+    """Get cached items list and its hash"""
+    result = redis_client.hgetall("items:all")
+    if result and "data" in result:
+        return json.loads(result["data"]), result.get("hash")
+    return None, None
+
+
+def cache_items(items: List[Dict], ttl: int = 3600):
+    """Cache all items list (1 hour default - legacy function for compatibility)"""
+    redis_client.setex("items:all:legacy", ttl, json.dumps(items))
 
 
 def get_cached_items() -> Optional[List[Dict]]:
-    """Get cached items list"""
-    data = redis_client.get("items:all")
+    """Get cached items list (legacy - without hash validation)"""
+    data = redis_client.get("items:all:legacy")
     return json.loads(data) if data else None
 
 
-def cache_item(item_id: str, item: Dict, ttl: int = 600):
-    """Cache single item (10 min default)"""
+def cache_item(item_id: str, item: Dict, ttl: int = 7200):
+    """Cache single item (2 hours default - images use Supabase CDN caching)"""
     redis_client.setex(f"item:{item_id}", ttl, json.dumps(item))
 
 
@@ -53,10 +73,12 @@ def get_cached_item(item_id: str) -> Optional[Dict]:
 
 
 def invalidate_item_cache(item_id: str = None):
-    """Clear item cache (single or all)"""
+    """Clear item cache (single or all) and reset validation timer"""
     if item_id:
         redis_client.delete(f"item:{item_id}")
     redis_client.delete("items:all")
+    redis_client.delete("items:all:legacy")
+    redis_client.delete("items:last_validation")  # Force re-validation on next request
 
 
 # ============================================

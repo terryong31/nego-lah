@@ -117,7 +117,7 @@ export function Orders() {
                             <span className="absolute left-0 bottom-0 w-0 h-[1px] bg-[var(--text-primary)] transition-all duration-300 group-hover:w-full" />
                         </span>
                     </button>
-                    <h1 className="text-xl font-bold text-[var(--text-primary)]">My Orders</h1>
+                    <h1 className="text-xl font-bold text-[var(--text-primary)]">Orders</h1>
                     <ThemeToggle className="text-[var(--text-secondary)] hover:text-[var(--text-primary)]" />
                 </div>
             </header>

@@ -37,50 +37,219 @@ def get_item_info(item_id: str) -> str:
     """
     from connector import user_supabase
     
+    print(f"\n{'='*50}")
+    print(f"🔍 GET_ITEM_INFO CALLED")
+    print(f"📦 Item ID: {item_id}")
+    print(f"{'='*50}")
+    
     response = user_supabase.table('items').select('*').eq('id', item_id).execute()
+    
+    print(f"📊 Query result: {len(response.data) if response.data else 0} items found")
+    if response.data:
+        print(f"📋 Data: {response.data}")
     
     if response.data and len(response.data) > 0:
         item = response.data[0]
-        return f"""
+        result = f"""
+item_id: {item.get('id')}
 Item: {item.get('name', 'Unknown')}
 Description: {item.get('description', 'No description')}
 Price: RM{item.get('price', 'N/A')}
 Condition: {item.get('condition', 'Unknown')}
 Status: {item.get('status', 'available')}
 """
+        print(f"✅ Returning item info")
+        return result
+    print(f"❌ Item not found!")
     return "Item not found."
 
 
 @tool
-def evaluate_offer(item_id: str, offered_price: float) -> str:
+def search_items(search_term: str) -> str:
+    """
+    Search for items by name or description.
+    Use this when a buyer mentions an item by name but you don't have the item_id.
+    
+    Args:
+        search_term: The search query (item name or keywords)
+    
+    Returns:
+        List of matching items with their IDs, names, and prices
+    """
+    from connector import user_supabase
+    
+    print(f"\n{'='*50}")
+    print(f"🔎 SEARCH_ITEMS CALLED")
+    print(f"🔤 Search term: '{search_term}'")
+    print(f"{'='*50}")
+    
+    # Search by name (case-insensitive)
+    query = f'%{search_term}%'
+    print(f"📝 SQL ILIKE query: name ILIKE '{query}'")
+    
+    response = user_supabase.table('items').select('id, name, price, condition, status').ilike('name', query).limit(5).execute()
+    
+    print(f"📊 Query result: {len(response.data) if response.data else 0} items found")
+    if response.data:
+        print(f"📋 Raw data: {response.data}")
+    
+    if response.data and len(response.data) > 0:
+        results = []
+        for item in response.data:
+            status = item.get('status')
+            print(f"  - {item.get('name')}: status={status}")
+            if status == 'available':
+                results.append(f"- {item.get('name')}: RM{item.get('price')} (Condition: {item.get('condition')}) [item_id: {item.get('id')}]")
+        
+        if results:
+            print(f"✅ Returning {len(results)} available items")
+            return "Found items:\n" + "\n".join(results) + "\n\nUse the item_id when calling evaluate_offer or create_checkout_link."
+        print(f"⚠️ Items found but none are available")
+        return "No available items found matching that search."
+    print(f"❌ No items found matching search")
+    return "No items found matching that search."
+
+
+@tool
+def list_all_items() -> str:
+    """
+    List all available items in the store.
+    Use this when a buyer asks what items you have, what's for sale, or wants to browse your inventory.
+    
+    Returns:
+        List of all available items with names, prices, and conditions
+    """
+    from connector import user_supabase
+    
+    print(f"\n{'='*50}")
+    print(f"📦 LIST_ALL_ITEMS CALLED")
+    print(f"{'='*50}")
+    
+    # First, get all items to see what statuses exist
+    all_items_response = user_supabase.table('items').select('id, name, price, condition, status').limit(20).execute()
+    print(f"📊 All items in DB: {len(all_items_response.data) if all_items_response.data else 0}")
+    if all_items_response.data:
+        for item in all_items_response.data:
+            print(f"  - {item.get('name')}: status='{item.get('status')}'")
+    
+    # Get available items (or all items if none are 'available')
+    available_items = [item for item in (all_items_response.data or []) if item.get('status') in ['available', 'Active', 'active', None, '']]
+    
+    if not available_items:
+        # If no items match 'available' status, just return all items
+        available_items = all_items_response.data or []
+        print(f"⚠️ No items with 'available' status, returning all {len(available_items)} items")
+    
+    if available_items and len(available_items) > 0:
+        results = []
+        for item in available_items:
+            results.append(f"- {item.get('name')}: RM{item.get('price')} ({item.get('condition')})")
+        
+        print(f"✅ Returning {len(results)} items")
+        return f"Here are my available items:\n" + "\n".join(results) + "\n\nLet me know which one catches your eye! 😊"
+    
+    print(f"❌ No items available")
+    return "I don't have any items listed right now. Check back later!"
+
+
+@tool
+def assess_discount_eligibility(buyer_reason: str) -> str:
+    """
+    Assess if a buyer's reason for requesting a discount is genuine and deserving.
+    Use your judgment to evaluate sincerity, relevance, and impact.
+    
+    Args:
+        buyer_reason: The buyer's stated reason for wanting a discount
+    
+    Returns:
+        Assessment with recommended discount percentage (0%, 5%, or 10%)
+    """
+    from .config import DISCOUNT_SCORING_GUIDE
+    
+    # LOG: Tool was called
+    print(f"\n{'='*50}")
+    print(f"🎯 ASSESS_DISCOUNT_ELIGIBILITY CALLED")
+    print(f"📝 Buyer's reason: {buyer_reason}")
+    print(f"{'='*50}\n")
+    
+    # This tool returns the scoring guide for the AI to use in its assessment
+    # The AI will evaluate and decide based on the guide
+    result = f"""
+Use this guide to assess the buyer's reason:
+{DISCOUNT_SCORING_GUIDE}
+
+Buyer's reason: "{buyer_reason}"
+
+Provide your assessment:
+1. SINCERITY score (1-10):
+2. RELEVANCE score (1-10):
+3. IMPACT score (1-10):
+4. Average score:
+5. Recommended extra discount: 0%, 5%, or 10%
+"""
+    return result
+
+
+@tool
+def evaluate_offer(item_id: str, offered_price: float, extra_discount_percent: float = 0) -> str:
     """
     Evaluate a buyer's price offer against the item's minimum acceptable price.
     
     Args:
         item_id: The item being negotiated
         offered_price: The price the buyer is offering
+        extra_discount_percent: Extra discount earned via assess_discount_eligibility (0, 5, or 10)
     
     Returns:
         Recommendation on whether to accept, counter, or reject the offer
     """
     from connector import user_supabase
     
+    # LOG: Tool was called
+    print(f"\n{'='*50}")
+    print(f"💰 EVALUATE_OFFER CALLED")
+    print(f"📦 Item ID: {item_id}")
+    print(f"💵 Offered Price: RM{offered_price}")
+    print(f"🎁 Extra Discount: {extra_discount_percent}%")
+    print(f"{'='*50}")
+    
     response = user_supabase.table('items').select('*').eq('id', item_id).execute()
     
     if not response.data:
+        print("❌ Item not found!")
         return "Cannot evaluate - item not found."
     
     item = response.data[0]
     listed_price = float(item.get('price', 0))
-    min_price = float(item.get('min_price', listed_price * 0.7))  # Default 70% of listed price
+    min_price = float(item.get('min_price', listed_price * 0.7))  # Absolute floor from DB
+    
+    # Apply extra discount to the acceptable threshold (not below min_price)
+    discount_amount = listed_price * (extra_discount_percent / 100)
+    adjusted_threshold = max(listed_price - discount_amount, min_price)
+    
+    # LOG: Price calculations
+    print(f"📊 Listed Price: RM{listed_price}")
+    print(f"🔻 Min Price (floor): RM{min_price}")
+    print(f"🎯 Adjusted Threshold: RM{adjusted_threshold}")
+    print(f"{'='*50}\n")
     
     if offered_price >= listed_price:
-        return f"ACCEPT: Offer of RM{offered_price} meets or exceeds listed price of RM{listed_price}."
+        result = f"ACCEPT: Offer of RM{offered_price} meets or exceeds listed price of RM{listed_price}."
+    elif offered_price >= adjusted_threshold:
+        if offered_price <= min_price:
+            result = f"ACCEPT_FLOOR: Offer of RM{offered_price} hits the absolute minimum. Tell buyer: 'This is the lowest I can go, friend! Take it or leave it 😅'"
+        else:
+            counter = (offered_price + listed_price) / 2
+            result = f"COUNTER: Offer of RM{offered_price} is acceptable but below listed price. Suggest counter-offer of RM{counter:.2f}."
     elif offered_price >= min_price:
-        counter = (offered_price + listed_price) / 2
-        return f"COUNTER: Offer of RM{offered_price} is acceptable but below listed price. Suggest counter-offer of RM{counter:.2f}."
+        # Close to floor but not quite - counter with something near min
+        counter = (offered_price + min_price) / 2
+        result = f"COUNTER: Offer of RM{offered_price} is low but negotiable. Counter with RM{counter:.2f}. Min is RM{min_price}."
     else:
-        return f"REJECT: Offer of RM{offered_price} is below minimum acceptable price. Lowest acceptable is RM{min_price}."
+        result = f"REJECT_FLOOR: Offer of RM{offered_price} is below the absolute minimum of RM{min_price}. Tell buyer: 'Sorry, that's below my cost. The lowest I can do is RM{min_price}.'"
+    
+    print(f"📋 RESULT: {result}")
+    return result
 
 
 @tool
@@ -100,30 +269,48 @@ def create_checkout_link(item_id: str, agreed_price: float) -> str:
     from env import STRIPE_API_KEY
     from connector import user_supabase
     
+    print(f"\n{'='*50}")
+    print(f"💳 CREATE_CHECKOUT_LINK CALLED")
+    print(f"📦 Item ID: {item_id}")
+    print(f"💰 Agreed Price: RM{agreed_price}")
+    print(f"{'='*50}")
+    
     stripe.api_key = STRIPE_API_KEY
+    print(f"🔑 Stripe API Key: {'*' * 20}{STRIPE_API_KEY[-4:] if STRIPE_API_KEY else 'NOT SET'}")
     
     # Get item details
     response = user_supabase.table('items').select('*').eq('id', item_id).execute()
+    print(f"📊 Item lookup result: {len(response.data) if response.data else 0} items")
+    
     if not response.data:
+        print(f"❌ Item not found!")
         return "Cannot create checkout - item not found."
     
     item = response.data[0]
+    print(f"✅ Item found: {item.get('name')}")
     
     try:
         # Create Stripe Payment Link
+        print(f"🔄 Creating Stripe Price...")
         price = stripe.Price.create(
             product_data={"name": item.get('name', 'Item')},
             unit_amount=int(agreed_price * 100),  # Convert to cents
             currency="myr"
         )
+        print(f"✅ Price created: {price.id}")
         
+        print(f"🔄 Creating Stripe PaymentLink...")
         payment_link = stripe.PaymentLink.create(
             line_items=[{"price": price.id, "quantity": 1}],
             metadata={"item_id": item_id}
         )
+        print(f"✅ PaymentLink created: {payment_link.url}")
         
-        return f"Checkout link created: {payment_link.url}"
+        result = f"SUCCESS: Here's the checkout link for {item.get('name', 'the item')} at RM{agreed_price:.2f}. Use this markdown format when sharing with buyer: [Pay RM{agreed_price:.2f} Now]({payment_link.url})"
+        print(f"📋 Returning: {result}")
+        return result
     except Exception as e:
+        print(f"❌ Error: {str(e)}")
         return f"Error creating checkout: {str(e)}"
 
 
@@ -171,7 +358,7 @@ def web_search(query: str) -> str:
 
 
 # Tools for the agent
-tools = [get_item_info, evaluate_offer, create_checkout_link, web_search]
+tools = [get_item_info, search_items, list_all_items, assess_discount_eligibility, evaluate_offer, create_checkout_link, web_search]
 
 # Create the agent using langgraph
 agent = create_react_agent(model, tools)
@@ -219,8 +406,12 @@ def chat(user_id: str, message: str, item_id: str = None, files: list = None) ->
         # Fetch item details to provide context without exposing UUID
         item_details = get_item_details_for_context(item_id)
         if item_details:
-            context = f"""[Currently discussing: "{item_details.get('name', 'Unknown Item')}"]
-[Item Info: {item_details.get('description', 'No description')}, Price: RM{item_details.get('price', 'N/A')}, Condition: {item_details.get('condition', 'Unknown')}]
+            context = f"""SYSTEM: You are negotiating for the following item. IMPORTANT: When using tools like evaluate_offer or create_checkout_link, use the exact item_id provided below.
+item_id: {item_id}
+Item Name: "{item_details.get('name', 'Unknown Item')}"
+Price: RM{item_details.get('price', 'N/A')}
+Condition: {item_details.get('condition', 'Unknown')}
+Description: {item_details.get('description', 'No description')}
 
 Buyer: {message}"""
             input_message = context
@@ -282,3 +473,7 @@ Buyer: {message}"""
     conversation_memory.add_message(user_id, "ai", agent_response, item_id)
     
     return agent_response
+
+
+
+

@@ -7,6 +7,7 @@ import { Profile } from './pages/Profile'
 import { ProfileSetup } from './pages/ProfileSetup'
 import { Orders } from './pages/Orders'
 import { AuthProvider, useAuth } from './context/AuthContext'
+import { NotFound } from './pages/NotFound'
 import { useState, useCallback, useEffect } from 'react'
 
 interface ChatContext {
@@ -202,7 +203,9 @@ function AppRoutes() {
             </ProtectedRoute>
           }
         />
-      </Routes>
+
+        <Route path="*" element={<NotFound />} />
+      </Routes >
     </>
   )
 }

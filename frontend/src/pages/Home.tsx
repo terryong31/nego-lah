@@ -2,7 +2,6 @@ import { useState, useEffect, useRef } from 'react'
 import { ItemCard } from '../components/ItemCard'
 import { ItemDetail } from './ItemDetail'
 import { Button } from '../components/Button'
-import { ThemeToggle } from '../components/ThemeToggle'
 import { ConfirmationModal } from '../components/ConfirmationModal'
 import { useItems } from '../hooks/useItems'
 
@@ -16,6 +15,31 @@ interface HomeProps {
     userName?: string
 }
 
+// Import carousel images from assets
+import bicycleImg from '../assets/bicycle.jpg'
+import carImg from '../assets/car.jpg'
+import focusriteImg from '../assets/focusrite.jpg'
+import guitarImg from '../assets/guitar.jpg'
+import laptopImg from '../assets/laptop.jpg'
+import motorImg from '../assets/motor.jpeg'
+import skateboardImg from '../assets/skateboard.jpeg'
+import sofaImg from '../assets/sofa.jpg'
+import speakersImg from '../assets/speakers.jpg'
+import tvImg from '../assets/tv.jpeg'
+
+const carouselItems = [
+    bicycleImg,
+    carImg,
+    focusriteImg,
+    guitarImg,
+    laptopImg,
+    motorImg,
+    skateboardImg,
+    sofaImg,
+    speakersImg,
+    tvImg
+]
+
 export function Home({ onChat, onLogin, onOpenProfile, isAuthenticated, onLogout, userAvatar, userName }: HomeProps) {
     const { items, isLoading, error, fetchItems, getCheckoutUrl } = useItems()
     const [searchExpanded, setSearchExpanded] = useState(false)
@@ -27,10 +51,26 @@ export function Home({ onChat, onLogin, onOpenProfile, isAuthenticated, onLogout
     const itemsSectionRef = useRef<HTMLDivElement>(null)
     const searchInputRef = useRef<HTMLInputElement>(null)
     const searchContainerRef = useRef<HTMLDivElement>(null)
+    const trackRef = useRef<HTMLUListElement>(null)
+    const profileMenuRef = useRef<HTMLDivElement>(null)
+
+    // Handle click outside profile menu
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (profileMenuRef.current && !profileMenuRef.current.contains(event.target as Node)) {
+                setProfileMenuOpen(false)
+            }
+        }
+        document.addEventListener('mousedown', handleClickOutside)
+        return () => {
+            document.removeEventListener('mousedown', handleClickOutside)
+        }
+    }, [])
 
     // Logout Modal State
     const [showLogoutConfirm, setShowLogoutConfirm] = useState(false)
     const [isLoggingOut, setIsLoggingOut] = useState(false)
+    const [buyingItemId, setBuyingItemId] = useState<string | null>(null)
 
     // Track scroll position to auto-expand search when at items section
     useEffect(() => {
@@ -61,10 +101,91 @@ export function Home({ onChat, onLogin, onOpenProfile, isAuthenticated, onLogout
         return () => document.removeEventListener('mousedown', handleClickOutside)
     }, [isScrolledToItems])
 
+    // Auto-scroll carousel with infinite loop
+    useEffect(() => {
+        const track = trackRef.current
+        if (!track) return
+
+        let animationId: number
+        let lastTime = 0
+        const scrollSpeed = 0.06 // pixels per ms
+
+        // We assume 3 sets of items.
+        // We want to keep the scroll position within the middle set (Set 2).
+        // Range: [Start of Set 2, Start of Set 3)
+        // If < Start of Set 2 -> Jump to corresponding pos in Set 3 (actually, Jump Forward by SetWidth).
+        // If >= Start of Set 3 -> Jump to corresponding pos in Set 2 (Jump Backward by SetWidth).
+        // To seamlessly loop, we need to know the width of one set.
+
+        let singleSetWidth = 0
+
+        const updateDimensions = () => {
+            if (!track || track.children.length < 20) return // Need at least 2 sets to measure diff
+            // Distance between Start of Set 2 (index 10) and Start of Set 1 (index 0)
+            const firstItem = track.children[0] as HTMLElement
+            const secondSetFirstItem = track.children[10] as HTMLElement
+
+            if (firstItem && secondSetFirstItem) {
+                singleSetWidth = secondSetFirstItem.offsetLeft - firstItem.offsetLeft
+            }
+        }
+
+        // Initialize measuring
+        updateDimensions()
+
+        // Start in the middle set if near 0 (initial load)
+        if (track.scrollLeft < 100 && singleSetWidth > 0) {
+            track.scrollLeft = singleSetWidth
+        }
+
+        const animate = (currentTime: number) => {
+            if (lastTime !== 0) {
+                const delta = currentTime - lastTime
+                track.scrollLeft += scrollSpeed * delta
+            }
+            lastTime = currentTime
+
+            // Check boundaries
+            if (singleSetWidth > 0) {
+                // Forward loop: If we reach start of Set 3 (2 * W), jump back to Set 2 (1 * W)
+                // We add a small buffer or check >= 2*W. Actually offsetLeft of Set 3 is 2*singleSetWidth relative to Set 1.
+                // Let's use flexible logic:
+
+                // If scrolled past Set 2 (entering Set 3)
+                if (track.scrollLeft >= singleSetWidth * 2) {
+                    track.scrollLeft -= singleSetWidth
+                }
+                // If scrolled before Set 2 (entering Set 1) - effectively scrolling backwards
+                else if (track.scrollLeft < singleSetWidth) {
+                    track.scrollLeft += singleSetWidth
+                }
+            } else {
+                updateDimensions()
+            }
+
+            animationId = requestAnimationFrame(animate)
+        }
+
+        animationId = requestAnimationFrame(animate)
+        window.addEventListener('resize', updateDimensions)
+
+        return () => {
+            cancelAnimationFrame(animationId)
+            window.removeEventListener('resize', updateDimensions)
+        }
+    }, [selectedItem])
+
     const handleBuy = async (itemId: string) => {
-        const url = await getCheckoutUrl(itemId)
-        if (url) {
-            window.location.href = url
+        setBuyingItemId(itemId)
+        try {
+            const url = await getCheckoutUrl(itemId)
+            if (url) {
+                window.location.href = url
+            } else {
+                setBuyingItemId(null)
+            }
+        } catch {
+            setBuyingItemId(null)
         }
     }
 
@@ -117,7 +238,7 @@ export function Home({ onChat, onLogin, onOpenProfile, isAuthenticated, onLogout
             </div>
 
             {/* Header */}
-            <header className="border-b border-[var(--border)] bg-[var(--header-bg)] backdrop-blur-sm sticky top-0 z-20 relative">
+            <header className="liquid-glass-header sticky top-0 z-50">
                 <div className="max-w-6xl mx-auto px-6 md:px-4 py-4 flex items-center justify-between">
                     <a href="/" className="flex items-center gap-2 hover:opacity-80 transition-opacity">
                         <img src="/logo.png" alt="Logo" className="w-8 h-8 object-contain" />
@@ -155,71 +276,109 @@ export function Home({ onChat, onLogin, onOpenProfile, isAuthenticated, onLogout
                             />
                         </div>
 
-                        {/* Orders Icon - Only show when authenticated */}
-                        {isAuthenticated && (
-                            <a
-                                href="/orders"
-                                className="p-2 text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
-                                aria-label="My Orders"
-                            >
-                                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z" />
-                                    <path d="M3 6h18" />
-                                    <path d="M16 10a4 4 0 0 1-8 0" />
-                                </svg>
-                            </a>
-                        )}
 
-                        <ThemeToggle className="text-[var(--text-secondary)] hover:text-[var(--text-primary)]" />
+
+                        <button
+                            onClick={() => onChat('general')}
+                            className="p-2 text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+                            aria-label="Chat"
+                        >
+                            {/* Round chat bubble with tail facing right */}
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="scale-x-[-1]">
+                                <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
+                            </svg>
+                        </button>
 
                         {isAuthenticated ? (
-                            <div className="relative">
+                            <div className="relative" ref={profileMenuRef}>
                                 <button
                                     onClick={() => setProfileMenuOpen(!profileMenuOpen)}
-                                    className="focus:outline-none rounded-full"
+                                    className="focus:outline-none flex items-center gap-3 hover:opacity-80 transition-opacity"
                                 >
                                     {userAvatar ? (
                                         <img
                                             src={userAvatar}
                                             alt="Profile"
-                                            className="w-8 h-8 rounded-full object-cover hover:opacity-80 transition-opacity cursor-pointer"
+                                            className="w-8 h-8 rounded-full object-cover"
                                         />
                                     ) : (
-                                        <div className="w-8 h-8 rounded-full bg-[var(--bg-tertiary)] flex items-center justify-center text-sm font-medium text-[var(--text-secondary)] hover:opacity-80 transition-opacity cursor-pointer">
+                                        <div className="w-8 h-8 rounded-full bg-[var(--bg-tertiary)] flex items-center justify-center text-sm font-medium text-[var(--text-secondary)]">
                                             {(userName || 'U').charAt(0).toUpperCase()}
                                         </div>
                                     )}
+                                    <div className="hidden md:flex items-center gap-2 text-sm font-medium text-[var(--text-primary)]">
+                                        <span>Hello, {userName?.split(' ')[0]}</span>
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={`text-[var(--text-secondary)] transition-transform duration-200 ${profileMenuOpen ? 'rotate-180' : ''}`}>
+                                            <path d="m6 9 6 6 6-6" />
+                                        </svg>
+                                    </div>
                                 </button>
 
                                 {/* Profile Dropdown Menu */}
                                 {profileMenuOpen && (
-                                    <>
-                                        {/* Backdrop to close menu */}
-                                        <div
-                                            className="fixed inset-0 z-40"
-                                            onClick={() => setProfileMenuOpen(false)}
-                                        />
-                                        <div className="absolute right-0 mt-2 w-40 bg-[var(--card-bg)] backdrop-blur-md border border-[var(--border)] rounded-xl shadow-lg z-50 py-2 animate-fade-in">
-                                            <button
-                                                onClick={() => {
+                                    <div className="absolute right-0 mt-2 w-56 rounded-2xl shadow-xl z-50 py-2 animate-fade-in liquid-glass-menu border border-white/20">
+                                        <button
+                                            onClick={() => {
+                                                setProfileMenuOpen(false)
+                                                onOpenProfile()
+                                            }}
+                                            className="w-full px-4 py-2 text-left text-sm text-[var(--text-primary)] hover:bg-purple-100 dark:hover:bg-white/10 transition-colors cursor-pointer"
+                                        >
+                                            Profile
+                                        </button>
+
+                                        {/* Theme Toggle in Dropdown */}
+                                        <button
+                                            onClick={() => {
+                                                const switchTheme = () => {
+                                                    const root = document.documentElement
+                                                    const isDark = root.classList.contains('dark')
+                                                    if (isDark) {
+                                                        root.classList.remove('dark')
+                                                        root.classList.add('light')
+                                                        localStorage.setItem('theme', 'light')
+                                                    } else {
+                                                        root.classList.remove('light')
+                                                        root.classList.add('dark')
+                                                        localStorage.setItem('theme', 'dark')
+                                                    }
                                                     setProfileMenuOpen(false)
-                                                    onOpenProfile()
-                                                }}
-                                                className="w-full px-4 py-2 text-left text-sm text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] transition-colors"
-                                            >
-                                                Profile
-                                            </button>
-                                            <button
-                                                onClick={() => {
-                                                    setProfileMenuOpen(false)
-                                                    setShowLogoutConfirm(true)
-                                                }}
-                                                className="w-full px-4 py-2 text-left text-sm text-red-500 hover:bg-[var(--bg-tertiary)] transition-colors"
-                                            >
-                                                Logout
-                                            </button>
-                                        </div>
-                                    </>
+                                                }
+
+                                                if (document.startViewTransition) {
+                                                    document.documentElement.classList.add('theme-transition')
+                                                    const transition = document.startViewTransition(switchTheme)
+                                                    transition.finished.finally(() => {
+                                                        document.documentElement.classList.remove('theme-transition')
+                                                    })
+                                                } else {
+                                                    switchTheme()
+                                                }
+                                            }}
+                                            className="w-full px-4 py-2 text-left text-sm text-[var(--text-primary)] hover:bg-purple-100 dark:hover:bg-white/10 transition-colors flex justify-between items-center cursor-pointer"
+                                        >
+                                            <span>Theme</span>
+                                            <span className="text-xs opacity-75">{localStorage.getItem('theme') === 'light' ? 'Light' : 'Dark'}</span>
+                                        </button>
+
+                                        <a
+                                            href="/orders"
+                                            className="block w-full px-4 py-2 text-left text-sm text-[var(--text-primary)] hover:bg-purple-100 dark:hover:bg-white/10 transition-colors cursor-pointer"
+                                        >
+                                            My Orders
+                                        </a>
+                                        <div className="h-px bg-[var(--border)] my-1 mx-2"></div>
+                                        <button
+                                            onClick={() => {
+                                                setProfileMenuOpen(false)
+                                                setShowLogoutConfirm(true)
+                                            }}
+                                            className="w-full px-4 py-2 text-left text-sm text-red-500 hover:bg-red-100 dark:hover:bg-red-900/20 transition-colors cursor-pointer"
+                                        >
+                                            Logout
+                                        </button>
+                                    </div>
+
                                 )}
                             </div>
                         ) : (
@@ -249,10 +408,11 @@ export function Home({ onChat, onLogin, onOpenProfile, isAuthenticated, onLogout
                             )}
                         </button>
                     </div>
-                </div>
+                </div >
 
                 {/* Mobile Menu Dropdown - Slide down animation */}
-                <div className={`md:hidden overflow-hidden transition-all duration-300 ease-out ${mobileMenuOpen ? 'max-h-96 opacity-100' : 'max-h-0 opacity-0'}`}>
+                < div className={`md:hidden overflow-hidden transition-all duration-300 ease-out ${mobileMenuOpen ? 'max-h-96 opacity-100' : 'max-h-0 opacity-0'}`
+                }>
                     <div className="border-t border-[var(--border)] bg-[var(--header-bg)] backdrop-blur-sm px-4 py-4 space-y-3">
                         {/* Mobile Search */}
                         <div className="relative">
@@ -303,7 +463,7 @@ export function Home({ onChat, onLogin, onOpenProfile, isAuthenticated, onLogout
                                     onClick={() => setMobileMenuOpen(false)}
                                     className="flex items-center justify-between w-full py-2.5 px-3 rounded-lg hover:bg-[var(--bg-tertiary)] transition-colors"
                                 >
-                                    <span className="text-base font-medium text-[var(--text-primary)]">My Orders</span>
+                                    <span className="text-base font-medium text-[var(--text-primary)]">Orders</span>
                                 </a>
                                 <button
                                     onClick={() => { onOpenProfile(); setMobileMenuOpen(false); }}
@@ -312,7 +472,7 @@ export function Home({ onChat, onLogin, onOpenProfile, isAuthenticated, onLogout
                                     <span className="text-base font-medium text-[var(--text-primary)]">Profile</span>
                                 </button>
                                 <button
-                                    onClick={() => { onLogout(); setMobileMenuOpen(false); }}
+                                    onClick={() => { setShowLogoutConfirm(true); setMobileMenuOpen(false); }}
                                     className="flex items-center justify-between w-full py-2.5 px-3 rounded-lg hover:bg-red-500/10 transition-colors"
                                 >
                                     <span className="text-base font-medium text-red-500">Logout</span>
@@ -324,26 +484,26 @@ export function Home({ onChat, onLogin, onOpenProfile, isAuthenticated, onLogout
                             </Button>
                         )}
                     </div>
-                </div>
-            </header>
+                </div >
+            </header >
 
             {/* Hero Section */}
-            <section className="relative z-10 py-12 md:py-20">
+            < section className="relative z-10 py-16 md:py-28" >
                 <div className="max-w-6xl mx-auto px-4 flex flex-col lg:flex-row items-center gap-8 lg:gap-16">
                     {/* Left: Hero Text */}
                     <div className="flex-1 text-center lg:text-left">
                         <h2 className="text-3xl md:text-5xl lg:text-6xl font-bold mb-6 tracking-tight">
-                            <span className="bg-gradient-to-r from-blue-400 via-purple-400 to-pink-400 bg-clip-text text-transparent">
-                                Discover Unique
+                            <span className="text-gradient-barang">
+                                'Barang Cun'
                             </span>
                             <br />
                             <span className="text-[var(--text-primary)]">
-                                Second-Hand Treasures
+                                Nego Sampai Jadi!
                             </span>
                         </h2>
                         <p className="text-base md:text-lg text-[var(--text-secondary)] max-w-xl mb-6 leading-relaxed">
-                            Quality pre-owned items at unbeatable prices. Each piece tells a story —
-                            find yours today and negotiate directly with my AI.
+                            Quality pre-loved items looking for new owner. Why pay retail when can nego?
+                            Chat with our AI to get the 'best price‘
                         </p>
                         <div className="flex flex-wrap justify-center lg:justify-start gap-4">
                             {/* Powered by Stripe badge */}
@@ -357,45 +517,22 @@ export function Home({ onChat, onLogin, onOpenProfile, isAuthenticated, onLogout
                     {/* Right: Horizontal Slider */}
                     <div className="flex-1 w-full lg:w-auto flex justify-center">
                         <div className="track-wrapper">
-                            <ul className="track">
-                                <li className="track__item">
-                                    <img src="https://images.unsplash.com/photo-1523437237164-d442d57cc3c9?crop=entropy&cs=tinysrgb&fit=crop&fm=jpg&h=300&w=300" alt="" />
-                                </li>
-                                <li className="track__item">
-                                    <img src="https://images.unsplash.com/photo-1421930866250-aa0594cea05c?crop=entropy&cs=tinysrgb&fit=crop&fm=jpg&h=300&w=300" alt="" />
-                                </li>
-                                <li className="track__item">
-                                    <img src="https://images.unsplash.com/photo-1536152470836-b943b246224c?crop=entropy&cs=tinysrgb&fit=crop&fm=jpg&h=300&w=300" alt="" />
-                                </li>
-                                <li className="track__item">
-                                    <img src="https://images.unsplash.com/photo-1491824989090-cc2d0b57eb0d?crop=entropy&cs=tinysrgb&fit=crop&fm=jpg&h=300&w=300" alt="" />
-                                </li>
-                                <li className="track__item">
-                                    <img src="https://images.unsplash.com/photo-1518717202715-9fa9d099f58a?crop=entropy&cs=tinysrgb&fit=crop&fm=jpg&h=300&w=300" alt="" />
-                                </li>
-                                <li className="track__item">
-                                    <img src="https://images.unsplash.com/photo-1507608869274-d3177c8bb4c7?crop=entropy&cs=tinysrgb&fit=crop&fm=jpg&h=300&w=300" alt="" />
-                                </li>
-                                <li className="track__item">
-                                    <img src="https://images.unsplash.com/photo-1459213599465-03ab6a4d5931?crop=entropy&cs=tinysrgb&fit=crop&fm=jpg&h=300&w=300" alt="" />
-                                </li>
-                                <li className="track__item">
-                                    <img src="https://images.unsplash.com/photo-1495107334309-fcf20504a5ab?crop=entropy&cs=tinysrgb&fit=crop&fm=jpg&h=300&w=300" alt="" />
-                                </li>
-                                <li className="track__item">
-                                    <img src="https://images.unsplash.com/photo-1453791052107-5c843da62d97?crop=entropy&cs=tinysrgb&fit=crop&fm=jpg&h=300&w=300" alt="" />
-                                </li>
-                                <li className="track__item">
-                                    <img src="https://images.unsplash.com/photo-1471978445661-ad6ec1f5ba50?crop=entropy&cs=tinysrgb&fit=crop&fm=jpg&h=300&w=300" alt="" />
-                                </li>
+                            <ul className="track" ref={trackRef}>
+                                {/* Render 3 sets for seamless infinite scroll */}
+                                {[...carouselItems, ...carouselItems, ...carouselItems].map((src, index) => (
+                                    <li key={index} className="track__item">
+                                        <img src={src} alt="" />
+                                    </li>
+                                ))}
+
                             </ul>
                         </div>
                     </div>
                 </div>
-            </section>
+            </section >
 
             {/* Featured Items Section */}
-            <div ref={itemsSectionRef} className="relative z-10">
+            < div ref={itemsSectionRef} className="relative z-10" >
                 <div className="max-w-6xl mx-auto px-4">
                     <div className="flex items-center gap-4 mb-8">
                         <div className="h-px flex-1 bg-gradient-to-r from-transparent via-[var(--border)] to-transparent"></div>
@@ -469,6 +606,7 @@ export function Home({ onChat, onLogin, onOpenProfile, isAuthenticated, onLogout
                                                     onLogin()
                                                 }
                                             }}
+                                            isBuying={buyingItemId === item.id}
                                         />
                                     </div>
                                 ))}
@@ -486,10 +624,10 @@ export function Home({ onChat, onLogin, onOpenProfile, isAuthenticated, onLogout
                         </>
                     )}
                 </main>
-            </div>
+            </div >
 
             {/* Footer - Sticky to bottom */}
-            <footer className="border-t border-[var(--border)] py-6 relative z-10 mt-auto">
+            < footer className="border-t border-[var(--border)] py-6 relative z-10 mt-auto" >
                 <div className="max-w-6xl mx-auto px-6 flex justify-between items-center text-sm text-[var(--text-muted)]">
                     <p>
                         &copy; Nego-lah {new Date().getFullYear()}
@@ -498,9 +636,9 @@ export function Home({ onChat, onLogin, onOpenProfile, isAuthenticated, onLogout
                         Created by Terry Ong
                     </p>
                 </div>
-            </footer>
+            </footer >
             {/* Logout Confirmation Modal */}
-            <ConfirmationModal
+            < ConfirmationModal
                 isOpen={showLogoutConfirm}
                 onClose={() => setShowLogoutConfirm(false)}
                 onConfirm={() => {
@@ -517,6 +655,6 @@ export function Home({ onChat, onLogin, onOpenProfile, isAuthenticated, onLogout
                 confirmText="Yes"
                 cancelText="No"
             />
-        </div>
+        </div >
     )
 }

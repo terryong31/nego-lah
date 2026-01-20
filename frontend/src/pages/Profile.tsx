@@ -101,9 +101,12 @@ export function Profile() {
     }
 
     return (
-        <div className="min-h-screen bg-[var(--bg-primary)]">
+        <div className="min-h-screen chat-bg-gradient">
             {/* Stars Background */}
             <div className="stars-container">
+                <div className="shooting-star"></div>
+                <div className="shooting-star"></div>
+                <div className="shooting-star"></div>
                 <div className="stars"></div>
             </div>
 

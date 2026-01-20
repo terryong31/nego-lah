@@ -128,6 +128,7 @@ export function Admin({ onBack }: AdminProps) {
 
     // User management state
     const [users, setUsers] = useState<User[]>([]) // Changed to User[]
+    const [usersLoading, setUsersLoading] = useState(false)
     const [selectedUserChat, setSelectedUserChat] = useState<{ userId: string, messages: ChatMessage[] } | null>(null)
     const [chatOffset, setChatOffset] = useState(0)
     const [hasMoreMessages, setHasMoreMessages] = useState(true)
@@ -189,11 +190,7 @@ export function Admin({ onBack }: AdminProps) {
         prevTabRef.current = activeTab
     }, [activeTab])
 
-    useEffect(() => {
-        if (selectedUserChat && messagesEndRef.current && chatOffset === 0) {
-            messagesEndRef.current.scrollIntoView({ behavior: 'smooth' })
-        }
-    }, [selectedUserChat, chatOffset])
+
 
     const verifyToken = async () => {
         try {
@@ -214,6 +211,12 @@ export function Admin({ onBack }: AdminProps) {
     // Real-time Chat Logic
     const [isUserTyping, setIsUserTyping] = useState(false)
     const typingTimeoutRef = useRef<any>(null)
+
+    useEffect(() => {
+        if (selectedUserChat && messagesEndRef.current && (chatOffset === 0 || isUserTyping)) {
+            messagesEndRef.current.scrollIntoView({ behavior: 'smooth' })
+        }
+    }, [selectedUserChat, chatOffset, isUserTyping])
 
     const sendTyping = async () => {
         if (!selectedUserChat) return
@@ -529,6 +532,7 @@ export function Admin({ onBack }: AdminProps) {
 
     // User Management Functions
     const fetchUsers = async () => {
+        setUsersLoading(true)
         try {
             const res = await fetch(`${API_URL}/admin/users`)
             if (res.ok) {
@@ -537,6 +541,8 @@ export function Admin({ onBack }: AdminProps) {
             }
         } catch {
             setError('Failed to fetch users')
+        } finally {
+            setUsersLoading(false)
         }
     }
 
@@ -998,7 +1004,7 @@ export function Admin({ onBack }: AdminProps) {
                                                                 Available
                                                             </span>
                                                         </td>
-                                                        <td className="px-4 py-3 text-right space-x-2">
+                                                        <td className="px-4 py-3 text-right space-x-2 whitespace-nowrap">
                                                             <Button variant="ghost" size="sm" onClick={() => startEdit(item)}>
                                                                 Edit
                                                             </Button>
@@ -1020,7 +1026,11 @@ export function Admin({ onBack }: AdminProps) {
                 {/* Users Table */}
                 {activeTab === 'users' && (
                     <div className={tabDirection === 'left' ? 'animate-slide-in-left' : 'animate-slide-in-right'}>
-                        {users.length === 0 ? (
+                        {usersLoading ? (
+                            <div className="flex justify-center py-16">
+                                <div className="w-6 h-6 border-2 border-[var(--text-secondary)] border-t-[var(--text-primary)] rounded-full animate-spin" />
+                            </div>
+                        ) : users.length === 0 ? (
                             <p className="text-center text-[var(--text-muted)] py-16">No users found</p>
                         ) : (
                             <div className="bg-[var(--bg-tertiary)] border border-[var(--border)] rounded-xl overflow-hidden backdrop-blur-sm">
@@ -1056,7 +1066,7 @@ export function Admin({ onBack }: AdminProps) {
                                                             onChange={(checked) => handleToggleAI(user.id, checked)}
                                                         />
                                                     </td>
-                                                    <td className="px-4 py-3 text-right space-x-2">
+                                                    <td className="px-4 py-3 text-right space-x-2 whitespace-nowrap">
                                                         <Button
                                                             variant="ghost"
                                                             size="sm"
@@ -1237,7 +1247,7 @@ export function Admin({ onBack }: AdminProps) {
             {/* Full Chat View - Replaces entire screen when active */}
             {selectedUserChat && (
                 <div
-                    className="h-screen flex flex-col overflow-hidden fixed inset-0 z-50"
+                    className="h-[100dvh] flex flex-col overflow-hidden fixed inset-0 z-50"
                     style={{ background: 'var(--chat-bg-gradient)' }}
                 >
                     {/* Stars Background */}
@@ -1291,8 +1301,8 @@ export function Admin({ onBack }: AdminProps) {
                                 // System Message
                                 if (msg.source === 'system') {
                                     return (
-                                        <div key={idx} className="flex justify-center my-4">
-                                            <span className="text-xs text-[var(--text-muted)] bg-[var(--bg-secondary)] px-3 py-1 rounded-full border border-[var(--border)]">
+                                        <div key={idx} className="flex justify-center py-2">
+                                            <span className="text-sm text-[var(--text-muted)] italic">
                                                 {msg.content}
                                             </span>
                                         </div>

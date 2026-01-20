@@ -4,26 +4,91 @@ from fastapi import UploadFile
 from typing import List
 import json
 import uuid
-from cache import cache_items, get_cached_items, invalidate_item_cache
+import hashlib
+from cache import cache_items_with_hash, get_cached_items_with_hash, invalidate_item_cache
+import redis
+from env import REDIS_URL
+
+# Redis client for fingerprint caching
+_redis = redis.from_url(REDIS_URL, decode_responses=True)
+
+
+def compute_items_hash(count: int, max_created_at: str) -> str:
+    """Compute SHA hash from item count and latest timestamp"""
+    data = f"{count}:{max_created_at}"
+    return hashlib.sha256(data.encode()).hexdigest()[:16]
+
+
+def get_items_fingerprint():
+    """
+    Get a lightweight fingerprint of items table.
+    Queries only COUNT and MAX(created_at) - much cheaper than full table scan.
+    """
+    # Query count
+    count_response = user_supabase.table('items').select('id', count='exact').execute()
+    item_count = count_response.count or 0
+    
+    # Query latest created_at
+    latest_response = user_supabase.table('items').select('created_at').order('created_at', desc=True).limit(1).execute()
+    max_created_at = latest_response.data[0]['created_at'] if latest_response.data else ""
+    
+    return item_count, max_created_at
+
+
+def should_validate_cache() -> bool:
+    """
+    Check if we should validate cache against Supabase.
+    Returns True only if 30 seconds have passed since last validation.
+    This prevents hitting Supabase on every single request.
+    """
+    last_check = _redis.get("items:last_validation")
+    if last_check:
+        return False  # Already validated recently, use cache
+    
+    # Mark that we're validating now (expires in 30 seconds)
+    _redis.setex("items:last_validation", 30, "1")
+    return True
+
     
 def get_items(keyword: str = None) -> List[str]:
     if keyword is None:
-        # Try cache first
-        cached = get_cached_items()
-        if cached:
-            return cached
+        # Get cached data and its hash
+        cached, cached_hash = get_cached_items_with_hash()
         
-        # Cache miss - get from DB and cache
+        if cached and cached_hash:
+            # Only validate against Supabase every 30 seconds
+            if should_validate_cache():
+                # Time to check if data has changed
+                count, max_timestamp = get_items_fingerprint()
+                current_hash = compute_items_hash(count, max_timestamp)
+                
+                if current_hash != cached_hash:
+                    # Cache is stale - invalidate and refetch below
+                    invalidate_item_cache()
+                    cached = None
+                else:
+                    # Cache validated - return cached data
+                    return cached
+            else:
+                # Skip validation - trust the cache
+                return cached
+        
+        # Cache miss or stale - get full data from DB
         retrieve = user_supabase.table('items').select('*').execute()
         if retrieve.data:
-            cache_items(retrieve.data)  # Cache for 5 min
+            # Compute hash and cache with it
+            count = len(retrieve.data)
+            max_timestamp = max((item.get('created_at', '') for item in retrieve.data), default='')
+            data_hash = compute_items_hash(count, max_timestamp)
+            cache_items_with_hash(retrieve.data, data_hash)
             return retrieve.data
-        return False
+        return []
     else:
+        # Keyword search - don't cache as results vary
         retrieve = user_supabase.table('items').select('*').ilike('description', f'%{keyword}%').execute()
         if retrieve.data:
             return retrieve.data
-        return False
+        return []
 
 async def upload_item(
     name: str, 

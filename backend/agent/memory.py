@@ -122,34 +122,14 @@ class ConversationMemory:
             print(f"Error in sync_to_supabase: {e}")
 
     def broadcast_message(self, user_id: str, role: str, message: str, source: str):
-        """Broadcast a new message to the user's channel."""
-        try:
-            # Avoid circular import
-            import sys
-            import os
-            # Add parent directory to path to find connector
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            parent_dir = os.path.dirname(current_dir)
-            if parent_dir not in sys.path:
-                sys.path.append(parent_dir)
-            
-            from connector import admin_supabase
-            
-            payload = {
-                "role": role,
-                "content": message,
-                "source": source,
-                "timestamp": "now()" # Client will parse this, or we can use datetime
-            }
-            
-            admin_supabase.channel(f'chat:{user_id}').send({
-                'type': 'broadcast',
-                'event': 'new_message',
-                'payload': payload
-            })
-            
-        except Exception as e:
-            print(f"Error in broadcast_message: {e}")
+        """Broadcast a new message to the user's channel.
+        
+        NOTE: Supabase realtime is only available in the async client.
+        The frontend uses polling/subscriptions instead, so this is disabled.
+        """
+        # Realtime broadcast disabled - sync client doesn't support it
+        # Frontend subscribes to DB changes directly via Supabase Realtime JS client
+        pass
     
     def get_history(self, user_id: str, limit: int = 10, offset: int = 0) -> List[Dict]:
         """Get recent conversation history for a user."""

@@ -12,4 +12,4 @@ langchain-community
 langchain
 langchain-core
 redis
-pydantic-settingsbcrypt
+pydantic-settings

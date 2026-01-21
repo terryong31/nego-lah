@@ -6,6 +6,8 @@ import { Login } from './pages/Login'
 import { Profile } from './pages/Profile'
 import { ProfileSetup } from './pages/ProfileSetup'
 import { Orders } from './pages/Orders'
+import { Privacy } from './pages/Privacy'
+import { Terms } from './pages/Terms'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import { NotFound } from './pages/NotFound'
 import { useState, useCallback, useEffect } from 'react'
@@ -204,6 +206,8 @@ function AppRoutes() {
           }
         />
 
+        <Route path="/privacy" element={<Privacy />} />
+        <Route path="/terms" element={<Terms />} />
         <Route path="*" element={<NotFound />} />
       </Routes >
     </>

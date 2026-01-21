@@ -7,6 +7,7 @@ interface AuthContextType {
     user: User | null
     session: Session | null
     loading: boolean
+    isPasswordRecovery: boolean
     signInWithGoogle: () => Promise<void>
     signOut: () => Promise<void>
 }
@@ -17,6 +18,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const [user, setUser] = useState<User | null>(null)
     const [session, setSession] = useState<Session | null>(null)
     const [loading, setLoading] = useState(true)
+    const [isPasswordRecovery, setIsPasswordRecovery] = useState(false)
 
     useEffect(() => {
         // Get initial session
@@ -28,10 +30,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         // Listen for auth changes
         const { data: { subscription } } = supabase.auth.onAuthStateChange(
-            async (_event, session) => {
+            async (event, session) => {
+                console.log('Auth event:', event)
+
+                // Handle password recovery specially
+                if (event === 'PASSWORD_RECOVERY') {
+                    setIsPasswordRecovery(true)
+                    setSession(session)
+                    setUser(session?.user ?? null)
+                    setLoading(false)
+
+                    // Redirect to reset-password page if not already there
+                    if (window.location.pathname !== '/reset-password') {
+                        window.location.href = '/reset-password'
+                    }
+                    return
+                }
+
+                // For other events, handle normally
                 setSession(session)
                 setUser(session?.user ?? null)
                 setLoading(false)
+
+                // Clear password recovery flag on sign out
+                if (event === 'SIGNED_OUT') {
+                    setIsPasswordRecovery(false)
+                }
             }
         )
 
@@ -46,6 +70,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         await signOut()
         setUser(null)
         setSession(null)
+        setIsPasswordRecovery(false)
     }
 
     return (
@@ -53,6 +78,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             user,
             session,
             loading,
+            isPasswordRecovery,
             signInWithGoogle: handleSignInWithGoogle,
             signOut: handleSignOut
         }}>

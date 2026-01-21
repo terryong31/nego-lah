@@ -4,58 +4,49 @@ import { Button } from '../components/Button'
 import { Input } from '../components/Input'
 import { Card } from '../components/Card'
 import { supabase } from '../lib/supabase'
+import { useAuth } from '../context/AuthContext'
 
 export function ResetPassword() {
     const [password, setPassword] = useState('')
     const [confirmPassword, setConfirmPassword] = useState('')
-    const [isLoading, setIsLoading] = useState(true) // Start loading while checking session
+    const [isLoading, setIsLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
     const [success, setSuccess] = useState(false)
-    const [isValidSession, setIsValidSession] = useState(false)
     const navigate = useNavigate()
+    const { session, isPasswordRecovery } = useAuth()
 
-    // Listen for auth state changes - Supabase will fire PASSWORD_RECOVERY event
     useEffect(() => {
-        // First check if there's already a session (user clicked link and tokens were exchanged)
-        const checkExistingSession = async () => {
-            const { data: { session } } = await supabase.auth.getSession()
-            if (session) {
-                setIsValidSession(true)
-                setIsLoading(false)
-                return true
+        // Check for errors in URL hash (e.g., expired token)
+        const hash = window.location.hash
+        if (hash.includes('error=')) {
+            const params = new URLSearchParams(hash.substring(1))
+            const errorDesc = params.get('error_description')
+            if (errorDesc) {
+                setError(decodeURIComponent(errorDesc.replace(/\+/g, ' ')))
+            } else {
+                setError('The reset link is invalid or has expired. Please request a new one.')
             }
-            return false
+            setIsLoading(false)
+            return
         }
 
-        // Set up auth state change listener for when tokens are exchanged
-        const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-            if (event === 'PASSWORD_RECOVERY' || (event === 'SIGNED_IN' && session)) {
-                setIsValidSession(true)
+        // Check if we have a valid session for password reset
+        const checkSession = async () => {
+            // Wait a moment for auth to process
+            await new Promise(resolve => setTimeout(resolve, 500))
+
+            const { data: { session: currentSession } } = await supabase.auth.getSession()
+
+            if (currentSession || isPasswordRecovery) {
                 setError(null)
-                setIsLoading(false)
+            } else {
+                setError('Invalid or expired reset link. Please request a new password reset.')
             }
-        })
+            setIsLoading(false)
+        }
 
-        // Check existing session first
-        checkExistingSession().then((hasSession) => {
-            if (!hasSession) {
-                // Give Supabase a moment to process the URL tokens
-                setTimeout(() => {
-                    setIsLoading(false)
-                    // If still no session after timeout, show error
-                    supabase.auth.getSession().then(({ data: { session } }) => {
-                        if (!session) {
-                            setError('Invalid or expired reset link. Please request a new password reset.')
-                        } else {
-                            setIsValidSession(true)
-                        }
-                    })
-                }, 1500)
-            }
-        })
-
-        return () => subscription.unsubscribe()
-    }, [])
+        checkSession()
+    }, [session, isPasswordRecovery])
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()

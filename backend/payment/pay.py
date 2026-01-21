@@ -29,8 +29,8 @@ def create_checkout_session(item_name: str, price_cents: int, item_id: str):
             'quantity': 1,
         }],
         mode='payment',
-        success_url='http://localhost:5173/?payment=success',
-        cancel_url='http://localhost:5173/?payment=cancelled',
+        success_url='https://nego-lah.terryong.me/?payment=success',
+        cancel_url='https://nego-lah.terryong.me/?payment=cancelled',
         metadata={'item_id': item_id},
     )
     

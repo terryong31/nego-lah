@@ -4,7 +4,7 @@ import { Button } from '../components/Button'
 import { Input } from '../components/Input'
 import { Card } from '../components/Card'
 import { useAuth } from '../context/AuthContext'
-import { signInWithEmail, signUpWithEmail } from '../lib/supabase'
+import { signInWithEmail, signUpWithEmail, resetPassword } from '../lib/supabase'
 
 interface LoginProps {
     onBack: () => void
@@ -149,6 +149,31 @@ export function Login({ onBack }: LoginProps) {
                                 required
                                 disabled={isLoading}
                             />
+                            {isLoginMode && (
+                                <button
+                                    type="button"
+                                    onClick={async () => {
+                                        if (!email) {
+                                            setError('Please enter your email address first')
+                                            return
+                                        }
+                                        setIsLoading(true)
+                                        setError(null)
+                                        const { error } = await resetPassword(email)
+                                        setIsLoading(false)
+                                        if (error) {
+                                            setError(error.message)
+                                        } else {
+                                            setSuccess('Password reset email sent! Check your inbox.')
+                                        }
+                                    }}
+                                    className="text-xs text-[var(--text-muted)] hover:text-[var(--accent)] mt-2 relative group"
+                                    disabled={isLoading}
+                                >
+                                    Forgot password?
+                                    <span className="absolute left-0 bottom-0 w-0 h-[1px] bg-[var(--accent)] transition-all duration-300 group-hover:w-full" />
+                                </button>
+                            )}
                         </div>
 
                         <div className="pt-2">

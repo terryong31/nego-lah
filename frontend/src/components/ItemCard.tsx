@@ -83,7 +83,7 @@ export function ItemCard({ item, onClick, onBuy, isBuying = false }: ItemCardPro
                             <Button
                                 variant="filled"
                                 size="sm"
-                                className="!rounded-full !px-6 flex items-center gap-2 min-w-[80px] h-8 justify-center hover:text-white transition-colors"
+                                className="!rounded-full !px-6 flex items-center gap-2 min-w-[80px] h-8 justify-center transition-colors"
                                 onClick={handleBuyClick}
                                 disabled={isBuying}
                             >

@@ -919,3 +919,64 @@ a {
     clip-path: circle(150% at 0% 100%);
   }
 }
+
+/* =========================================
+   Theme Transition Fallback (for mobile browsers without View Transitions API)
+   ========================================= */
+
+/* Fallback animation when View Transitions API is not supported */
+.theme-transition-fallback {
+  animation: theme-fade-fallback 0.5s ease-in-out;
+}
+
+.theme-transition-fallback * {
+  transition: background-color 0.5s ease-in-out,
+    color 0.5s ease-in-out,
+    border-color 0.5s ease-in-out,
+    box-shadow 0.3s ease-in-out !important;
+}
+
+@keyframes theme-fade-fallback {
+  0% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.8;
+  }
+
+  100% {
+    opacity: 1;
+  }
+}
+
+/* =========================================
+   Carousel Performance Optimization (for mobile)
+   ========================================= */
+
+/* Use GPU acceleration for smoother scrolling */
+.track {
+  will-change: scroll-position;
+  -webkit-overflow-scrolling: touch;
+  scroll-behavior: auto;
+}
+
+.track__item {
+  will-change: transform;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+}
+
+/* Mobile-specific carousel optimizations */
+@media (max-width: 640px) {
+  .track {
+    /* Reduce complexity on mobile */
+    scroll-snap-type: none;
+  }
+
+  .track__item img {
+    /* GPU-accelerated rendering */
+    transform: translateZ(0);
+    will-change: transform;
+  }
+}

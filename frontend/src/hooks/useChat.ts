@@ -146,6 +146,21 @@ export function useChat(userId: string) {
             attachments: attachmentObjects.length > 0 ? attachmentObjects : undefined
         }
 
+        // Check AI status BEFORE showing placeholder
+        let aiEnabled = true
+        try {
+            const { data } = await supabase
+                .from('chat_settings')
+                .select('ai_enabled')
+                .eq('user_id', userId)
+                .maybeSingle()
+            if (data) {
+                aiEnabled = data.ai_enabled ?? true
+            }
+        } catch {
+            // Default to AI enabled if check fails
+        }
+
         const assistantMessageId = crypto.randomUUID()
         const assistantPlaceholder: Message = {
             id: assistantMessageId,
@@ -155,19 +170,30 @@ export function useChat(userId: string) {
             source: 'ai'
         }
 
-        // Add user message AND empty assistant placeholder immediately
-        setState(prev => ({
-            ...prev,
-            messages: [...prev.messages, userMessage, assistantPlaceholder],
-            isLoading: true,
-            error: null
-        }))
+        // Add user message, and only add assistant placeholder if AI is enabled
+        if (aiEnabled) {
+            setState(prev => ({
+                ...prev,
+                messages: [...prev.messages, userMessage, assistantPlaceholder],
+                isLoading: true,
+                error: null
+            }))
+        } else {
+            // AI disabled - just add user message, no loading state
+            setState(prev => ({
+                ...prev,
+                messages: [...prev.messages, userMessage],
+                isLoading: false,
+                error: null
+            }))
+        }
 
         if (itemId) {
             setCurrentItemId(itemId)
         }
 
-        let assistantMessageAdded = true
+        let assistantMessageAdded = aiEnabled
+
 
         try {
             // Use FormData if there are attachments
@@ -464,9 +490,10 @@ export function useChat(userId: string) {
     }, [userId])
 
     const loadMoreMessages = useCallback(async () => {
-        if (state.isLoading || !userId) return
+        if (!userId) return false
 
         try {
+            // Get current message count directly from state at call time
             const currentCount = state.messages.length
             const response = await fetch(`${API_URL}/chat/history/${userId}?limit=20&offset=${currentCount}`)
             if (response.ok) {
@@ -479,7 +506,7 @@ export function useChat(userId: string) {
                                 msg.role as 'user' | 'assistant' | 'system'
 
                         oldMessages.push({
-                            id: `history-${currentCount + idx}`,
+                            id: `history-${currentCount + idx}-${Date.now()}`,
                             role: frontendRole,
                             content: msg.content,
                             timestamp: new Date(), // In a real app, backend should return timestamp

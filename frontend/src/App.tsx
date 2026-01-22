@@ -12,6 +12,7 @@ import { ResetPassword } from './pages/ResetPassword'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import { NotFound } from './pages/NotFound'
 import { useState, useCallback, useEffect } from 'react'
+import { useUnreadMessages } from './hooks/useUnreadMessages'
 
 interface ChatContext {
   itemId?: string
@@ -110,10 +111,14 @@ function AppRoutes() {
   // Use Supabase user ID if logged in, otherwise guest ID
   const userId = user?.id || `guest-${Date.now()}`
 
+  // Track unread messages
+  const { hasUnread, markAsRead } = useUnreadMessages(user?.id || null)
+
   const handleOpenChat = useCallback((itemId: string, itemName?: string) => {
     setChatContext({ itemId, itemName })
+    markAsRead() // Mark as read when opening chat
     navigate('/chat')
-  }, [navigate])
+  }, [navigate, markAsRead])
 
   const handleBackToHome = useCallback(() => {
     if (document.startViewTransition) {
@@ -156,6 +161,7 @@ function AppRoutes() {
               onLogout={signOut}
               userAvatar={user?.user_metadata?.avatar_url}
               userName={user?.user_metadata?.full_name || user?.email}
+              hasUnreadMessages={hasUnread}
             />
           }
         />

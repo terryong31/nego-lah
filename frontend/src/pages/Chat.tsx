@@ -17,6 +17,7 @@ export function Chat({ userId, itemId, itemName, onBack, userAvatar, userName }:
     const [input, setInput] = useState('')
     const [attachments, setAttachments] = useState<File[]>([])
     const messagesEndRef = useRef<HTMLDivElement>(null)
+    const mainRef = useRef<HTMLDivElement>(null)
     const fileInputRef = useRef<HTMLInputElement>(null)
     const hasSetInitialPlaceholder = useRef(false)
 
@@ -38,6 +39,29 @@ export function Chat({ userId, itemId, itemName, onBack, userAvatar, userName }:
     useEffect(() => {
         scrollToBottom()
     }, [messages])
+
+    // Wrap loadMoreMessages to preserve scroll position
+    const handleLoadMore = async () => {
+        const container = mainRef.current
+        if (!container) return
+
+        // Store current scroll height before loading
+        const scrollHeightBefore = container.scrollHeight
+
+        const success = await loadMoreMessages()
+
+        if (success) {
+            // After loading, restore scroll position to same relative position
+            // This keeps the user looking at the same messages they were viewing
+            requestAnimationFrame(() => {
+                const scrollHeightAfter = container.scrollHeight
+                const scrollDiff = scrollHeightAfter - scrollHeightBefore
+                container.scrollTop = scrollDiff
+            })
+        }
+    }
+
+
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault()
@@ -123,14 +147,14 @@ export function Chat({ userId, itemId, itemName, onBack, userAvatar, userName }:
             </header>
 
             {/* Messages - Scrollable middle section */}
-            <main className="flex-1 overflow-y-auto relative z-10">
+            <main ref={mainRef} className="flex-1 overflow-y-auto relative z-10">
                 <div className="max-w-2xl mx-auto px-4 py-6 space-y-4">
                     {/* Load More Button */}
                     <div className="flex justify-center">
                         <Button
                             variant="ghost"
                             size="sm"
-                            onClick={loadMoreMessages}
+                            onClick={handleLoadMore}
                             className="text-[var(--text-muted)] hover:text-[var(--text-primary)] text-xs"
                         >
                             Load previous messages

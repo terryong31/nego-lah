@@ -13,6 +13,7 @@ interface HomeProps {
     onLogout: () => void
     userAvatar?: string
     userName?: string
+    hasUnreadMessages?: boolean
 }
 
 // Import carousel images from assets
@@ -40,7 +41,7 @@ const carouselItems = [
     tvImg
 ]
 
-export function Home({ onChat, onLogin, onOpenProfile, isAuthenticated, onLogout, userAvatar, userName }: HomeProps) {
+export function Home({ onChat, onLogin, onOpenProfile, isAuthenticated, onLogout, userAvatar, userName, hasUnreadMessages }: HomeProps) {
     const { items, isLoading, error, fetchItems, getCheckoutUrl } = useItems()
     const [searchExpanded, setSearchExpanded] = useState(false)
     const [searchQuery, setSearchQuery] = useState('')
@@ -281,9 +282,13 @@ export function Home({ onChat, onLogin, onOpenProfile, isAuthenticated, onLogout
                         {isAuthenticated && (
                             <button
                                 onClick={() => onChat('general')}
-                                className="p-2 text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+                                className="relative p-2 text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
                                 aria-label="Chat"
                             >
+                                {/* Notification dot for unread messages */}
+                                {hasUnreadMessages && (
+                                    <span className="absolute top-1 right-1 w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse" />
+                                )}
                                 {/* Round chat bubble with tail facing right */}
                                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                     <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
@@ -324,7 +329,7 @@ export function Home({ onChat, onLogin, onOpenProfile, isAuthenticated, onLogout
                                                 setProfileMenuOpen(false)
                                                 onOpenProfile()
                                             }}
-                                            className="w-full px-4 py-2 text-left text-sm text-[var(--text-primary)] hover:bg-purple-100 dark:hover:bg-white/10 transition-colors cursor-pointer"
+                                            className="w-full px-4 py-2 text-left text-sm text-[var(--text-primary)] hover:bg-gray-200 dark:hover:bg-white/10 transition-colors cursor-pointer"
                                         >
                                             Profile
                                         </button>
@@ -357,7 +362,7 @@ export function Home({ onChat, onLogin, onOpenProfile, isAuthenticated, onLogout
                                                     switchTheme()
                                                 }
                                             }}
-                                            className="w-full px-4 py-2 text-left text-sm text-[var(--text-primary)] hover:bg-purple-100 dark:hover:bg-white/10 transition-colors flex justify-between items-center cursor-pointer"
+                                            className="w-full px-4 py-2 text-left text-sm text-[var(--text-primary)] hover:bg-gray-200 dark:hover:bg-white/10 transition-colors flex justify-between items-center cursor-pointer"
                                         >
                                             <span>Theme</span>
                                             <span className="text-xs opacity-75">{localStorage.getItem('theme') === 'light' ? 'Light' : 'Dark'}</span>
@@ -365,7 +370,7 @@ export function Home({ onChat, onLogin, onOpenProfile, isAuthenticated, onLogout
 
                                         <a
                                             href="/orders"
-                                            className="block w-full px-4 py-2 text-left text-sm text-[var(--text-primary)] hover:bg-purple-100 dark:hover:bg-white/10 transition-colors cursor-pointer"
+                                            className="block w-full px-4 py-2 text-left text-sm text-[var(--text-primary)] hover:bg-gray-200 dark:hover:bg-white/10 transition-colors cursor-pointer"
                                         >
                                             My Orders
                                         </a>
@@ -541,7 +546,12 @@ export function Home({ onChat, onLogin, onOpenProfile, isAuthenticated, onLogout
                                     onClick={() => { onChat('general'); setMobileMenuOpen(false); }}
                                     className="flex items-center justify-between w-full py-2.5 px-3 rounded-lg hover:bg-[var(--bg-tertiary)] transition-colors"
                                 >
-                                    <span className="text-base font-medium text-[var(--text-primary)]">Chat</span>
+                                    <span className="text-base font-medium text-[var(--text-primary)] flex items-center gap-2">
+                                        Chat
+                                        {hasUnreadMessages && (
+                                            <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+                                        )}
+                                    </span>
                                 </button>
                                 <a
                                     href="/orders"

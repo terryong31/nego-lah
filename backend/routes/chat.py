@@ -1,14 +1,14 @@
-from fastapi import APIRouter, HTTPException, Form, File, UploadFile, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from schemas import ChatRequest
-from cache import check_rate_limit
+from cache import check_rate_limit, check_ai_token_limit, track_ai_tokens
 from connector import admin_supabase
-from typing import Optional, List
+from typing import Optional
 import json
-import asyncio
 import base64
 
 router = APIRouter(prefix="", tags=["Chat"])
+
 
 
 def get_conversation_history(user_id: str, item_id: Optional[str] = None) -> list:
@@ -156,6 +156,35 @@ async def chat_stream(request: Request):
             yield f"data: {json.dumps({'content': '', 'done': True})}\n\n"
             return
         
+        # Check AI token rate limit (1M tokens per 30 minutes)
+        is_within_limit, current_usage = check_ai_token_limit(user_id)
+        if not is_within_limit:
+            # Rate limit exceeded - disable AI and hand over to admin
+            rate_limit_message = "Sorry you messaged me too many times, may try again later.\n\nI will hand this conversation to Terry so you can discuss with him directly"
+            
+            # Save user message first
+            conversation_memory.add_message(user_id, "human", message, source="human")
+            
+            # Send the rate limit message as an AI response
+            conversation_memory.add_message(user_id, "ai", rate_limit_message, source="ai")
+            
+            # Update chat_settings to disable AI and enable admin intervention
+            admin_supabase.table('chat_settings').upsert({
+                'user_id': user_id,
+                'ai_enabled': False,
+                'admin_intervening': True,
+                'updated_at': 'now()'
+            }).execute()
+            
+            # Add system message about AI retiring
+            system_msg = "--- The AI has retired from the chat and Terry will take over now ---"
+            conversation_memory.add_message(user_id, "system", system_msg, source="system")
+            
+            # Return rate limit message followed by system message
+            yield f"data: {json.dumps({'content': rate_limit_message, 'done': True})}\n\n"
+            return
+
+        
         # Get the full response first
         response = chat(
             user_id=user_id,
@@ -168,8 +197,14 @@ async def chat_stream(request: Request):
         if isinstance(response, list):
             response = json.dumps(response)
         
+        # Track token usage (estimate: ~4 chars per token)
+        input_tokens = len(message) // 4 + 1
+        output_tokens = len(response) // 4 + 1 if response else 0
+        track_ai_tokens(user_id, input_tokens, output_tokens)
+        
         # Send full response at once - frontend handles typing animation
         yield f"data: {json.dumps({'content': response, 'done': True})}\n\n"
+
     
     return StreamingResponse(
         generate(),

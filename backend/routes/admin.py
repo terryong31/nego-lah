@@ -206,7 +206,33 @@ def toggle_user_ai(user_id: str, request: AIToggleRequest):
     
     conversation_memory.add_message(user_id, "system", system_msg, source="system")
     
+    # Broadcast the system message in real-time via Supabase channel
+    try:
+        import requests
+        from env import SUPABASE_URL, SUPABASE_KEY
+        
+        # Use Supabase REST API to broadcast via realtime channel
+        broadcast_url = f"{SUPABASE_URL}/realtime/v1/api/broadcast"
+        headers = {
+            "apikey": SUPABASE_KEY,
+            "Authorization": f"Bearer {SUPABASE_KEY}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "channel": f"chat:{user_id}",
+            "event": "new_message",
+            "payload": {
+                "role": "system",
+                "content": system_msg,
+                "source": "system"
+            }
+        }
+        requests.post(broadcast_url, json=payload, headers=headers, timeout=2)
+    except Exception as e:
+        print(f"Failed to broadcast system message: {e}")
+    
     return {"message": f"AI {'enabled' if request.ai_enabled else 'disabled'} for user"}
+
 
 
 # =====================

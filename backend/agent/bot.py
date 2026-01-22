@@ -239,17 +239,24 @@ def evaluate_offer(item_id: str, offered_price: float, extra_discount_percent: f
         if offered_price <= min_price:
             result = f"ACCEPT_FLOOR: Offer of RM{offered_price} hits the absolute minimum. Tell buyer: 'This is the lowest I can go, friend! Take it or leave it 😅'"
         else:
+            # Counter should be HIGHER than what buyer offered, not lower!
             counter = (offered_price + listed_price) / 2
+            # Ensure counter is never below what buyer offered
+            counter = max(counter, offered_price + 1)
             result = f"COUNTER: Offer of RM{offered_price} is acceptable but below listed price. Suggest counter-offer of RM{counter:.2f}."
     elif offered_price >= min_price:
-        # Close to floor but not quite - counter with something near min
-        counter = (offered_price + min_price) / 2
-        result = f"COUNTER: Offer of RM{offered_price} is low but negotiable. Counter with RM{counter:.2f}. Min is RM{min_price}."
+        # Offer is between min and adjusted threshold - buyer needs to come up
+        # Counter with something between their offer and the listed price
+        counter = (offered_price + listed_price) / 2
+        # Ensure counter is never below what buyer offered
+        counter = max(counter, offered_price + 1)
+        result = f"COUNTER: Offer of RM{offered_price} is low but negotiable. Counter with RM{counter:.2f}. You can accept offers above RM{min_price}."
     else:
         result = f"REJECT_FLOOR: Offer of RM{offered_price} is below the absolute minimum of RM{min_price}. Tell buyer: 'Sorry, that's below my cost. The lowest I can do is RM{min_price}.'"
     
     print(f"📋 RESULT: {result}")
     return result
+
 
 
 @tool

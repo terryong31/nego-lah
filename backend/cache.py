@@ -139,3 +139,55 @@ def get_rate_limit_remaining(key: str, max_requests: int = 10) -> int:
     if current:
         return max(0, max_requests - int(current))
     return max_requests
+
+
+# ============================================
+# AI TOKEN RATE LIMITING
+# ============================================
+
+def track_ai_tokens(user_id: str, input_tokens: int, output_tokens: int, window: int = 1800):
+    """
+    Track AI token usage for a user.
+    
+    Args:
+        user_id: The user ID
+        input_tokens: Number of input tokens used
+        output_tokens: Number of output tokens used
+        window: Time window in seconds (default 30 minutes)
+    """
+    key = f"ai_tokens:{user_id}"
+    total_tokens = input_tokens + output_tokens
+    
+    # Use Redis INCRBY to atomically add tokens
+    pipe = redis_client.pipeline()
+    pipe.incrby(key, total_tokens)
+    pipe.expire(key, window)
+    pipe.execute()
+
+
+def check_ai_token_limit(user_id: str, limit: int = 1_000_000, window: int = 1800) -> tuple[bool, int]:
+    """
+    Check if user has exceeded AI token limit.
+    
+    Args:
+        user_id: The user ID
+        limit: Maximum tokens allowed in window (default 1M)
+        window: Time window in seconds (default 30 minutes)
+    
+    Returns:
+        Tuple of (is_within_limit, current_usage)
+    """
+    key = f"ai_tokens:{user_id}"
+    current = redis_client.get(key)
+    
+    if current:
+        usage = int(current)
+        return usage < limit, usage
+    return True, 0
+
+
+def get_ai_token_usage(user_id: str) -> int:
+    """Get current AI token usage for a user."""
+    key = f"ai_tokens:{user_id}"
+    current = redis_client.get(key)
+    return int(current) if current else 0

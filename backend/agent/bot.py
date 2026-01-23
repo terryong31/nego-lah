@@ -4,8 +4,11 @@ sys.path.append('..')
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_core.tools import tool
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
-from backend.env import GEMINI_API_KEY
+from env import GEMINI_API_KEY
 from .config import SELLER_PERSONA
 from .memory import ConversationMemory
 from .vector_store import VectorMemory
@@ -105,7 +108,7 @@ customer_agent = create_react_agent(model, customer_tools, prompt=CUSTOMER_AGENT
 
 def get_item_details_for_context(item_id: str) -> dict:
     """Helper to get item details for building context message."""
-    from backend.connector import user_supabase
+    from connector import user_supabase
     
     try:
         response = user_supabase.table('items').select('name, description, price, condition').eq('id', item_id).execute()

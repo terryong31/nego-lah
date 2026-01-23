@@ -17,9 +17,9 @@ def create_checkout_link(item_id: str, agreed_price: float) -> str:
         Checkout URL or error message
     """
     import stripe
-    from backend.env import STRIPE_API_KEY
-    from backend.connector import user_supabase
-    from backend.payment.payment_state import (
+    from env import STRIPE_API_KEY
+    from connector import user_supabase
+    from payment.payment_state import (
         get_pending_payment, 
         store_pending_payment,
         has_active_payment
@@ -147,7 +147,8 @@ def cancel_payment_link(item_id: str) -> str:
     Returns:
         Confirmation message
     """
-    from backend.payment.payment_state import get_pending_payment, delete_pending_payment
+
+    from payment.payment_state import get_pending_payment, delete_pending_payment
     
     print(f"\n{'='*50}")
     print(f"🚫 CANCEL_PAYMENT_LINK CALLED")
@@ -191,7 +192,8 @@ def collect_shipping_info(order_id: str, recipient_name: str, phone: str, addres
     Returns:
         Confirmation message
     """
-    from backend.connector import admin_supabase
+
+    from connector import admin_supabase
     
     print(f"\n{'='*50}")
     print(f"📦 COLLECT_SHIPPING_INFO CALLED")

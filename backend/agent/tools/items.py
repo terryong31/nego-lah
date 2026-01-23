@@ -12,7 +12,7 @@ def get_item_info(item_id: str) -> str:
     Returns:
         Item details including name, description, price, and condition
     """
-    from backend.connector import user_supabase
+    from connector import user_supabase
     
     print(f"\n{'='*50}")
     print(f"🔍 GET_ITEM_INFO CALLED")
@@ -53,7 +53,7 @@ def search_items(search_term: str) -> str:
     Returns:
         List of matching items with their IDs, names, and prices
     """
-    from backend.connector import user_supabase
+    from connector import user_supabase
     
     print(f"\n{'='*50}")
     print(f"🔎 SEARCH_ITEMS CALLED")
@@ -99,7 +99,7 @@ def list_all_items() -> str:
     Returns:
         List of all items with their IDs, names, and prices
     """
-    from backend.connector import user_supabase
+    from connector import user_supabase
     
     print(f"\n{'='*50}")
     print(f"📋 LIST_ALL_ITEMS CALLED")

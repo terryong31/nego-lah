@@ -51,7 +51,8 @@ def evaluate_offer(item_id: str, offered_price: float, extra_discount_percent: f
     Returns:
         Recommendation on whether to accept, counter, or reject the offer
     """
-    from backend.connector import user_supabase
+
+    from connector import user_supabase
     
     # LOG: Tool was called
     print(f"\n{'='*50}")

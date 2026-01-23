@@ -295,10 +295,18 @@ def create_checkout_link(item_id: str, agreed_price: float) -> str:
     # Get current user_id from conversation context
     # This will be passed in via the agent's state
     user_id = getattr(create_checkout_link, '_current_user_id', None)
+    context_item_id = getattr(create_checkout_link, '_current_item_id', None)
     print(f"👤 User ID: {user_id}")
+    print(f"📦 Context Item ID: {context_item_id}")
     
     if not user_id:
         return "ERROR: Cannot create checkout - user not identified. Please ensure you're logged in."
+
+    # FALLBACK: If item_id is missing, placeholder, or not found, try using context_item_id
+    # Common hallucinations: 'test-item-id', 'item_id', 'CHECKOUT_LINK'
+    if (not item_id or item_id in ['test-item-id', 'item_id', 'string']) and context_item_id:
+        print(f"⚠️ Invalid/Missing item_id '{item_id}', using context_item_id: {context_item_id}")
+        item_id = context_item_id
     
     # Check for existing payment link
     existing = get_pending_payment(user_id, item_id)
@@ -310,9 +318,16 @@ def create_checkout_link(item_id: str, agreed_price: float) -> str:
     response = user_supabase.table('items').select('*').eq('id', item_id).execute()
     print(f"📊 Item lookup result: {len(response.data) if response.data else 0} items")
     
+    # Double check: if lookup failed and we haven't tried context_item_id yet, try it now
+    if (not response.data) and context_item_id and (item_id != context_item_id):
+        print(f"⚠️ Lookup failed for '{item_id}', trying context_item_id: {context_item_id}")
+        item_id = context_item_id
+        response = user_supabase.table('items').select('*').eq('id', item_id).execute()
+        print(f"📊 Retry lookup result: {len(response.data) if response.data else 0} items")
+    
     if not response.data:
         print(f"❌ Item not found!")
-        return "Cannot create checkout - item not found."
+        return "Cannot create checkout - item not found. Please try again or ask about the item explicitly."
     
     item = response.data[0]
     item_name = item.get('name', 'Item')
@@ -610,9 +625,12 @@ Buyer: {message}"""
     # Save user message to memory (text only for now)
     conversation_memory.add_message(user_id, "human", message, item_id, source="human")
     
-    # Set user_id context for payment tools (they need to know who is making the request)
+    # Set user_id and item_id context for payment tools
     create_checkout_link._current_user_id = user_id
+    create_checkout_link._current_item_id = item_id
+    
     cancel_payment_link._current_user_id = user_id
+    cancel_payment_link._current_item_id = item_id
     
     # Get agent response
     result = agent.invoke({"messages": messages})

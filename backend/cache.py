@@ -11,8 +11,8 @@ redis_client = redis.from_url(REDIS_URL, decode_responses=True)
 # USER SESSIONS
 # ============================================
 
-def cache_session(user_id: str, token: str, ttl: int = 1800):
-    """Cache user session (30 min default)"""
+def cache_session(user_id: str, token: str, ttl: int = 7200):
+    """Cache user session (2 hours default - auto logout after TTL)"""
     redis_client.setex(f"session:{user_id}", ttl, token)
 
 

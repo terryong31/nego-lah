@@ -12,8 +12,9 @@ export function useUnreadMessages(userId: string | null) {
         if (!userId) return
 
         // Subscribe to new messages on this user's channel
+        // Must match the channel name backend broadcasts to: "chat:{userId}"
         const channel = supabase
-            .channel(`unread:${userId}`)
+            .channel(`chat:${userId}`)
             .on(
                 'broadcast',
                 { event: 'new_message' },

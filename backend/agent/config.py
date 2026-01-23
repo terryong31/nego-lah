@@ -96,4 +96,4 @@ IMPORTANT: Use YOUR judgment. Do not let keywords alone trigger discounts.
 # How aggressively to defend price (1-10)
 # 10 = very stubborn, rarely gives discount
 # 1 = gives discount easily
-PRICE_DEFENSE_LEVEL = 7
+PRICE_DEFENSE_LEVEL = 8

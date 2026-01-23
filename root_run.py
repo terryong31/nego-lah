@@ -13,7 +13,7 @@ FRONTEND_DIR = ROOT_DIR / "frontend"
 processes = []
 
 
-def cleanup(signum=None, frame=None):
+def cleanup():
     """Clean up all spawned processes"""
     print("\nShutting down all services...")
     for name, proc in processes:

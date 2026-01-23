@@ -578,16 +578,29 @@ export function Admin({ onBack }: AdminProps) {
     }
 
     const handleToggleAI = async (userId: string, enable: boolean) => {
+        // Optimistic update - immediately update UI
+        setUsers(prev => prev.map(u =>
+            u.id === userId ? { ...u, ai_enabled: enable } : u
+        ))
+
         try {
             const res = await fetch(`${API_URL}/admin/users/${userId}/ai`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ ai_enabled: enable })
             })
-            if (res.ok) {
-                fetchUsers()
+            if (!res.ok) {
+                // Revert on failure
+                setUsers(prev => prev.map(u =>
+                    u.id === userId ? { ...u, ai_enabled: !enable } : u
+                ))
+                setError('Failed to update AI setting')
             }
         } catch {
+            // Revert on error
+            setUsers(prev => prev.map(u =>
+                u.id === userId ? { ...u, ai_enabled: !enable } : u
+            ))
             setError('Failed to update AI setting')
         }
     }

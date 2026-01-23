@@ -36,7 +36,12 @@ export function Chat({ userId, itemId, itemName, onBack, userAvatar, userName }:
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
     }
 
+    // Track if we're loading history to skip auto-scroll
+    const isLoadingHistoryRef = useRef(false)
+
     useEffect(() => {
+        // Skip auto-scroll when loading history
+        if (isLoadingHistoryRef.current) return
         scrollToBottom()
     }, [messages])
 
@@ -44,6 +49,9 @@ export function Chat({ userId, itemId, itemName, onBack, userAvatar, userName }:
     const handleLoadMore = async () => {
         const container = mainRef.current
         if (!container) return
+
+        // Mark that we're loading history
+        isLoadingHistoryRef.current = true
 
         // Store current scroll height before loading
         const scrollHeightBefore = container.scrollHeight
@@ -57,7 +65,11 @@ export function Chat({ userId, itemId, itemName, onBack, userAvatar, userName }:
                 const scrollHeightAfter = container.scrollHeight
                 const scrollDiff = scrollHeightAfter - scrollHeightBefore
                 container.scrollTop = scrollDiff
+                // Reset flag after scroll restoration
+                isLoadingHistoryRef.current = false
             })
+        } else {
+            isLoadingHistoryRef.current = false
         }
     }
 
@@ -149,17 +161,19 @@ export function Chat({ userId, itemId, itemName, onBack, userAvatar, userName }:
             {/* Messages - Scrollable middle section */}
             <main ref={mainRef} className="flex-1 overflow-y-auto relative z-10">
                 <div className="max-w-2xl mx-auto px-4 py-6 space-y-4">
-                    {/* Load More Button */}
-                    <div className="flex justify-center">
-                        <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={handleLoadMore}
-                            className="text-[var(--text-muted)] hover:text-[var(--text-primary)] text-xs"
-                        >
-                            Load previous messages
-                        </Button>
-                    </div>
+                    {/* Load More Button - only show if more than 10 messages */}
+                    {messages.length > 10 && (
+                        <div className="flex justify-center">
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={handleLoadMore}
+                                className="text-[var(--text-muted)] hover:text-[var(--text-primary)] text-xs"
+                            >
+                                Load previous messages
+                            </Button>
+                        </div>
+                    )}
 
                     {messages.length === 0 && !isLoading && (
                         <div className="text-center py-12">
@@ -242,16 +256,16 @@ export function Chat({ userId, itemId, itemName, onBack, userAvatar, userName }:
 
                     {/* Admin Typing Indicator */}
                     {isPartnerTyping && (
-                        <div className="flex gap-3">
-                            <div className="flex-shrink-0">
-                                <div className="w-8 h-8 rounded-full bg-blue-600/20 text-blue-400 flex items-center justify-center text-xs font-medium border border-blue-500/30">
+                        <div className="flex justify-start my-4">
+                            <div className="flex gap-3 max-w-[80%]">
+                                <div className="w-8 h-8 rounded-full bg-[var(--bg-secondary)] flex-shrink-0 flex items-center justify-center text-xs font-medium border border-[var(--border)] text-[var(--text-secondary)]">
                                     T
                                 </div>
-                            </div>
-                            <div className="flex items-center">
-                                <span className="text-[var(--text-muted)] text-sm italic animate-pulse">
-                                    Terry is typing...
-                                </span>
+                                <div className="flex items-center">
+                                    <span className="text-[var(--text-muted)] text-sm italic animate-pulse">
+                                        Typing...
+                                    </span>
+                                </div>
                             </div>
                         </div>
                     )}

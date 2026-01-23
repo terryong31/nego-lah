@@ -3,11 +3,12 @@ from pydantic import BaseModel
 from admin_auth import verify_admin
 import secrets
 from typing import Optional, List, Annotated
+from cache import redis_client
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
 
-# Simple token storage (in production, use Redis or JWT)
-admin_tokens = {}
+# Admin session TTL: 2 hours
+ADMIN_SESSION_TTL = 7200  # seconds
 
 class AdminLoginRequest(BaseModel):
     username: str
@@ -28,27 +29,29 @@ class UserProfileUpdateRequest(BaseModel):
 
 @router.post("/login")
 def admin_login(request: AdminLoginRequest):
-    """Admin login endpoint."""
+    """Admin login endpoint with 2-hour session TTL."""
     if verify_admin(request.username, request.password):
-        # Generate session token
+        # Generate session token and store in Redis with TTL
         token = secrets.token_urlsafe(32)
-        admin_tokens[token] = request.username
-        return {"token": token, "message": "Login successful"}
+        redis_client.setex(f"admin_session:{token}", ADMIN_SESSION_TTL, request.username)
+        return {"token": token, "message": "Login successful", "expires_in": ADMIN_SESSION_TTL}
     else:
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
 @router.post("/logout")
 def admin_logout(token: str):
-    """Admin logout endpoint."""
-    if token in admin_tokens:
-        del admin_tokens[token]
+    """Admin logout endpoint - invalidates token in Redis."""
+    redis_client.delete(f"admin_session:{token}")
     return {"message": "Logged out"}
 
 @router.get("/verify")
 def verify_token(token: str):
-    """Verify if admin token is valid."""
-    if token in admin_tokens:
-        return {"valid": True, "username": admin_tokens[token]}
+    """Verify if admin token is valid (checks Redis)."""
+    username = redis_client.get(f"admin_session:{token}")
+    if username:
+        # Refresh TTL on each verification (sliding expiration)
+        redis_client.expire(f"admin_session:{token}", ADMIN_SESSION_TTL)
+        return {"valid": True, "username": username}
     return {"valid": False}
 
 
@@ -212,22 +215,30 @@ def toggle_user_ai(user_id: str, request: AIToggleRequest):
         from env import SUPABASE_URL, SUPABASE_KEY
         
         # Use Supabase REST API to broadcast via realtime channel
+        # Format: POST /realtime/v1/api/broadcast with messages array
         broadcast_url = f"{SUPABASE_URL}/realtime/v1/api/broadcast"
         headers = {
             "apikey": SUPABASE_KEY,
             "Authorization": f"Bearer {SUPABASE_KEY}",
             "Content-Type": "application/json"
         }
+        # Supabase broadcast API expects messages array with channel, event, payload
         payload = {
-            "channel": f"chat:{user_id}",
-            "event": "new_message",
-            "payload": {
-                "role": "system",
-                "content": system_msg,
-                "source": "system"
-            }
+            "messages": [{
+                "topic": f"realtime:chat:{user_id}",
+                "event": "broadcast",
+                "payload": {
+                    "event": "new_message",
+                    "payload": {
+                        "role": "system",
+                        "content": system_msg,
+                        "source": "system"
+                    }
+                }
+            }]
         }
-        requests.post(broadcast_url, json=payload, headers=headers, timeout=2)
+        resp = requests.post(broadcast_url, json=payload, headers=headers, timeout=2)
+        print(f"Broadcast response: {resp.status_code} - {resp.text}")
     except Exception as e:
         print(f"Failed to broadcast system message: {e}")
     

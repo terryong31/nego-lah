@@ -265,6 +265,9 @@ def create_checkout_link(item_id: str, agreed_price: float) -> str:
     Create a Stripe checkout link for the agreed sale.
     Only use this when both parties have agreed on a final price.
     
+    IMPORTANT: Once a payment link is created, the price is LOCKED.
+    Tell the buyer they cannot negotiate further - they must pay or cancel.
+    
     Args:
         item_id: The item to purchase
         agreed_price: The final agreed price
@@ -275,6 +278,11 @@ def create_checkout_link(item_id: str, agreed_price: float) -> str:
     import stripe
     from env import STRIPE_API_KEY
     from connector import user_supabase
+    from payment.payment_state import (
+        get_pending_payment, 
+        store_pending_payment,
+        has_active_payment
+    )
     
     print(f"\n{'='*50}")
     print(f"💳 CREATE_CHECKOUT_LINK CALLED")
@@ -283,7 +291,20 @@ def create_checkout_link(item_id: str, agreed_price: float) -> str:
     print(f"{'='*50}")
     
     stripe.api_key = STRIPE_API_KEY
-    print(f"🔑 Stripe API Key: {'*' * 20}{STRIPE_API_KEY[-4:] if STRIPE_API_KEY else 'NOT SET'}")
+    
+    # Get current user_id from conversation context
+    # This will be passed in via the agent's state
+    user_id = getattr(create_checkout_link, '_current_user_id', None)
+    print(f"👤 User ID: {user_id}")
+    
+    if not user_id:
+        return "ERROR: Cannot create checkout - user not identified. Please ensure you're logged in."
+    
+    # Check for existing payment link
+    existing = get_pending_payment(user_id, item_id)
+    if existing:
+        print(f"⚠️ Existing payment link found!")
+        return f"A payment link already exists for this item at RM{existing['agreed_price']:.2f}. The price is locked - please complete the payment or say 'cancel' to start over. Link: {existing['payment_url']}"
     
     # Get item details
     response = user_supabase.table('items').select('*').eq('id', item_id).execute()
@@ -294,32 +315,153 @@ def create_checkout_link(item_id: str, agreed_price: float) -> str:
         return "Cannot create checkout - item not found."
     
     item = response.data[0]
-    print(f"✅ Item found: {item.get('name')}")
+    item_name = item.get('name', 'Item')
+    print(f"✅ Item found: {item_name}")
     
     try:
-        # Create Stripe Payment Link
+        # Create Stripe Product (so we can archive it later)
+        print(f"🔄 Creating Stripe Product...")
+        product = stripe.Product.create(
+            name=item_name,
+            metadata={
+                "item_id": item_id,
+                "user_id": user_id,
+                "source": "nego_lah_ai"
+            }
+        )
+        print(f"✅ Product created: {product.id}")
+        
+        # Create Stripe Price
         print(f"🔄 Creating Stripe Price...")
         price = stripe.Price.create(
-            product_data={"name": item.get('name', 'Item')},
+            product=product.id,
             unit_amount=int(agreed_price * 100),  # Convert to cents
             currency="myr"
         )
         print(f"✅ Price created: {price.id}")
         
+        # Create Payment Link with user_id in metadata (for webhook to identify buyer)
         print(f"🔄 Creating Stripe PaymentLink...")
         payment_link = stripe.PaymentLink.create(
             line_items=[{"price": price.id, "quantity": 1}],
-            metadata={"item_id": item_id}
+            metadata={
+                "item_id": item_id,
+                "user_id": user_id,
+                "agreed_price": str(agreed_price),
+                "item_name": item_name
+            }
         )
         print(f"✅ PaymentLink created: {payment_link.url}")
         
-        result = f"SUCCESS: Here's the checkout link for {item.get('name', 'the item')} at RM{agreed_price:.2f}. Use this markdown format when sharing with buyer: [Pay RM{agreed_price:.2f} Now]({payment_link.url})"
+        # Store in Redis with 3-day TTL for cleanup
+        store_pending_payment(
+            user_id=user_id,
+            item_id=item_id,
+            agreed_price=agreed_price,
+            payment_link_id=payment_link.id,
+            product_id=product.id,
+            price_id=price.id,
+            payment_url=payment_link.url
+        )
+        print(f"💾 Stored in Redis with 3-day TTL")
+        
+        result = f"SUCCESS: Payment link created for {item_name} at RM{agreed_price:.2f}. This price is now LOCKED - no more negotiation allowed. Share this link: [Pay RM{agreed_price:.2f} Now]({payment_link.url})"
         print(f"📋 Returning: {result}")
         return result
     except Exception as e:
         print(f"❌ Error: {str(e)}")
         return f"Error creating checkout: {str(e)}"
 
+
+@tool
+def cancel_payment_link(item_id: str) -> str:
+    """
+    Cancel an existing payment link when buyer says they don't want it anymore.
+    Use this when the buyer explicitly cancels or says they're not interested.
+    
+    This will:
+    1. Deactivate the payment link in Stripe
+    2. Archive the product in Stripe
+    3. Remove from pending payments
+    
+    Args:
+        item_id: The item whose payment link should be cancelled
+    
+    Returns:
+        Confirmation message
+    """
+    from payment.payment_state import get_pending_payment, delete_pending_payment
+    
+    print(f"\n{'='*50}")
+    print(f"🚫 CANCEL_PAYMENT_LINK CALLED")
+    print(f"📦 Item ID: {item_id}")
+    print(f"{'='*50}")
+    
+    # Get current user_id from conversation context
+    user_id = getattr(cancel_payment_link, '_current_user_id', None)
+    print(f"👤 User ID: {user_id}")
+    
+    if not user_id:
+        return "ERROR: Cannot cancel - user not identified."
+    
+    # Check if payment link exists
+    existing = get_pending_payment(user_id, item_id)
+    if not existing:
+        return "No active payment link found for this item. You can continue negotiating or ask about other items."
+    
+    # Delete from Redis and cleanup Stripe
+    success = delete_pending_payment(user_id, item_id, cleanup_stripe=True)
+    
+    if success:
+        print(f"✅ Payment link cancelled successfully")
+        return f"Payment link cancelled. The payment link for RM{existing['agreed_price']:.2f} has been deactivated. You're free to negotiate a new price or look at other items."
+    else:
+        return "Error cancelling payment link. Please try again."
+
+
+@tool
+def collect_shipping_info(order_id: str, recipient_name: str, phone: str, address: str) -> str:
+    """
+    Collect and save shipping information for an order after payment.
+    Use this after the buyer has paid and provides their shipping details.
+    
+    Args:
+        order_id: The order ID from the payment
+        recipient_name: Full name of the recipient
+        phone: Phone number for delivery
+        address: Full shipping address
+    
+    Returns:
+        Confirmation message
+    """
+    from connector import admin_supabase
+    
+    print(f"\n{'='*50}")
+    print(f"📦 COLLECT_SHIPPING_INFO CALLED")
+    print(f"🆔 Order ID: {order_id}")
+    print(f"👤 Name: {recipient_name}")
+    print(f"📞 Phone: {phone}")
+    print(f"📍 Address: {address}")
+    print(f"{'='*50}")
+    
+    try:
+        # Update order with shipping info
+        result = admin_supabase.table('orders').update({
+            'recipient_name': recipient_name,
+            'phone': phone,
+            'address': address,
+            'status': 'confirmed'
+        }).eq('id', order_id).execute()
+        
+        if result.data:
+            print(f"✅ Shipping info saved successfully")
+            return f"Shipping information saved! Your order will be shipped to:\n\n**{recipient_name}**\n📞 {phone}\n📍 {address}\n\nYou'll receive updates when your item ships. Thank you for your purchase!"
+        else:
+            return "Order not found. Please check the order ID."
+            
+    except Exception as e:
+        print(f"❌ Error: {str(e)}")
+        return f"Error saving shipping info: {str(e)}"
 
 @tool
 def web_search(query: str) -> str:
@@ -365,7 +507,17 @@ def web_search(query: str) -> str:
 
 
 # Tools for the agent
-tools = [get_item_info, search_items, list_all_items, assess_discount_eligibility, evaluate_offer, create_checkout_link, web_search]
+tools = [
+    get_item_info, 
+    search_items, 
+    list_all_items, 
+    assess_discount_eligibility, 
+    evaluate_offer, 
+    create_checkout_link, 
+    cancel_payment_link,
+    collect_shipping_info,
+    web_search
+]
 
 # Create the agent using langgraph
 agent = create_react_agent(model, tools)
@@ -457,6 +609,10 @@ Buyer: {message}"""
     
     # Save user message to memory (text only for now)
     conversation_memory.add_message(user_id, "human", message, item_id, source="human")
+    
+    # Set user_id context for payment tools (they need to know who is making the request)
+    create_checkout_link._current_user_id = user_id
+    cancel_payment_link._current_user_id = user_id
     
     # Get agent response
     result = agent.invoke({"messages": messages})

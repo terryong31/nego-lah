@@ -139,20 +139,57 @@ export function Admin({ onBack }: AdminProps) {
     const [editForm, setEditForm] = useState({ displayName: '', avatarUrl: '' })
 
     // Orders state
+    // Orders state
     interface AdminOrder {
         id: string
         item_id: string
         item_name: string
-        item_image?: string
-        original_price: number
-        amount_paid: number
-        buyer_email: string
+        buyer_id: string
+        amount: number
+        recipient_name: string
+        phone: string
+        address: string
         status: string
         created_at: string
+        stripe_payment_id: string
     }
     const [orders, setOrders] = useState<AdminOrder[]>([])
-    const [ordersSummary, setOrdersSummary] = useState<{ total_sales: number; total_transactions: number } | null>(null)
     const [ordersLoading, setOrdersLoading] = useState(false)
+
+    // User Management Functions
+    const fetchUsers = async () => {
+        setUsersLoading(true)
+        try {
+            const res = await fetch(`${API_URL}/admin/users`, {
+                headers: { 'Authorization': `Bearer ${adminToken}` }
+            })
+            if (res.ok) {
+                const data = await res.json()
+                setUsers(data.users)
+            }
+        } catch {
+            setError('Failed to fetch users')
+        } finally {
+            setUsersLoading(false)
+        }
+    }
+
+    const fetchOrders = async () => {
+        setOrdersLoading(true)
+        try {
+            const res = await fetch(`${API_URL}/admin/orders`, {
+                headers: { 'Authorization': `Bearer ${adminToken}` }
+            })
+            if (res.ok) {
+                const data = await res.json()
+                setOrders(data.orders)
+            }
+        } catch {
+            setError('Failed to fetch orders')
+        } finally {
+            setOrdersLoading(false)
+        }
+    }
 
     const [adminReply, setAdminReply] = useState('')
     const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -531,36 +568,7 @@ export function Admin({ onBack }: AdminProps) {
     }
 
     // User Management Functions
-    const fetchUsers = async () => {
-        setUsersLoading(true)
-        try {
-            const res = await fetch(`${API_URL}/admin/users`)
-            if (res.ok) {
-                const data = await res.json()
-                setUsers(data)
-            }
-        } catch {
-            setError('Failed to fetch users')
-        } finally {
-            setUsersLoading(false)
-        }
-    }
 
-    const fetchOrders = async () => {
-        setOrdersLoading(true)
-        try {
-            const res = await fetch(`${API_URL}/admin/orders`)
-            if (res.ok) {
-                const data = await res.json()
-                setOrders(data.orders || [])
-                setOrdersSummary(data.summary || null)
-            }
-        } catch {
-            setError('Failed to fetch orders')
-        } finally {
-            setOrdersLoading(false)
-        }
-    }
 
     const handleBanUser = async (userId: string, ban: boolean) => {
         try {
@@ -595,6 +603,33 @@ export function Admin({ onBack }: AdminProps) {
                     u.id === userId ? { ...u, ai_enabled: !enable } : u
                 ))
                 setError('Failed to update AI setting')
+            } else {
+                // Broadcast system message to user in real-time
+                const systemMsg = enable
+                    ? "--- Terry has retired from the chat and the AI will take over now ---"
+                    : "--- Terry has joined the chat, the AI will retire for now ---"
+
+                // Broadcast to chat channel (for real-time display in chat)
+                await supabase.channel(`chat:${userId}`).send({
+                    type: 'broadcast',
+                    event: 'new_message',
+                    payload: {
+                        role: 'system',
+                        source: 'system',
+                        content: systemMsg,
+                        timestamp: new Date().toISOString()
+                    }
+                })
+
+                // Also broadcast to notifications channel (for red dot indicator)
+                await supabase.channel(`notifications:${userId}`).send({
+                    type: 'broadcast',
+                    event: 'new_message',
+                    payload: {
+                        source: 'system',
+                        content: systemMsg
+                    }
+                })
             }
         } catch {
             // Revert on error
@@ -731,7 +766,7 @@ export function Admin({ onBack }: AdminProps) {
                 setAdminReply('')
                 fetchUserChat(selectedUserChat.userId)
 
-                // Broadcast to user
+                // Broadcast to user's chat channel (for real-time chat display)
                 await supabase.channel(`chat:${selectedUserChat.userId}`).send({
                     type: 'broadcast',
                     event: 'new_message',
@@ -740,6 +775,16 @@ export function Admin({ onBack }: AdminProps) {
                         source: 'admin',
                         content: adminReply,
                         timestamp: new Date().toISOString()
+                    }
+                })
+
+                // Also broadcast to notifications channel (for red dot indicator on Home page)
+                await supabase.channel(`notifications:${selectedUserChat.userId}`).send({
+                    type: 'broadcast',
+                    event: 'new_message',
+                    payload: {
+                        source: 'admin',
+                        content: adminReply
                     }
                 })
             }
@@ -1115,20 +1160,6 @@ export function Admin({ onBack }: AdminProps) {
                 {/* Orders Tab */}
                 {activeTab === 'orders' && (
                     <div className={tabDirection === 'left' ? 'animate-slide-in-left' : 'animate-slide-in-right'}>
-                        {/* Orders Summary */}
-                        {ordersSummary && (
-                            <div className="grid grid-cols-2 gap-4 mb-6">
-                                <div className="bg-[var(--card-bg)] border border-[var(--border)] rounded-xl p-4">
-                                    <p className="text-[var(--text-muted)] text-sm">Total Sales</p>
-                                    <p className="text-2xl font-bold text-green-400">RM {ordersSummary.total_sales.toFixed(2)}</p>
-                                </div>
-                                <div className="bg-[var(--card-bg)] border border-[var(--border)] rounded-xl p-4">
-                                    <p className="text-[var(--text-muted)] text-sm">Total Orders</p>
-                                    <p className="text-2xl font-bold text-[var(--text-primary)]">{ordersSummary.total_transactions}</p>
-                                </div>
-                            </div>
-                        )}
-
                         {ordersLoading ? (
                             <div className="flex items-center justify-center py-12">
                                 <div className="w-8 h-8 border-2 border-zinc-700 border-t-white rounded-full animate-spin" />
@@ -1140,48 +1171,36 @@ export function Admin({ onBack }: AdminProps) {
                             </div>
                         ) : (
                             <div className="space-y-3">
-                                {orders.map((order) => {
-                                    let imageUrl = null
-                                    if (order.item_image) {
-                                        try {
-                                            const parsed = JSON.parse(order.item_image)
-                                            imageUrl = Object.values(parsed)[0] as string
-                                        } catch { /* ignore */ }
-                                    }
-
-                                    return (
-                                        <div key={order.id} className="bg-[var(--card-bg)] border border-[var(--border)] rounded-xl p-4 flex gap-4">
-                                            {/* Item Image */}
-                                            <div className="w-16 h-16 flex-shrink-0 rounded-lg overflow-hidden bg-[var(--bg-tertiary)]">
-                                                {imageUrl ? (
-                                                    <img src={imageUrl} alt={order.item_name} className="w-full h-full object-cover" />
-                                                ) : (
-                                                    <div className="w-full h-full flex items-center justify-center text-2xl">📦</div>
-                                                )}
+                                {orders.map((order) => (
+                                    <div key={order.id} className="bg-[var(--card-bg)] border border-[var(--border)] rounded-xl p-4 flex gap-4">
+                                        <div className="flex-1 min-w-0">
+                                            <div className="flex items-start justify-between gap-2">
+                                                <h3 className="font-semibold text-[var(--text-primary)] truncate">{order.item_name}</h3>
+                                                <span className={`px-2 py-0.5 text-xs font-medium rounded border ${order.status === 'confirmed' ? 'bg-green-500/20 text-green-400 border-green-500/30' :
+                                                    order.status === 'shipped' ? 'bg-blue-500/20 text-blue-400 border-blue-500/30' :
+                                                        'bg-yellow-500/20 text-yellow-400 border-yellow-500/30'
+                                                    }`}>
+                                                    {order.status.charAt(0).toUpperCase() + order.status.slice(1).replace('_', ' ')}
+                                                </span>
                                             </div>
-
-                                            {/* Order Details */}
-                                            <div className="flex-1 min-w-0">
-                                                <div className="flex items-start justify-between gap-2">
-                                                    <h3 className="font-semibold text-[var(--text-primary)] truncate">{order.item_name}</h3>
-                                                    <span className={`px-2 py-0.5 text-xs font-medium rounded border ${order.status === 'completed' ? 'bg-green-500/20 text-green-400 border-green-500/30' :
-                                                        order.status === 'refunded' ? 'bg-red-500/20 text-red-400 border-red-500/30' :
-                                                            'bg-yellow-500/20 text-yellow-400 border-yellow-500/30'
-                                                        }`}>
-                                                        {order.status.charAt(0).toUpperCase() + order.status.slice(1)}
-                                                    </span>
+                                            <p className="text-sm text-[var(--text-muted)] mt-1">
+                                                Amount: <span className="font-bold text-[var(--accent)]">RM {order.amount.toFixed(2)}</span>
+                                            </p>
+                                            <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-sm text-[var(--text-muted)] bg-[var(--bg-tertiary)] p-3 rounded-lg">
+                                                <p><span className="font-medium text-[var(--text-primary)]">Recipient:</span> {order.recipient_name || 'Pending'}</p>
+                                                <p><span className="font-medium text-[var(--text-primary)]">Phone:</span> {order.phone || 'Pending'}</p>
+                                                <div className="col-span-2">
+                                                    <span className="font-medium text-[var(--text-primary)]">Address:</span> {order.address || 'Pending info from buyer'}
                                                 </div>
-                                                <p className="text-sm text-[var(--text-muted)] truncate">{order.buyer_email}</p>
-                                                <div className="flex items-center justify-between mt-2">
-                                                    <span className="font-bold text-[var(--accent)]">RM {order.amount_paid.toFixed(2)}</span>
-                                                    <span className="text-xs text-[var(--text-muted)]">
-                                                        {new Date(order.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                                                    </span>
-                                                </div>
+                                            </div>
+                                            <div className="mt-2 flex justify-end">
+                                                <span className="text-xs text-[var(--text-muted)]">
+                                                    Ordered: {new Date(order.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                                </span>
                                             </div>
                                         </div>
-                                    )
-                                })}
+                                    </div>
+                                ))}
                             </div>
                         )}
                     </div>

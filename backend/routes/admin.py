@@ -290,3 +290,67 @@ def admin_send_message(user_id: str, request: AdminMessageRequest):
     conversation_memory.add_message(user_id, "ai", request.message, source="admin")
     
     return {"message": "Message sent successfully"}
+
+
+# =====================
+# Stripe Cleanup
+# =====================
+
+@router.post("/cleanup-stripe")
+def cleanup_expired_stripe_links():
+    """
+    Cleanup expired Stripe payment links.
+    Call this periodically (e.g., via cron job) to clean up abandoned payments.
+    """
+    try:
+        from payment.payment_state import cleanup_expired_payments
+        cleaned = cleanup_expired_payments()
+        return {"message": f"Cleaned up {cleaned} expired payment links"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# =====================
+# Orders Management
+# =====================
+
+@router.get("/orders")
+def get_all_orders():
+    """Get all orders for admin view."""
+    from connector import admin_supabase
+    
+    result = admin_supabase.table('orders').select('*').order('created_at', desc=True).execute()
+    return {"orders": result.data or []}
+
+
+@router.get("/orders/{order_id}")
+def get_order(order_id: str):
+    """Get a specific order by ID."""
+    from connector import admin_supabase
+    
+    result = admin_supabase.table('orders').select('*').eq('id', order_id).execute()
+    if result.data:
+        return result.data[0]
+    raise HTTPException(status_code=404, detail="Order not found")
+
+
+class OrderStatusUpdate(BaseModel):
+    status: str  # pending_info, confirmed, shipped, delivered
+
+
+@router.put("/orders/{order_id}/status")
+def update_order_status(order_id: str, request: OrderStatusUpdate):
+    """Update order status."""
+    from connector import admin_supabase
+    
+    valid_statuses = ['pending_info', 'confirmed', 'shipped', 'delivered']
+    if request.status not in valid_statuses:
+        raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {valid_statuses}")
+    
+    result = admin_supabase.table('orders').update({
+        'status': request.status
+    }).eq('id', order_id).execute()
+    
+    if result.data:
+        return {"message": f"Order status updated to {request.status}"}
+    raise HTTPException(status_code=404, detail="Order not found")

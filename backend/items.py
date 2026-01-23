@@ -134,6 +134,7 @@ async def upload_item(
             "description" : description,
             "condition" : condition, 
             "image_path": json.dumps(urls),
+            "status": "available",  # Default status for new items
             "created_at": datetime.now().isoformat()
         }
         

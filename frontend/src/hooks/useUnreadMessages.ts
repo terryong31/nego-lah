@@ -1,35 +1,50 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 
 /**
  * Hook to track unread messages for a user.
  * Listens to Supabase realtime for new messages and marks as read when chat is opened.
+ * Uses a separate channel name to avoid conflict with useChat's subscription.
  */
 export function useUnreadMessages(userId: string | null) {
     const [hasUnread, setHasUnread] = useState(false)
+    const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null)
 
     useEffect(() => {
-        if (!userId) return
+        if (!userId) {
+            return
+        }
 
-        // Subscribe to new messages on this user's channel
-        // Must match the channel name backend broadcasts to: "chat:{userId}"
-        const channel = supabase
-            .channel(`chat:${userId}`)
+        // Use unique channel name for notifications (separate from chat channel)
+        const channelName = `notifications:${userId}`
+
+        // Create and subscribe to channel
+        const channel = supabase.channel(channelName)
+        channelRef.current = channel
+
+        channel
             .on(
                 'broadcast',
                 { event: 'new_message' },
                 (payload) => {
                     const msg = payload.payload
-                    // Only mark as unread if message is from admin or system (not from user themselves)
-                    if (msg.source === 'admin' || msg.source === 'system' || msg.source === 'ai') {
+                    // Only mark as unread if message is from admin or system or AI
+                    if (msg && (msg.source === 'admin' || msg.source === 'system' || msg.source === 'ai')) {
+                        console.log('[Notification] Received message, setting unread:', msg)
                         setHasUnread(true)
                     }
                 }
             )
-            .subscribe()
+            .subscribe((status) => {
+                console.log('[Notification] Channel subscription status:', status)
+            })
 
         return () => {
-            supabase.removeChannel(channel)
+            console.log('[Notification] Cleaning up channel:', channelName)
+            if (channelRef.current) {
+                supabase.removeChannel(channelRef.current)
+                channelRef.current = null
+            }
         }
     }, [userId])
 

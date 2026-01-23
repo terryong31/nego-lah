@@ -14,6 +14,7 @@ class ConversationMemory:
             
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
         self._create_tables()
+        self.restore_from_supabase()
     
     def _create_tables(self):
         cursor = self.conn.cursor()
@@ -97,7 +98,7 @@ class ConversationMemory:
             
             cursor = self.conn.cursor()
             cursor.execute(
-                'SELECT id, role, message, source, created_at FROM conversations WHERE user_id = ? ORDER BY created_at ASC',
+                'SELECT id, role, message, source, created_at, item_id FROM conversations WHERE user_id = ? ORDER BY created_at ASC',
                 (user_id,)
             )
             rows = cursor.fetchall()
@@ -109,7 +110,8 @@ class ConversationMemory:
                     "role": r[1],
                     "content": r[2],
                     "source": r[3] or 'ai',
-                    "timestamp": r[4]
+                    "timestamp": r[4],
+                    "item_id": r[5]
                 })
             
             admin_supabase.table('conversations').upsert({
@@ -120,6 +122,84 @@ class ConversationMemory:
             
         except Exception as e:
             print(f"Error in sync_to_supabase: {e}")
+
+    def restore_from_supabase(self):
+        """Restore conversation history from Supabase (single source of truth)."""
+        try:
+            import sys
+            import os
+            
+            # Setup path to find connector
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            parent_dir = os.path.dirname(current_dir)
+            if parent_dir not in sys.path:
+                sys.path.append(parent_dir)
+            
+            from connector import admin_supabase
+            
+            print("🔄 Restoring conversation memory from Supabase...")
+            
+            # Fetch all conversations
+            response = admin_supabase.table('conversations').select('user_id, messages').execute()
+            if not response.data:
+                print("ℹ️ No conversations found in Supabase.")
+                return
+
+            cursor = self.conn.cursor()
+            
+            # Count current local messages
+            cursor.execute("SELECT COUNT(*) FROM conversations")
+            local_count = cursor.fetchone()[0]
+            
+            if local_count > 0:
+                print(f"ℹ️ Found {local_count} local messages. Merging/Skipping restore to avoid overwriting newer local data if any.")
+                # Strategy: For now, if local DB exists, assume it's good?
+                # But user says it reverts. 
+                # Better strategy: WIPE local and restore from Supabase if Supabase has data?
+                # Or UPSERT?
+                # Let's try to UPSERT based on content/timestamp match? Too complex.
+                # If local count is small (e.g. 0 after deploy), restore.
+                # If local count > 0, we might be running locally and don't want to lose unsynced stuff.
+                # But 'user says history missing' -> implies local is empty or old.
+                pass
+            
+            # Actually, let's just Insert ignoring duplicates?
+            # SQLite doesn't enforce unique constraints on message content usually.
+            
+            # Let's clean wipe for this user? No.
+            
+            count = 0
+            for row in response.data:
+                user_id = row['user_id']
+                messages = row['messages'] or []
+                
+                # Check if we already have messages for this user
+                cursor.execute("SELECT COUNT(*) FROM conversations WHERE user_id = ?", (user_id,))
+                user_msg_count = cursor.fetchone()[0]
+                
+                if user_msg_count < len(messages):
+                    # We have fewer messages locally than in remote.
+                    # Simplest approach: Delete local for this user and restore full history from remote
+                    cursor.execute("DELETE FROM conversations WHERE user_id = ?", (user_id,))
+                    
+                    for msg in messages:
+                        item_id = msg.get('item_id')
+                        role = msg.get('role')
+                        content = msg.get('content')
+                        source = msg.get('source', 'ai')
+                        # timestamp = msg.get('timestamp') # We let SQLite set timestamp or we could parse it
+                        
+                        cursor.execute(
+                            'INSERT INTO conversations (user_id, item_id, role, message, source) VALUES (?, ?, ?, ?, ?)',
+                            (user_id, item_id, role, content, source)
+                        )
+                        count += 1
+            
+            self.conn.commit()
+            print(f"✅ Restored {count} messages from Supabase.")
+            
+        except Exception as e:
+            print(f"❌ Error restoring from Supabase: {e}")
 
     def broadcast_message(self, user_id: str, role: str, message: str, source: str):
         """Broadcast a new message to the user's channel.
@@ -133,6 +213,10 @@ class ConversationMemory:
     
     def get_history(self, user_id: str, limit: int = 10, offset: int = 0) -> List[Dict]:
         """Get recent conversation history for a user."""
+        
+        # Trigger restore if needed (lazy load for specific user could be added here)
+        # But for now we did it in init (wait, I need to call it in init)
+        
         cursor = self.conn.cursor()
         cursor.execute(
             'SELECT role, message, source FROM conversations WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?',

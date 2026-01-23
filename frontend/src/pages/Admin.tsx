@@ -165,7 +165,8 @@ export function Admin({ onBack }: AdminProps) {
             })
             if (res.ok) {
                 const data = await res.json()
-                setUsers(data.users)
+                // Backend returns array of users directly
+                setUsers(Array.isArray(data) ? data : data.users || [])
             }
         } catch {
             setError('Failed to fetch users')

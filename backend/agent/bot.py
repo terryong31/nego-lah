@@ -5,10 +5,18 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
-from env import GEMINI_API_KEY
+from backend.env import GEMINI_API_KEY
 from .config import SELLER_PERSONA
 from .memory import ConversationMemory
 from .vector_store import VectorMemory
+
+# Import Tools
+from .tools.negotiation import evaluate_offer, assess_discount_eligibility
+from .tools.payment import web_search
+# Import Sub-Agents
+from .sub_agents.item_agent import item_agent
+from .sub_agents.stripe_agent import stripe_agent
+from .tools.payment import create_checkout_link, cancel_payment_link # Need to inject context into these
 
 # Initialize memory systems
 conversation_memory = ConversationMemory()
@@ -21,526 +29,83 @@ model = ChatGoogleGenerativeAI(
     google_api_key=GEMINI_API_KEY
 )
 
+# --- Sub-Agent Wrapper Tools ---
 
-# Define tools
 @tool
-def get_item_info(item_id: str) -> str:
+def call_item_agent(query: str) -> str:
     """
-    Get information about an item by its ID.
-    Use this when a buyer asks about a specific item.
+    Call the Inventory/Item Agent to search for items, get details, or check availability.
+    Use this for ANY question regarding "what do you have", "search for X", or "details of item Y".
+    The Item Agent has direct access to the database.
     
     Args:
-        item_id: The unique identifier of the item
-    
-    Returns:
-        Item details including name, description, price, and condition
+        query: The user's question or search request regarding items
     """
-    from connector import user_supabase
-    
-    print(f"\n{'='*50}")
-    print(f"🔍 GET_ITEM_INFO CALLED")
-    print(f"📦 Item ID: {item_id}")
-    print(f"{'='*50}")
-    
-    response = user_supabase.table('items').select('*').eq('id', item_id).execute()
-    
-    print(f"📊 Query result: {len(response.data) if response.data else 0} items found")
-    if response.data:
-        print(f"📋 Data: {response.data}")
-    
-    if response.data and len(response.data) > 0:
-        item = response.data[0]
-        result = f"""
-item_id: {item.get('id')}
-Item: {item.get('name', 'Unknown')}
-Description: {item.get('description', 'No description')}
-Price: RM{item.get('price', 'N/A')}
-Condition: {item.get('condition', 'Unknown')}
-Status: {item.get('status', 'available')}
-"""
-        print(f"✅ Returning item info")
-        return result
-    print(f"❌ Item not found!")
-    return "Item not found."
-
+    print(f"📞 Calling Item Agent with: {query}")
+    response = item_agent.invoke({"messages": [HumanMessage(content=query)]})
+    return response['messages'][-1].content
 
 @tool
-def search_items(search_term: str) -> str:
+def call_stripe_agent(request: str) -> str:
     """
-    Search for items by name or description.
-    Use this when a buyer mentions an item by name but you don't have the item_id.
+    Call the Payment/Stripe Agent to create checkout links, cancel payments, or handle shipping info.
+    Use this ONLY when:
+    1. A price has been AGREED upon and the user wants to pay.
+    2. The user wants to cancel a payment.
+    3. The user is providing shipping information.
     
     Args:
-        search_term: The search query (item name or keywords)
-    
-    Returns:
-        List of matching items with their IDs, names, and prices
+        request: The specific action request (e.g. "Create link for item_id at price X", "Cancel link", "Shipping info is...")
     """
-    from connector import user_supabase
+    print(f"📞 Calling Stripe Agent with: {request}")
+    # We need to pass context (user_id/item_id) to the underlying tools.
+    # The sub-agent runs in its own scope, but the tools it uses (create_checkout_link)
+    # rely on the *module level* context injection we do in the `chat` function.
+    # Since we import `create_checkout_link` here to inject, and the stripe_agent imports it from tools,
+    # python modules are singletons, so modifying the function attributes HERE should work 
+    # if `stripe_agent` uses the SAME function object.
     
-    print(f"\n{'='*50}")
-    print(f"🔎 SEARCH_ITEMS CALLED")
-    print(f"🔤 Search term: '{search_term}'")
-    print(f"{'='*50}")
-    
-    # Search by name (case-insensitive)
-    query = f'%{search_term}%'
-    print(f"📝 SQL ILIKE query: name ILIKE '{query}'")
-    
-    response = user_supabase.table('items').select('id, name, price, condition, status').ilike('name', query).limit(5).execute()
-    
-    print(f"📊 Query result: {len(response.data) if response.data else 0} items found")
-    if response.data:
-        print(f"📋 Raw data: {response.data}")
-    
-    if response.data and len(response.data) > 0:
-        results = []
-        for item in response.data:
-            status = item.get('status')
-            print(f"  - {item.get('name')}: status={status}")
-            if status == 'available':
-                results.append(f"- {item.get('name')}: RM{item.get('price')} (Condition: {item.get('condition')}) [item_id: {item.get('id')}]")
-        
-        if results:
-            print(f"✅ Returning {len(results)} available items")
-            return "Found items:\n" + "\n".join(results) + "\n\nUse the item_id when calling evaluate_offer or create_checkout_link."
-        print(f"⚠️ Items found but none are available")
-        return "No available items found matching that search."
-    print(f"❌ No items found matching search")
-    return "No items found matching that search."
+    response = stripe_agent.invoke({"messages": [HumanMessage(content=request)]})
+    return response['messages'][-1].content
 
 
-@tool
-def list_all_items() -> str:
-    """
-    List all available items in the store.
-    Use this when a buyer asks what items you have, what's for sale, or wants to browse your inventory.
-    
-    Returns:
-        List of all available items with names, prices, and conditions
-    """
-    from connector import user_supabase
-    
-    print(f"\n{'='*50}")
-    print(f"📦 LIST_ALL_ITEMS CALLED")
-    print(f"{'='*50}")
-    
-    # First, get all items to see what statuses exist
-    all_items_response = user_supabase.table('items').select('id, name, price, condition, status').limit(20).execute()
-    print(f"📊 All items in DB: {len(all_items_response.data) if all_items_response.data else 0}")
-    if all_items_response.data:
-        for item in all_items_response.data:
-            print(f"  - {item.get('name')}: status='{item.get('status')}'")
-    
-    # Get available items (or all items if none are 'available')
-    available_items = [item for item in (all_items_response.data or []) if item.get('status') in ['available', 'Active', 'active', None, '']]
-    
-    if not available_items:
-        # If no items match 'available' status, just return all items
-        available_items = all_items_response.data or []
-        print(f"⚠️ No items with 'available' status, returning all {len(available_items)} items")
-    
-    if available_items and len(available_items) > 0:
-        results = []
-        for item in available_items:
-            results.append(f"- {item.get('name')}: RM{item.get('price')} ({item.get('condition')})")
-        
-        print(f"✅ Returning {len(results)} items")
-        return f"Here are my available items:\n" + "\n".join(results) + "\n\nLet me know which one catches your eye! 😊"
-    
-    print(f"❌ No items available")
-    return "I don't have any items listed right now. Check back later!"
+# --- Customer Agent (Supervisor) ---
 
-
-@tool
-def assess_discount_eligibility(buyer_reason: str) -> str:
-    """
-    Assess if a buyer's reason for requesting a discount is genuine and deserving.
-    Use your judgment to evaluate sincerity, relevance, and impact.
-    
-    Args:
-        buyer_reason: The buyer's stated reason for wanting a discount
-    
-    Returns:
-        Assessment with recommended discount percentage (0%, 5%, or 10%)
-    """
-    from .config import DISCOUNT_SCORING_GUIDE
-    
-    # LOG: Tool was called
-    print(f"\n{'='*50}")
-    print(f"🎯 ASSESS_DISCOUNT_ELIGIBILITY CALLED")
-    print(f"📝 Buyer's reason: {buyer_reason}")
-    print(f"{'='*50}\n")
-    
-    # This tool returns the scoring guide for the AI to use in its assessment
-    # The AI will evaluate and decide based on the guide
-    result = f"""
-Use this guide to assess the buyer's reason:
-{DISCOUNT_SCORING_GUIDE}
-
-Buyer's reason: "{buyer_reason}"
-
-Provide your assessment:
-1. SINCERITY score (1-10):
-2. RELEVANCE score (1-10):
-3. IMPACT score (1-10):
-4. Average score:
-5. Recommended extra discount: 0%, 5%, or 10%
-"""
-    return result
-
-
-@tool
-def evaluate_offer(item_id: str, offered_price: float, extra_discount_percent: float = 0) -> str:
-    """
-    Evaluate a buyer's price offer against the item's minimum acceptable price.
-    
-    Args:
-        item_id: The item being negotiated
-        offered_price: The price the buyer is offering
-        extra_discount_percent: Extra discount earned via assess_discount_eligibility (0, 5, or 10)
-    
-    Returns:
-        Recommendation on whether to accept, counter, or reject the offer
-    """
-    from connector import user_supabase
-    
-    # LOG: Tool was called
-    print(f"\n{'='*50}")
-    print(f"💰 EVALUATE_OFFER CALLED")
-    print(f"📦 Item ID: {item_id}")
-    print(f"💵 Offered Price: RM{offered_price}")
-    print(f"🎁 Extra Discount: {extra_discount_percent}%")
-    print(f"{'='*50}")
-    
-    response = user_supabase.table('items').select('*').eq('id', item_id).execute()
-    
-    if not response.data:
-        print("❌ Item not found!")
-        return "Cannot evaluate - item not found."
-    
-    item = response.data[0]
-    listed_price = float(item.get('price', 0))
-    min_price = float(item.get('min_price', listed_price * 0.7))  # Absolute floor from DB
-    
-    # Apply extra discount to the acceptable threshold (not below min_price)
-    discount_amount = listed_price * (extra_discount_percent / 100)
-    adjusted_threshold = max(listed_price - discount_amount, min_price)
-    
-    # LOG: Price calculations
-    print(f"📊 Listed Price: RM{listed_price}")
-    print(f"🔻 Min Price (floor): RM{min_price}")
-    print(f"🎯 Adjusted Threshold: RM{adjusted_threshold}")
-    print(f"{'='*50}\n")
-    
-    if offered_price >= listed_price:
-        result = f"ACCEPT: Offer of RM{offered_price} meets or exceeds listed price of RM{listed_price}."
-    elif offered_price >= adjusted_threshold:
-        if offered_price <= min_price:
-            result = f"ACCEPT_FLOOR: Offer of RM{offered_price} hits the absolute minimum. Tell buyer: 'This is the lowest I can go, friend! Take it or leave it 😅'"
-        else:
-            # Counter should be HIGHER than what buyer offered, not lower!
-            counter = (offered_price + listed_price) / 2
-            # Ensure counter is never below what buyer offered
-            counter = max(counter, offered_price + 1)
-            result = f"COUNTER: Offer of RM{offered_price} is acceptable but below listed price. Suggest counter-offer of RM{counter:.2f}."
-    elif offered_price >= min_price:
-        # Offer is between min and adjusted threshold - buyer needs to come up
-        # Counter with something between their offer and the listed price
-        counter = (offered_price + listed_price) / 2
-        # Ensure counter is never below what buyer offered
-        counter = max(counter, offered_price + 1)
-        result = f"COUNTER: Offer of RM{offered_price} is low but negotiable. Counter with RM{counter:.2f}. You can accept offers above RM{min_price}."
-    else:
-        result = f"REJECT_FLOOR: Offer of RM{offered_price} is below the absolute minimum of RM{min_price}. Tell buyer: 'Sorry, that's below my cost. The lowest I can do is RM{min_price}.'"
-    
-    print(f"📋 RESULT: {result}")
-    return result
-
-
-
-@tool
-def create_checkout_link(item_id: str, agreed_price: float) -> str:
-    """
-    Create a Stripe checkout link for the agreed sale.
-    Only use this when both parties have agreed on a final price.
-    
-    IMPORTANT: Once a payment link is created, the price is LOCKED.
-    Tell the buyer they cannot negotiate further - they must pay or cancel.
-    
-    Args:
-        item_id: The item to purchase
-        agreed_price: The final agreed price
-    
-    Returns:
-        Checkout URL or error message
-    """
-    import stripe
-    from env import STRIPE_API_KEY
-    from connector import user_supabase
-    from payment.payment_state import (
-        get_pending_payment, 
-        store_pending_payment,
-        has_active_payment
-    )
-    
-    print(f"\n{'='*50}")
-    print(f"💳 CREATE_CHECKOUT_LINK CALLED")
-    print(f"📦 Item ID: {item_id}")
-    print(f"💰 Agreed Price: RM{agreed_price}")
-    print(f"{'='*50}")
-    
-    stripe.api_key = STRIPE_API_KEY
-    
-    # Get current user_id from conversation context
-    # This will be passed in via the agent's state
-    user_id = getattr(create_checkout_link, '_current_user_id', None)
-    context_item_id = getattr(create_checkout_link, '_current_item_id', None)
-    print(f"👤 User ID: {user_id}")
-    print(f"📦 Context Item ID: {context_item_id}")
-    
-    if not user_id:
-        return "ERROR: Cannot create checkout - user not identified. Please ensure you're logged in."
-
-    # FALLBACK: If item_id is missing, placeholder, or not found, try using context_item_id
-    # Common hallucinations: 'test-item-id', 'item_id', 'CHECKOUT_LINK'
-    if (not item_id or item_id in ['test-item-id', 'item_id', 'string']) and context_item_id:
-        print(f"⚠️ Invalid/Missing item_id '{item_id}', using context_item_id: {context_item_id}")
-        item_id = context_item_id
-    
-    # Check for existing payment link
-    existing = get_pending_payment(user_id, item_id)
-    if existing:
-        print(f"⚠️ Existing payment link found!")
-        return f"A payment link already exists for this item at RM{existing['agreed_price']:.2f}. The price is locked - please complete the payment or say 'cancel' to start over. Link: {existing['payment_url']}"
-    
-    # Get item details
-    response = user_supabase.table('items').select('*').eq('id', item_id).execute()
-    print(f"📊 Item lookup result: {len(response.data) if response.data else 0} items")
-    
-    # Double check: if lookup failed and we haven't tried context_item_id yet, try it now
-    if (not response.data) and context_item_id and (item_id != context_item_id):
-        print(f"⚠️ Lookup failed for '{item_id}', trying context_item_id: {context_item_id}")
-        item_id = context_item_id
-        response = user_supabase.table('items').select('*').eq('id', item_id).execute()
-        print(f"📊 Retry lookup result: {len(response.data) if response.data else 0} items")
-    
-    if not response.data:
-        print(f"❌ Item not found!")
-        return "Cannot create checkout - item not found. Please try again or ask about the item explicitly."
-    
-    item = response.data[0]
-    item_name = item.get('name', 'Item')
-    print(f"✅ Item found: {item_name}")
-    
-    try:
-        # Create Stripe Product (so we can archive it later)
-        print(f"🔄 Creating Stripe Product...")
-        product = stripe.Product.create(
-            name=item_name,
-            metadata={
-                "item_id": item_id,
-                "user_id": user_id,
-                "source": "nego_lah_ai"
-            }
-        )
-        print(f"✅ Product created: {product.id}")
-        
-        # Create Stripe Price
-        print(f"🔄 Creating Stripe Price...")
-        price = stripe.Price.create(
-            product=product.id,
-            unit_amount=int(agreed_price * 100),  # Convert to cents
-            currency="myr"
-        )
-        print(f"✅ Price created: {price.id}")
-        
-        # Create Payment Link with user_id in metadata (for webhook to identify buyer)
-        print(f"🔄 Creating Stripe PaymentLink...")
-        payment_link = stripe.PaymentLink.create(
-            line_items=[{"price": price.id, "quantity": 1}],
-            metadata={
-                "item_id": item_id,
-                "user_id": user_id,
-                "agreed_price": str(agreed_price),
-                "item_name": item_name
-            }
-        )
-        print(f"✅ PaymentLink created: {payment_link.url}")
-        
-        # Store in Redis with 3-day TTL for cleanup
-        store_pending_payment(
-            user_id=user_id,
-            item_id=item_id,
-            agreed_price=agreed_price,
-            payment_link_id=payment_link.id,
-            product_id=product.id,
-            price_id=price.id,
-            payment_url=payment_link.url
-        )
-        print(f"💾 Stored in Redis with 3-day TTL")
-        
-        result = f"SUCCESS: Payment link created for {item_name} at RM{agreed_price:.2f}. This price is now LOCKED - no more negotiation allowed. Share this link: [Pay RM{agreed_price:.2f} Now]({payment_link.url})"
-        print(f"📋 Returning: {result}")
-        return result
-    except Exception as e:
-        print(f"❌ Error: {str(e)}")
-        return f"Error creating checkout: {str(e)}"
-
-
-@tool
-def cancel_payment_link(item_id: str) -> str:
-    """
-    Cancel an existing payment link when buyer says they don't want it anymore.
-    Use this when the buyer explicitly cancels or says they're not interested.
-    
-    This will:
-    1. Deactivate the payment link in Stripe
-    2. Archive the product in Stripe
-    3. Remove from pending payments
-    
-    Args:
-        item_id: The item whose payment link should be cancelled
-    
-    Returns:
-        Confirmation message
-    """
-    from payment.payment_state import get_pending_payment, delete_pending_payment
-    
-    print(f"\n{'='*50}")
-    print(f"🚫 CANCEL_PAYMENT_LINK CALLED")
-    print(f"📦 Item ID: {item_id}")
-    print(f"{'='*50}")
-    
-    # Get current user_id from conversation context
-    user_id = getattr(cancel_payment_link, '_current_user_id', None)
-    print(f"👤 User ID: {user_id}")
-    
-    if not user_id:
-        return "ERROR: Cannot cancel - user not identified."
-    
-    # Check if payment link exists
-    existing = get_pending_payment(user_id, item_id)
-    if not existing:
-        return "No active payment link found for this item. You can continue negotiating or ask about other items."
-    
-    # Delete from Redis and cleanup Stripe
-    success = delete_pending_payment(user_id, item_id, cleanup_stripe=True)
-    
-    if success:
-        print(f"✅ Payment link cancelled successfully")
-        return f"Payment link cancelled. The payment link for RM{existing['agreed_price']:.2f} has been deactivated. You're free to negotiate a new price or look at other items."
-    else:
-        return "Error cancelling payment link. Please try again."
-
-
-@tool
-def collect_shipping_info(order_id: str, recipient_name: str, phone: str, address: str) -> str:
-    """
-    Collect and save shipping information for an order after payment.
-    Use this after the buyer has paid and provides their shipping details.
-    
-    Args:
-        order_id: The order ID from the payment
-        recipient_name: Full name of the recipient
-        phone: Phone number for delivery
-        address: Full shipping address
-    
-    Returns:
-        Confirmation message
-    """
-    from connector import admin_supabase
-    
-    print(f"\n{'='*50}")
-    print(f"📦 COLLECT_SHIPPING_INFO CALLED")
-    print(f"🆔 Order ID: {order_id}")
-    print(f"👤 Name: {recipient_name}")
-    print(f"📞 Phone: {phone}")
-    print(f"📍 Address: {address}")
-    print(f"{'='*50}")
-    
-    try:
-        # Update order with shipping info
-        result = admin_supabase.table('orders').update({
-            'recipient_name': recipient_name,
-            'phone': phone,
-            'address': address,
-            'status': 'confirmed'
-        }).eq('id', order_id).execute()
-        
-        if result.data:
-            print(f"✅ Shipping info saved successfully")
-            return f"Shipping information saved! Your order will be shipped to:\n\n**{recipient_name}**\n📞 {phone}\n📍 {address}\n\nYou'll receive updates when your item ships. Thank you for your purchase!"
-        else:
-            return "Order not found. Please check the order ID."
-            
-    except Exception as e:
-        print(f"❌ Error: {str(e)}")
-        return f"Error saving shipping info: {str(e)}"
-
-@tool
-def web_search(query: str) -> str:
-    """
-    Search the web for information about a product or topic.
-    Use this to understand the nature, market value, or specifications of items.
-    
-    Args:
-        query: The search query (e.g., "iPhone 12 Pro specifications" or "second hand laptop prices Malaysia")
-    
-    Returns:
-        Search results summary
-    """
-    import requests
-    
-    try:
-        # Use DuckDuckGo instant answer API (no API key needed)
-        url = f"https://api.duckduckgo.com/?q={query}&format=json&no_html=1&skip_disambig=1"
-        response = requests.get(url, timeout=5)
-        
-        if response.status_code == 200:
-            data = response.json()
-            
-            # Get abstract if available
-            abstract = data.get('AbstractText', '')
-            if abstract:
-                return f"Search Result: {abstract[:500]}..."
-            
-            # Try related topics
-            related = data.get('RelatedTopics', [])
-            if related and len(related) > 0:
-                summaries = []
-                for topic in related[:3]:
-                    if isinstance(topic, dict) and 'Text' in topic:
-                        summaries.append(topic['Text'])
-                if summaries:
-                    return "Search Results:\n" + "\n".join(summaries)
-            
-            return "No detailed results found. Try a more specific query."
-        return "Search failed. Please try again."
-    except Exception as e:
-        return f"Web search unavailable: {str(e)}"
-
-
-# Tools for the agent
-tools = [
-    get_item_info, 
-    search_items, 
-    list_all_items, 
-    assess_discount_eligibility, 
+# The Customer Agent handles the conversation flow, negotiation, and personality.
+# It decides when to consult the specialists.
+customer_tools = [
+    call_item_agent,
+    call_stripe_agent,
     evaluate_offer, 
-    create_checkout_link, 
-    cancel_payment_link,
-    collect_shipping_info,
+    assess_discount_eligibility,
     web_search
 ]
 
-# Create the agent using langgraph
-agent = create_react_agent(model, tools)
+CUSTOMER_AGENT_PROMPT = SELLER_PERSONA + """
+
+SYSTEM INSTRUCTIONS:
+You are the Lead Negotiator and Customer Service AI.
+You have a team of specialists to help you:
+1. `call_item_agent`: For finding items, checking stock, and getting item details.
+2. `call_stripe_agent`: For processing payments and cancellations.
+
+YOUR ROLE:
+- Talk to the user in your persona (Nego-Lah).
+- Negotiate prices using `evaluate_offer` and your judgment.
+- If the user asks about availability/items -> Ask Item Agent.
+- If the deal is struck -> Ask Stripe Agent to create the link.
+
+IMPORTANT:
+- When calling `call_stripe_agent` to create a link, you MUST include the `item_id` and the `agreed_price` in your request string so the agent knows what to do.
+- Verify you have the `item_id` before calling payment tools.
+"""
+
+customer_agent = create_react_agent(model, customer_tools, prompt=CUSTOMER_AGENT_PROMPT)
 
 
 def get_item_details_for_context(item_id: str) -> dict:
     """Helper to get item details for building context message."""
-    from connector import user_supabase
+    from backend.connector import user_supabase
     
     try:
         response = user_supabase.table('items').select('name, description, price, condition').eq('id', item_id).execute()
@@ -564,93 +129,84 @@ def chat(user_id: str, message: str, item_id: str = None, files: list = None) ->
     Returns:
         Agent's response
     """
-    # Get conversation history and convert to LangChain message format
-    history_data = conversation_memory.get_history(user_id)
-    messages = [SystemMessage(content=SELLER_PERSONA)]
+    # Get conversation history
+    history_data = conversation_memory.get_history(user_id, limit=50)
+    messages = []
     
+    # Reconstruct history
     for msg in history_data:
         if msg["role"] == "human":
             messages.append(HumanMessage(content=msg["content"]))
         else:
             messages.append(AIMessage(content=msg["content"]))
     
-    # Build input message with item context if provided
+    # Build input message with item context
     input_message = message
     if item_id:
-        # Fetch item details to provide context without exposing UUID
         item_details = get_item_details_for_context(item_id)
         if item_details:
-            context = f"""SYSTEM: You are negotiating for the following item. IMPORTANT: When using tools like evaluate_offer or create_checkout_link, use the exact item_id provided below.
-item_id: {item_id}
-Item Name: "{item_details.get('name', 'Unknown Item')}"
-Price: RM{item_details.get('price', 'N/A')}
-Condition: {item_details.get('condition', 'Unknown')}
-Description: {item_details.get('description', 'No description')}
+            context = f"""SYSTEM: Context Item ID: {item_id}
+Item Name: "{item_details.get('name', 'Unknown')}"
+Listed Price: RM{item_details.get('price', 'N/A')}
 
 Buyer: {message}"""
             input_message = context
         else:
             input_message = f"Buyer: {message}"
     
-    # Build content for multimodal message
+    # Handle files (multimodal)
     if files and len(files) > 0:
-        # Create multimodal content with text and images
-        content_parts = []
-        
-        # Add text part first
-        content_parts.append({"type": "text", "text": input_message})
-        
-        # Add image parts for each file
+        content_parts = [{"type": "text", "text": input_message}]
         for file in files:
             if file["type"].startswith("image/"):
-                # Image file - add as image_url with base64 data
                 content_parts.append({
                     "type": "image_url",
-                    "image_url": {
-                        "url": f"data:{file['type']};base64,{file['data']}"
-                    }
+                    "image_url": {"url": f"data:{file['type']};base64,{file['data']}"}
                 })
             else:
-                # Non-image file - describe it in text
-                content_parts.append({
-                    "type": "text",
-                    "text": f"\n[Attached file: {file['name']} ({file['type']})]"
-                })
-        
+                content_parts.append({"type": "text", "text": f"\n[Attached: {file['name']}]"})
         messages.append(HumanMessage(content=content_parts))
     else:
-        # Text-only message
         messages.append(HumanMessage(content=input_message))
     
-    # Save user message to memory (text only for now)
+    # Save user message
     conversation_memory.add_message(user_id, "human", message, item_id, source="human")
     
-    # Set user_id and item_id context for payment tools
+    # --- CONTEXT INJECTION ---
+    # We inject context into the tools directly.
+    # Note: Since the sub-agents use the same tool definitions (imported from the same modules),
+    # setting attributes on the imported functions here should reflect in the sub-agents.
+    
+    # Inject into Negotiation Tools (Directly used by Customer Agent)
+    evaluate_offer._current_item_id = item_id
+    
+    # Inject into Payment Tools (Used by Stripe Agent)
     create_checkout_link._current_user_id = user_id
     create_checkout_link._current_item_id = item_id
-    
     cancel_payment_link._current_user_id = user_id
     cancel_payment_link._current_item_id = item_id
     
-    # Get agent response
-    result = agent.invoke({"messages": messages})
+    # Inject into Item Tools (Used by Item Agent - if they needed context, but they mostly take args)
+    # create_checkout_link is imported from .tools.payment, so we match the reference.
     
-    # Extract the final response - handle both string and list formats
+    # Invoke Customer Agent
+    print(f"🤖 Customer Agent processing message for user {user_id}...")
+    result = customer_agent.invoke({"messages": messages})
+    
+    # Extract response
     agent_response = result["messages"][-1].content
     
-    # If response is a list (e.g., from Gemini's structured output), extract text
+    # Handle list response
     if isinstance(agent_response, list):
         text_parts = []
         for part in agent_response:
-            if isinstance(part, dict):
-                # Extract 'text' field from dict parts
-                if 'text' in part:
-                    text_parts.append(part['text'])
+            if isinstance(part, dict) and 'text' in part:
+                text_parts.append(part['text'])
             elif isinstance(part, str):
                 text_parts.append(part)
         agent_response = ''.join(text_parts) if text_parts else str(agent_response)
     
-    # Save agent response to memory
+    # Save agent response
     conversation_memory.add_message(user_id, "ai", agent_response, item_id)
     
     return agent_response

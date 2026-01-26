@@ -154,6 +154,7 @@ export function Admin({ onBack }: AdminProps) {
         stripe_payment_id: string
     }
     const [orders, setOrders] = useState<AdminOrder[]>([])
+    const [stats, setStats] = useState<{ total_orders: number, total_sales: number } | null>(null)
     const [ordersLoading, setOrdersLoading] = useState(false)
 
     // User Management Functions
@@ -184,6 +185,7 @@ export function Admin({ onBack }: AdminProps) {
             if (res.ok) {
                 const data = await res.json()
                 setOrders(data.orders)
+                setStats(data.stats)
             }
         } catch {
             setError('Failed to fetch orders')
@@ -565,6 +567,53 @@ export function Admin({ onBack }: AdminProps) {
             }
         } catch {
             setError('Connection error')
+        }
+    }
+
+    // AI Auto-fill Logic
+    const [isAnalyzing, setIsAnalyzing] = useState(false)
+
+    const handleAnalyzeImage = async (file: File) => {
+        if (!file) return
+
+        setIsAnalyzing(true)
+        setError(null) // Clear previous errors
+
+        const formData = new FormData()
+        formData.append('image', file)
+
+        try {
+            const res = await fetch(`${API_URL}/admin/analyze-image`, {
+                method: 'POST',
+                body: formData
+            })
+
+            if (res.ok) {
+                const data = await res.json()
+
+                // Populate form
+                setFormData(prev => ({
+                    ...prev,
+                    name: data.name || prev.name,
+                    description: data.description || prev.description,
+                    condition: data.condition || 'Good'
+                }))
+
+                // Also set the image as the selected file for upload
+                // We need to simulate a FileList for the 'images' state
+                const dt = new DataTransfer()
+                dt.items.add(file)
+                setImages(dt.files)
+
+            } else {
+                const err = await res.json()
+                setError(err.detail || 'Failed to analyze image')
+            }
+        } catch (e) {
+            console.error(e)
+            setError('Connection error during analysis')
+        } finally {
+            setIsAnalyzing(false)
         }
     }
 
@@ -1163,7 +1212,7 @@ export function Admin({ onBack }: AdminProps) {
                     <div className={tabDirection === 'left' ? 'animate-slide-in-left' : 'animate-slide-in-right'}>
                         {ordersLoading ? (
                             <div className="flex items-center justify-center py-12">
-                                <div className="w-8 h-8 border-2 border-zinc-700 border-t-white rounded-full animate-spin" />
+                                <div className="w-8 h-8 border-2 border-[var(--text-secondary)] border-t-[var(--text-primary)] rounded-full animate-spin" />
                             </div>
                         ) : orders.length === 0 ? (
                             <div className="text-center py-12 text-[var(--text-muted)]">
@@ -1171,37 +1220,56 @@ export function Admin({ onBack }: AdminProps) {
                                 <p>No orders yet</p>
                             </div>
                         ) : (
-                            <div className="space-y-3">
-                                {orders.map((order) => (
-                                    <div key={order.id} className="bg-[var(--card-bg)] border border-[var(--border)] rounded-xl p-4 flex gap-4">
-                                        <div className="flex-1 min-w-0">
-                                            <div className="flex items-start justify-between gap-2">
-                                                <h3 className="font-semibold text-[var(--text-primary)] truncate">{order.item_name}</h3>
-                                                <span className={`px-2 py-0.5 text-xs font-medium rounded border ${order.status === 'confirmed' ? 'bg-green-500/20 text-green-400 border-green-500/30' :
-                                                    order.status === 'shipped' ? 'bg-blue-500/20 text-blue-400 border-blue-500/30' :
-                                                        'bg-yellow-500/20 text-yellow-400 border-yellow-500/30'
-                                                    }`}>
-                                                    {order.status.charAt(0).toUpperCase() + order.status.slice(1).replace('_', ' ')}
-                                                </span>
-                                            </div>
-                                            <p className="text-sm text-[var(--text-muted)] mt-1">
-                                                Amount: <span className="font-bold text-[var(--accent)]">RM {order.amount.toFixed(2)}</span>
-                                            </p>
-                                            <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-sm text-[var(--text-muted)] bg-[var(--bg-tertiary)] p-3 rounded-lg">
-                                                <p><span className="font-medium text-[var(--text-primary)]">Recipient:</span> {order.recipient_name || 'Pending'}</p>
-                                                <p><span className="font-medium text-[var(--text-primary)]">Phone:</span> {order.phone || 'Pending'}</p>
-                                                <div className="col-span-2">
-                                                    <span className="font-medium text-[var(--text-primary)]">Address:</span> {order.address || 'Pending info from buyer'}
-                                                </div>
-                                            </div>
-                                            <div className="mt-2 flex justify-end">
-                                                <span className="text-xs text-[var(--text-muted)]">
-                                                    Ordered: {new Date(order.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                                                </span>
+                            <div className="space-y-6">
+                                {/* Stats Cards */}
+                                {stats && (
+                                    <div className="grid grid-cols-2 gap-4 animate-fade-in">
+                                        <div className="bg-[var(--card-bg)] border border-[var(--border)] rounded-xl p-4 flex flex-col items-center justify-center shadow-lg">
+                                            <span className="text-[var(--text-secondary)] text-sm mb-1 uppercase tracking-wider">Total Orders</span>
+                                            <span className="text-3xl font-bold text-[var(--accent)]">{stats.total_orders}</span>
+                                        </div>
+                                        <div className="bg-[var(--card-bg)] border border-[var(--border)] rounded-xl p-4 flex flex-col items-center justify-center shadow-lg">
+                                            <span className="text-[var(--text-secondary)] text-sm mb-1 uppercase tracking-wider">Total Sales</span>
+                                            <div className="flex items-baseline">
+                                                <span className="text-lg text-[var(--text-primary)] font-medium mr-1">RM</span>
+                                                <span className="text-3xl font-bold text-green-400">{stats.total_sales.toFixed(2)}</span>
                                             </div>
                                         </div>
                                     </div>
-                                ))}
+                                )}
+
+                                <div className="space-y-3">
+                                    {orders.map((order) => (
+                                        <div key={order.id} className="bg-[var(--card-bg)] border border-[var(--border)] rounded-xl p-4 flex gap-4">
+                                            <div className="flex-1 min-w-0">
+                                                <div className="flex items-start justify-between gap-2">
+                                                    <h3 className="font-semibold text-[var(--text-primary)] truncate">{order.item_name}</h3>
+                                                    <span className={`px-2 py-0.5 text-xs font-medium rounded border ${order.status === 'confirmed' ? 'bg-green-500/20 text-green-400 border-green-500/30' :
+                                                        order.status === 'shipped' ? 'bg-blue-500/20 text-blue-400 border-blue-500/30' :
+                                                            'bg-yellow-500/20 text-yellow-400 border-yellow-500/30'
+                                                        }`}>
+                                                        {order.status.charAt(0).toUpperCase() + order.status.slice(1).replace('_', ' ')}
+                                                    </span>
+                                                </div>
+                                                <p className="text-sm text-[var(--text-muted)] mt-1">
+                                                    Amount: <span className="font-bold text-[var(--accent)]">RM {order.amount.toFixed(2)}</span>
+                                                </p>
+                                                <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-sm text-[var(--text-muted)] bg-[var(--bg-tertiary)] p-3 rounded-lg">
+                                                    <p><span className="font-medium text-[var(--text-primary)]">Recipient:</span> {order.recipient_name || 'Pending'}</p>
+                                                    <p><span className="font-medium text-[var(--text-primary)]">Phone:</span> {order.phone || 'Pending'}</p>
+                                                    <div className="col-span-2">
+                                                        <span className="font-medium text-[var(--text-primary)]">Address:</span> {order.address || 'Pending info from buyer'}
+                                                    </div>
+                                                </div>
+                                                <div className="mt-2 flex justify-end">
+                                                    <span className="text-xs text-[var(--text-muted)]">
+                                                        Ordered: {new Date(order.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
                             </div>
                         )}
                     </div>
@@ -1458,6 +1526,8 @@ export function Admin({ onBack }: AdminProps) {
                                     value={formData.description}
                                     onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                                     required
+                                    multiline
+                                    rows={5}
                                 />
                                 <div className="grid grid-cols-2 gap-4">
                                     <Input
@@ -1497,8 +1567,45 @@ export function Admin({ onBack }: AdminProps) {
                                         onChange={(e) => setImages(e.target.files)}
                                         className="w-full text-[var(--text-secondary)] file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-[var(--bg-tertiary)] file:text-[var(--text-primary)] hover:file:bg-[var(--border)] transition-colors"
                                     />
+
+
                                 </div>
-                                <div className="pt-2">
+
+                                {/* AI Auto-fill Trigger */}
+                                <div>
+                                    <input
+                                        type="file"
+                                        id="ai-upload"
+                                        accept="image/*"
+                                        className="hidden"
+                                        onChange={(e) => {
+                                            const file = e.target.files?.[0]
+                                            if (file) handleAnalyzeImage(file)
+                                            // Reset so same file can be selected again if needed
+                                            e.target.value = ''
+                                        }}
+                                    />
+                                    <Button
+                                        type="button"
+                                        variant="filled"
+                                        fullWidth
+                                        onClick={() => document.getElementById('ai-upload')?.click()}
+                                        disabled={isAnalyzing}
+                                    >
+                                        {isAnalyzing ? (
+                                            <span className="flex items-center gap-2 justify-center">
+                                                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                                Analyzing Item...
+                                            </span>
+                                        ) : (
+                                            <span className="flex items-center gap-2 justify-center">
+                                                <svg width="18px" height="18px" viewBox="0 0 24 24" role="img" xmlns="http://www.w3.org/2000/svg"><title>OpenAI icon</title><path d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z" /></svg>
+                                                Auto-fill with AI
+                                            </span>
+                                        )}
+                                    </Button>
+                                </div>
+                                <div>
                                     <Button type="submit" fullWidth variant="filled">
                                         Add Item
                                     </Button>

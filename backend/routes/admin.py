@@ -316,11 +316,23 @@ def cleanup_expired_stripe_links():
 
 @router.get("/orders")
 def get_all_orders():
-    """Get all orders for admin view."""
+    """Get all orders for admin view with summary stats."""
     from connector import admin_supabase
     
     result = admin_supabase.table('orders').select('*').order('created_at', desc=True).execute()
-    return {"orders": result.data or []}
+    orders_data = result.data or []
+    
+    # Calculate stats
+    total_orders = len(orders_data)
+    total_sales = sum(order.get('amount', 0) for order in orders_data)
+    
+    return {
+        "orders": orders_data,
+        "stats": {
+            "total_orders": total_orders,
+            "total_sales": total_sales
+        }
+    }
 
 
 @router.get("/orders/{order_id}")
@@ -354,3 +366,76 @@ def update_order_status(order_id: str, request: OrderStatusUpdate):
     if result.data:
         return {"message": f"Order status updated to {request.status}"}
     raise HTTPException(status_code=404, detail="Order not found")
+
+
+# =====================
+# AI Image Analysis
+# =====================
+
+@router.post("/analyze-image")
+async def analyze_item_image(
+    image: Annotated[UploadFile, File()]
+):
+    """
+    Analyze an uploaded image to generate item details (Name, Description, Condition).
+    Uses Gemini 1.5 Flash via LangChain.
+    """
+    import base64
+    from langchain_google_genai import ChatGoogleGenerativeAI
+    from langchain_core.messages import HumanMessage
+    from env import GEMINI_API_KEY
+    import json
+    
+    try:
+        # Read image
+        contents = await image.read()
+        base64_image = base64.b64encode(contents).decode('utf-8')
+        image_type = image.content_type or "image/jpeg"
+        
+        # Initialize Vision Model
+        vision_model = ChatGoogleGenerativeAI(
+            model="gemini-2.5-flash",
+            temperature=0.4,
+            google_api_key=GEMINI_API_KEY
+        )
+        
+        prompt = """
+        You are an expert e-commerce listing assistant.
+        Analyze this image and generate a listing for a marketplace.
+        
+        Return a JSON object with strictly these fields:
+        {
+            "name": "A short, catchy title for the item",
+            "description": "A compelling, detailed description in Markdown format. Highlight features, condition, and appeal. Use bullet points if applicable.",
+            "condition": "One of: New, Like New, Good, Fair"
+        }
+        
+        Note:
+        - Determine the condition based on visual cues (box, wear, scratch). Default to 'Good' if unsure.
+        - Do NOT include price.
+        - The description should be ready to publish.
+        """
+        
+        msg = HumanMessage(
+            content=[
+                {"type": "text", "text": prompt},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{image_type};base64,{base64_image}"}
+                }
+            ]
+        )
+        
+        # Invoke model
+        response = vision_model.invoke([msg])
+        content = response.content
+        
+        # Extract JSON
+        clean_content = content.replace('```json', '').replace('```', '').strip()
+        data = json.loads(clean_content)
+        
+        return data
+
+    except Exception as e:
+        print(f"Error analyzing image: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to analyze image: {str(e)}")

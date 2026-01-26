@@ -120,6 +120,7 @@ def create_checkout_link(item_id: str, agreed_price: float) -> str:
             agreed_price=agreed_price,
             payment_link_id=payment_link.id,
             product_id=product.id,
+            price_id=price.id,
             payment_url=payment_link.url
         )
         

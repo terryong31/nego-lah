@@ -60,13 +60,61 @@ def call_stripe_agent(request: str) -> str:
     Args:
         request: The specific action request (e.g. "Create link for item_id at price X", "Cancel link", "Shipping info is...")
     """
-    print(f"📞 Calling Stripe Agent with: {request}")
-    # We need to pass context (user_id/item_id) to the underlying tools.
-    # The sub-agent runs in its own scope, but the tools it uses (create_checkout_link)
-    # rely on the *module level* context injection we do in the `chat` function.
-    # Since we import `create_checkout_link` here to inject, and the stripe_agent imports it from tools,
-    # python modules are singletons, so modifying the function attributes HERE should work 
-    # if `stripe_agent` uses the SAME function object.
+    # Check context
+    current_item_id = getattr(create_checkout_link, '_current_item_id', None)
+    current_user_id = getattr(create_checkout_link, '_current_user_id', None)
+    
+    # 1. Fallback Resolution: If no item_id in context, try to find it from history using Item Agent
+    if not current_item_id or current_item_id in ['test-item-id', 'None']:
+        print(f"🕵️‍♂️ Missing context item_id. Attempting to resolve from history...")
+        
+        # Get recent history
+        if current_user_id:
+            history = conversation_memory.get_history(current_user_id, limit=10)
+            history_text = "\n".join([f"{msg['role']}: {msg['content']}" for msg in history])
+            
+            # Ask Item Agent to identify the item
+            resolution_query = f"""
+            Based on this conversation history, identify the exact UUID of the item the user wants to buy.
+            
+            HISTORY:
+            {history_text}
+            
+            INSTRUCTIONS:
+            1. Identify the item name mentioned in the history.
+            2. Use your 'search_items' tool to find this item in the database.
+            3. Return ONLY the UUID string of the matched item.
+            4. If multiple items match, choose the one with the closest name.
+            5. If not found in database, return 'NOT_FOUND'.
+            """
+            
+            resolution_response = item_agent.invoke({"messages": [HumanMessage(content=resolution_query)]})
+            resolution_content = resolution_response['messages'][-1].content
+            if isinstance(resolution_content, list):
+                # Join text parts if it's a list (e.g. from Gemini)
+                text_parts = []
+                for part in resolution_content:
+                    if isinstance(part, str):
+                        text_parts.append(part)
+                    elif isinstance(part, dict) and 'text' in part:
+                        text_parts.append(part['text'])
+                resolved_id = "".join(text_parts).strip()
+            else:
+                resolved_id = str(resolution_content).strip()
+            
+            # Clean up response (remove markdown code blocks if any)
+            resolved_id = resolved_id.replace('```', '').strip()
+            
+            if resolved_id and resolved_id != 'NOT_FOUND' and len(resolved_id) > 10: # Basic UUID sanity check
+                print(f"✅ Resolved missing item_id to: {resolved_id}")
+                current_item_id = resolved_id
+                
+                # Update context on tools
+                create_checkout_link._current_item_id = current_item_id
+                cancel_payment_link._current_item_id = current_item_id
+                evaluate_offer._current_item_id = current_item_id
+            else:
+                print(f"❌ Could not resolve item_id from history.")
     
     response = stripe_agent.invoke({"messages": [HumanMessage(content=request)]})
     return response['messages'][-1].content

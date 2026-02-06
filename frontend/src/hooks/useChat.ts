@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
-import { supabase } from '../lib/supabase'
+import { supabase } from '../lib/supabase' // For real-time subscriptions only
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000'
+const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? '/api' : 'http://127.0.0.1:8000')
 
 interface Attachment {
     name: string
@@ -32,11 +32,13 @@ export function useChat(userId: string) {
     })
     const [currentItemId, setCurrentItemId] = useState<string | null>(null)
     const [historyLoaded, setHistoryLoaded] = useState(false)
+    const [historyLoading, setHistoryLoading] = useState(true) // True until first load completes
 
     // Load conversation history on mount
     useEffect(() => {
         async function loadHistory() {
             if (historyLoaded) return
+            setHistoryLoading(true)
 
             try {
                 // Fetch from backend API which includes system messages
@@ -84,51 +86,18 @@ export function useChat(userId: string) {
                 // No history found or error - that's fine, start fresh
             }
             setHistoryLoaded(true)
+            setHistoryLoading(false)
         }
 
         if (userId && !userId.startsWith('guest-')) {
             loadHistory()
         } else {
             setHistoryLoaded(true)
+            setHistoryLoading(false)
         }
     }, [userId, historyLoaded])
 
-    // Save messages to Supabase when they change
-    useEffect(() => {
-        async function saveHistory() {
-            if (!historyLoaded || state.messages.length === 0) return
-            if (userId.startsWith('guest-')) return
-
-            const messagesToSave = state.messages.map(msg => ({
-                ...msg,
-                timestamp: msg.timestamp.toISOString()
-            }))
-
-            try {
-                // Check if conversation exists
-                const { data: existing } = await supabase
-                    .from('conversations')
-                    .select('id')
-                    .eq('user_id', userId)
-                    .maybeSingle()
-
-                if (existing) {
-                    await supabase
-                        .from('conversations')
-                        .update({ messages: messagesToSave, updated_at: new Date().toISOString() })
-                        .eq('user_id', userId)
-                } else {
-                    await supabase
-                        .from('conversations')
-                        .insert({ user_id: userId, messages: messagesToSave })
-                }
-            } catch (error) {
-                console.error('Failed to save conversation:', error)
-            }
-        }
-
-        saveHistory()
-    }, [state.messages, userId, historyLoaded])
+    // NOTE: Messages are saved by backend (memory.py) - no frontend persistence needed
 
     const sendMessage = useCallback(async (message: string, itemId?: string, attachments?: File[]) => {
         // Create attachment objects with blob URLs for display
@@ -146,15 +115,12 @@ export function useChat(userId: string) {
             attachments: attachmentObjects.length > 0 ? attachmentObjects : undefined
         }
 
-        // Check AI status BEFORE showing placeholder
+        // Check AI status from backend BEFORE showing placeholder
         let aiEnabled = true
         try {
-            const { data } = await supabase
-                .from('chat_settings')
-                .select('ai_enabled')
-                .eq('user_id', userId)
-                .maybeSingle()
-            if (data) {
+            const response = await fetch(`${API_URL}/chat/settings/${userId}`)
+            if (response.ok) {
+                const data = await response.json()
                 aiEnabled = data.ai_enabled ?? true
             }
         } catch {
@@ -391,13 +357,10 @@ export function useChat(userId: string) {
         })
         setCurrentItemId(null)
 
-        // Delete from Supabase
+        // Delete from backend
         if (!userId.startsWith('guest-')) {
             try {
-                await supabase
-                    .from('conversations')
-                    .delete()
-                    .eq('user_id', userId)
+                await fetch(`${API_URL}/chat/history/${userId}`, { method: 'DELETE' })
             } catch (error) {
                 console.error('Failed to clear conversation:', error)
             }
@@ -530,6 +493,7 @@ export function useChat(userId: string) {
     return {
         ...state,
         currentItemId,
+        historyLoading,
         sendMessage,
         clearChat,
         setCurrentItemId,

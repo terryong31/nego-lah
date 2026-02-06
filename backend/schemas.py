@@ -19,6 +19,7 @@ class ItemSchema(BaseModel):
 
 class CheckoutRequest(BaseModel):
     item_id: str  # Only need the item ID to look up price in database
+    user_id: Optional[str] = None  # User ID of the buyer (for webhook tracking)
 
 
 class ChatRequest(BaseModel):

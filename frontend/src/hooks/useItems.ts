@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useAuth } from '../context/AuthContext'
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000'
+const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? '/api' : 'http://127.0.0.1:8000')
 
 interface Item {
     id: string
@@ -19,6 +20,7 @@ interface ItemsState {
 }
 
 export function useItems() {
+    const { user } = useAuth()
     const [state, setState] = useState<ItemsState>({
         items: [],
         isLoading: true,
@@ -60,21 +62,28 @@ export function useItems() {
 
     const getCheckoutUrl = useCallback(async (itemId: string): Promise<string | null> => {
         try {
+            const body: any = { item_id: itemId }
+            if (user?.id) {
+                body.user_id = user.id
+            }
+
             const res = await fetch(`${API_URL}/checkout`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ item_id: itemId })
+                body: JSON.stringify(body)
             })
 
             if (res.ok) {
                 const data = await res.json()
+                // Save item_id for payment confirmation fallback
+                localStorage.setItem('pending_checkout_item_id', itemId)
                 return data.checkout_url
             }
             return null
         } catch {
             return null
         }
-    }, [])
+    }, [user?.id])
 
     useEffect(() => {
         fetchItems()

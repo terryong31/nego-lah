@@ -40,11 +40,7 @@ export const Input = forwardRef<HTMLInputElement | HTMLTextAreaElement, InputPro
                             ref={ref as any}
                             className={baseClasses}
                             rows={rows}
-                            onKeyDown={(e) => {
-                                // Allow Shift+Enter for new line (default behavior), 
-                                // but if we wanted Enter to submit, we'd handle it here.
-                                // For description, standard behavior is fine.
-                            }}
+
                             {...(props as any)}
                         />
                     ) : (

@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { ThemeToggle } from '../components/ThemeToggle'
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000'
+const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? '/api' : 'http://127.0.0.1:8000')
 
 interface Order {
     id: string
@@ -24,13 +24,13 @@ export function Orders() {
 
     useEffect(() => {
         async function fetchOrders() {
-            if (!user?.email) {
+            if (!user?.id) {
                 setLoading(false)
                 return
             }
 
             try {
-                const response = await fetch(`${API_URL}/orders/user/${encodeURIComponent(user.email)}`)
+                const response = await fetch(`${API_URL}/orders/user/${user.id}`)
                 if (response.ok) {
                     const data = await response.json()
                     setOrders(data.orders || [])
@@ -43,7 +43,7 @@ export function Orders() {
         }
 
         fetchOrders()
-    }, [user?.email])
+    }, [user?.id])
 
     // Parse first image from JSON image_path
     const getFirstImage = (imagePath?: string): string | null => {

@@ -11,7 +11,7 @@ interface LoginProps {
 }
 
 export function Login({ onBack }: LoginProps) {
-    const { signInWithGoogle, user, loading } = useAuth()
+    const { signInWithGoogle, user, loading, banError } = useAuth()
     const [isLoginMode, setIsLoginMode] = useState(true)
     const [email, setEmail] = useState('')
     const [password, setPassword] = useState('')
@@ -19,6 +19,13 @@ export function Login({ onBack }: LoginProps) {
     const [error, setError] = useState<string | null>(null)
     const [success, setSuccess] = useState<string | null>(null)
     const navigate = useNavigate()
+
+    // Show ban error if present
+    useEffect(() => {
+        if (banError) {
+            setError(banError)
+        }
+    }, [banError])
 
     // Redirect if already logged in - use useEffect to avoid setState during render
     useEffect(() => {

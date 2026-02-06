@@ -20,17 +20,27 @@ from .tools.payment import web_search
 from .sub_agents.item_agent import item_agent
 from .sub_agents.stripe_agent import stripe_agent
 from .tools.payment import create_checkout_link, cancel_payment_link # Need to inject context into these
+from .tools.orders import check_user_orders
 
-# Initialize memory systems
 conversation_memory = ConversationMemory()
 vector_memory = VectorMemory()
 
-# Initialize the model
-model = ChatGoogleGenerativeAI(
-    model="gemini-2.5-flash",
-    temperature=0.7,
-    google_api_key=GEMINI_API_KEY
-)
+_model = None
+_customer_agent = None
+
+
+def _get_model():
+    global _model
+    if _model is not None:
+        return _model
+    if not GEMINI_API_KEY:
+        raise RuntimeError("Missing GEMINI_API_KEY")
+    _model = ChatGoogleGenerativeAI(
+        model="gemini-2.5-flash",
+        temperature=0.7,
+        google_api_key=GEMINI_API_KEY,
+    )
+    return _model
 
 # --- Sub-Agent Wrapper Tools ---
 
@@ -128,8 +138,10 @@ customer_tools = [
     call_item_agent,
     call_stripe_agent,
     evaluate_offer, 
+    evaluate_offer, 
     assess_discount_eligibility,
-    web_search
+    web_search,
+    check_user_orders
 ]
 
 CUSTOMER_AGENT_PROMPT = SELLER_PERSONA + """
@@ -139,19 +151,27 @@ You are the Lead Negotiator and Customer Service AI.
 You have a team of specialists to help you:
 1. `call_item_agent`: For finding items, checking stock, and getting item details.
 2. `call_stripe_agent`: For processing payments and cancellations.
+3. `check_user_orders`: To see what the user has purchased and if we are waiting for shipping info.
 
 YOUR ROLE:
 - Talk to the user in your persona (Nego-Lah).
 - Negotiate prices using `evaluate_offer` and your judgment.
 - If the user asks about availability/items -> Ask Item Agent.
+- If the user asks about past orders or you need to check if they bought something -> Use `check_user_orders`.
 - If the deal is struck -> Ask Stripe Agent to create the link.
 
 IMPORTANT:
-- When calling `call_stripe_agent` to create a link, you MUST include the `item_id` and the `agreed_price` in your request string so the agent knows what to do.
-- Verify you have the `item_id` before calling payment tools.
+- When calling `call_stripe_agent` to create a link, you MUST include the `item_id` and the `agreed_price`.
+- To save shipping info, you NEED the `order_id`. If you don't have it, call `check_user_orders` to find the correct Order ID for the item. Do NOT ask the user for the Order ID.
+- Verify you have the IDs before calling tools.
 """
 
-customer_agent = create_react_agent(model, customer_tools, prompt=CUSTOMER_AGENT_PROMPT)
+def _get_customer_agent():
+    global _customer_agent
+    if _customer_agent is not None:
+        return _customer_agent
+    _customer_agent = create_react_agent(_get_model(), customer_tools, prompt=CUSTOMER_AGENT_PROMPT)
+    return _customer_agent
 
 
 def get_item_details_for_context(item_id: str) -> dict:
@@ -159,7 +179,7 @@ def get_item_details_for_context(item_id: str) -> dict:
     from connector import user_supabase
     
     try:
-        response = user_supabase.table('items').select('name, description, price, condition').eq('id', item_id).execute()
+        response = user_supabase.table('items').select('name, description, price, condition, image_path').eq('id', item_id).execute()
         if response.data and len(response.data) > 0:
             return response.data[0]
     except Exception:
@@ -193,6 +213,8 @@ def chat(user_id: str, message: str, item_id: str = None, files: list = None) ->
     
     # Build input message with item context
     input_message = message
+    item_images = []
+    
     if item_id:
         item_details = get_item_details_for_context(item_id)
         if item_details:
@@ -202,12 +224,31 @@ Listed Price: RM{item_details.get('price', 'N/A')}
 
 Buyer: {message}"""
             input_message = context
+            
+            # Extract item images
+            try:
+                if item_details.get('image_path'):
+                    import json
+                    images_map = json.loads(item_details['image_path'])
+                    # Get first 2 images to give context without overloading
+                    item_images = list(images_map.values())[:2]
+            except Exception as e:
+                print(f"Failed to parse item images: {e}")
         else:
             input_message = f"Buyer: {message}"
     
-    # Handle files (multimodal)
+    # Handle files (multimodal - user uploads + item images)
+    content_parts = [{"type": "text", "text": input_message}]
+    
+    # Add Item Images (if any)
+    for img_url in item_images:
+        content_parts.append({
+            "type": "image_url",
+            "image_url": {"url": img_url}
+        })
+
+    # Add User Uploaded Files (if any)
     if files and len(files) > 0:
-        content_parts = [{"type": "text", "text": input_message}]
         for file in files:
             if file["type"].startswith("image/"):
                 content_parts.append({
@@ -216,6 +257,9 @@ Buyer: {message}"""
                 })
             else:
                 content_parts.append({"type": "text", "text": f"\n[Attached: {file['name']}]"})
+
+    # Send message
+    if len(content_parts) > 1:
         messages.append(HumanMessage(content=content_parts))
     else:
         messages.append(HumanMessage(content=input_message))
@@ -235,14 +279,18 @@ Buyer: {message}"""
     create_checkout_link._current_user_id = user_id
     create_checkout_link._current_item_id = item_id
     cancel_payment_link._current_user_id = user_id
+    cancel_payment_link._current_user_id = user_id
     cancel_payment_link._current_item_id = item_id
+    
+    # Inject into Order Tools
+    check_user_orders._current_user_id = user_id
     
     # Inject into Item Tools (Used by Item Agent - if they needed context, but they mostly take args)
     # create_checkout_link is imported from .tools.payment, so we match the reference.
     
     # Invoke Customer Agent
     print(f"🤖 Customer Agent processing message for user {user_id}...")
-    result = customer_agent.invoke({"messages": messages})
+    result = _get_customer_agent().invoke({"messages": messages})
     
     # Extract response
     agent_response = result["messages"][-1].content
@@ -261,7 +309,6 @@ Buyer: {message}"""
     conversation_memory.add_message(user_id, "ai", agent_response, item_id)
     
     return agent_response
-
 
 
 

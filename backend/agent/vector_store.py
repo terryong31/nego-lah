@@ -1,8 +1,6 @@
-import os
-from typing import List
-import faiss
 import numpy as np
-import json
+from typing import List, Optional
+
 
 # Simple embeddings using sentence similarity
 # For production, use langchain_google_genai embeddings
@@ -24,86 +22,91 @@ class SimpleEmbedding:
 
 
 class VectorMemory:
-    """FAISS-based semantic memory for item knowledge and past negotiations."""
+    """Supabase pgvector-based semantic memory for item knowledge and past negotiations."""
     
-    def __init__(self, persist_directory: str = "./faiss_db"):
-        self.persist_directory = persist_directory
-        self.dimension = 384
-        self.embedder = SimpleEmbedding(self.dimension)
-        
-        # Create directory if it doesn't exist
-        os.makedirs(persist_directory, exist_ok=True)
-        
-        self.index_path = os.path.join(persist_directory, "index.faiss")
-        self.metadata_path = os.path.join(persist_directory, "metadata.json")
-        
-        # Load or create index
-        if os.path.exists(self.index_path):
-            self.index = faiss.read_index(self.index_path)
-            with open(self.metadata_path, 'r') as f:
-                self.metadata = json.load(f)
-        else:
-            self.index = faiss.IndexFlatL2(self.dimension)
-            self.metadata = {"documents": [], "ids": [], "meta": []}
+    VECTOR_DIM = 384
     
-    def _save(self):
-        """Persist index and metadata to disk."""
-        faiss.write_index(self.index, self.index_path)
-        with open(self.metadata_path, 'w') as f:
-            json.dump(self.metadata, f)
-    
+    def __init__(self, persist_directory: str = None):
+        self.enabled = False
+        self.embedder = SimpleEmbedding(self.VECTOR_DIM)
+        self._supabase = None
+
+        try:
+            from connector import admin_supabase
+            self._supabase = admin_supabase
+            # Verify connection by checking the table exists
+            result = self._supabase.table('vector_memory').select('id').limit(1).execute()
+            self.enabled = True
+        except Exception as e:
+            print(f"VectorMemory disabled: {e}")
+            self.enabled = False
+            
     def add_item_knowledge(self, item_id: str, description: str):
         """Store item info for semantic search."""
-        doc_id = f"item_{item_id}"
+        if not self.enabled:
+            return
+        doc_id = f"item:{item_id}"
+        embedding = self.embedder.embed(description)
         
-        # Check if already exists
-        if doc_id in self.metadata["ids"]:
-            idx = self.metadata["ids"].index(doc_id)
-            self.metadata["documents"][idx] = description
-            self.metadata["meta"][idx] = {"type": "item", "item_id": item_id}
-        else:
-            # Add new
-            embedding = self.embedder.embed(description).reshape(1, -1)
-            self.index.add(embedding)
-            self.metadata["documents"].append(description)
-            self.metadata["ids"].append(doc_id)
-            self.metadata["meta"].append({"type": "item", "item_id": item_id})
-        
-        self._save()
+        try:
+            # Upsert to handle duplicates
+            self._supabase.table('vector_memory').upsert({
+                "id": doc_id,
+                "type": "item",
+                "item_id": item_id,
+                "content": description,
+                "embedding": embedding.tolist()
+            }).execute()
+        except Exception as e:
+            print(f"Error adding item knowledge: {e}")
     
     def add_negotiation_summary(self, user_id: str, item_id: str, summary: str):
         """Store a negotiation summary for future reference."""
-        doc_id = f"negotiation_{user_id}_{item_id}"
+        if not self.enabled:
+            return
+        doc_id = f"neg:{user_id}:{item_id}"
+        embedding = self.embedder.embed(summary)
         
-        if doc_id in self.metadata["ids"]:
-            idx = self.metadata["ids"].index(doc_id)
-            self.metadata["documents"][idx] = summary
-            self.metadata["meta"][idx] = {"type": "negotiation", "user_id": user_id, "item_id": item_id}
-        else:
-            embedding = self.embedder.embed(summary).reshape(1, -1)
-            self.index.add(embedding)
-            self.metadata["documents"].append(summary)
-            self.metadata["ids"].append(doc_id)
-            self.metadata["meta"].append({"type": "negotiation", "user_id": user_id, "item_id": item_id})
-        
-        self._save()
+        try:
+            self._supabase.table('vector_memory').upsert({
+                "id": doc_id,
+                "type": "negotiation",
+                "user_id": user_id,
+                "item_id": item_id,
+                "content": summary,
+                "embedding": embedding.tolist()
+            }).execute()
+        except Exception as e:
+            print(f"Error adding negotiation summary: {e}")
     
-    def search_similar(self, query: str, n_results: int = 3) -> List[str]:
-        """Find relevant items or past negotiations."""
-        if self.index.ntotal == 0:
+    def search_similar(self, query: str, n_results: int = 3, filter_type: str = None) -> List[str]:
+        """Find relevant items or past negotiations using pgvector similarity search."""
+        if not self.enabled:
             return []
         
-        query_embedding = self.embedder.embed(query).reshape(1, -1)
-        k = min(n_results, self.index.ntotal)
-        distances, indices = self.index.search(query_embedding, k)
+        query_embedding = self.embedder.embed(query).tolist()
         
-        results = []
-        for idx in indices[0]:
-            if idx < len(self.metadata["documents"]):
-                results.append(self.metadata["documents"][idx])
-        
-        return results
+        try:
+            result = self._supabase.rpc('match_memory', {
+                'query_embedding': query_embedding,
+                'match_threshold': 0.0,  # Low threshold for simple hash-based embeddings
+                'match_count': n_results,
+                'filter_type': filter_type
+            }).execute()
+            
+            if result.data:
+                return [doc['content'] for doc in result.data]
+            return []
+        except Exception as e:
+            print(f"Error searching: {e}")
+            return []
     
     def count(self) -> int:
-        """Return number of documents in the index."""
-        return self.index.ntotal
+        """Return number of documents in the vector store."""
+        if not self.enabled:
+            return 0
+        try:
+            result = self._supabase.table('vector_memory').select('id', count='exact').execute()
+            return result.count or 0
+        except:
+            return 0

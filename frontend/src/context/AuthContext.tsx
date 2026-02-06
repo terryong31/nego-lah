@@ -3,11 +3,15 @@ import type { ReactNode } from 'react'
 import type { User, Session } from '@supabase/supabase-js'
 import { supabase, signInWithGoogle, signOut } from '../lib/supabase'
 
+const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? '/api' : 'http://127.0.0.1:8000')
+
 interface AuthContextType {
     user: User | null
     session: Session | null
     loading: boolean
     isPasswordRecovery: boolean
+    isBanned: boolean
+    banError: string | null
     signInWithGoogle: () => Promise<void>
     signOut: () => Promise<void>
 }
@@ -19,10 +23,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const [session, setSession] = useState<Session | null>(null)
     const [loading, setLoading] = useState(true)
     const [isPasswordRecovery, setIsPasswordRecovery] = useState(false)
+    const [isBanned, setIsBanned] = useState(false)
+    const [banError, setBanError] = useState<string | null>(null)
+
+    // Check if user is banned
+    const checkBanStatus = async (userId: string): Promise<boolean> => {
+        try {
+            const response = await fetch(`${API_URL}/user/${userId}/ban-status`)
+            if (response.ok) {
+                const data = await response.json()
+                return data.is_banned === true
+            }
+        } catch (error) {
+            console.error('Failed to check ban status:', error)
+        }
+        return false
+    }
 
     useEffect(() => {
         // Get initial session
-        supabase.auth.getSession().then(({ data: { session } }) => {
+        supabase.auth.getSession().then(async ({ data: { session } }) => {
+            if (session?.user) {
+                // Check ban status for existing session
+                const banned = await checkBanStatus(session.user.id)
+                if (banned) {
+                    setIsBanned(true)
+                    setBanError('Your account has been banned. Please contact support.')
+                    await signOut()
+                    setSession(null)
+                    setUser(null)
+                    setLoading(false)
+                    return
+                }
+            }
             setSession(session)
             setUser(session?.user ?? null)
             setLoading(false)
@@ -47,10 +80,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                     return
                 }
 
+                // Check ban status on sign in
+                if (event === 'SIGNED_IN' && session?.user) {
+                    const banned = await checkBanStatus(session.user.id)
+                    if (banned) {
+                        setIsBanned(true)
+                        setBanError('Your account has been banned. Please contact support.')
+                        await signOut()
+                        setSession(null)
+                        setUser(null)
+                        setLoading(false)
+                        return
+                    }
+                }
+
                 // For other events, handle normally
                 setSession(session)
                 setUser(session?.user ?? null)
                 setLoading(false)
+                setIsBanned(false)
+                setBanError(null)
 
                 // Clear password recovery flag on sign out
                 if (event === 'SIGNED_OUT') {
@@ -71,6 +120,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(null)
         setSession(null)
         setIsPasswordRecovery(false)
+        setIsBanned(false)
+        setBanError(null)
     }
 
     return (
@@ -79,6 +130,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             session,
             loading,
             isPasswordRecovery,
+            isBanned,
+            banError,
             signInWithGoogle: handleSignInWithGoogle,
             signOut: handleSignOut
         }}>

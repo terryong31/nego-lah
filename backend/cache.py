@@ -1,10 +1,97 @@
-import redis
 import json
-from typing import Optional, Any, List, Dict
+import time
+from typing import Dict, List, Optional
+
+import redis
+
 from env import REDIS_URL
 
-# Connect to Redis
-redis_client = redis.from_url(REDIS_URL, decode_responses=True)
+
+class _InMemoryRedis:
+    def __init__(self):
+        self._store: Dict[str, str] = {}
+        self._hash_store: Dict[str, Dict[str, str]] = {}
+        self._exp: Dict[str, float] = {}
+
+    def _purge(self, key: str):
+        exp = self._exp.get(key)
+        if exp is not None and time.time() > exp:
+            self._store.pop(key, None)
+            self._hash_store.pop(key, None)
+            self._exp.pop(key, None)
+
+    def setex(self, key: str, ttl: int, value: str):
+        self._store[key] = value
+        self._exp[key] = time.time() + ttl
+
+    def get(self, key: str) -> Optional[str]:
+        self._purge(key)
+        return self._store.get(key)
+
+    def delete(self, key: str):
+        self._store.pop(key, None)
+        self._hash_store.pop(key, None)
+        self._exp.pop(key, None)
+
+    def hset(self, key: str, mapping: Dict[str, str]):
+        self._purge(key)
+        self._hash_store.setdefault(key, {}).update(mapping)
+
+    def expire(self, key: str, ttl: int):
+        self._exp[key] = time.time() + ttl
+
+    def hgetall(self, key: str) -> Dict[str, str]:
+        self._purge(key)
+        return dict(self._hash_store.get(key, {}))
+
+    def pipeline(self):
+        return _InMemoryPipeline(self)
+
+
+class _InMemoryPipeline:
+    def __init__(self, client: _InMemoryRedis):
+        self.client = client
+        self.ops = []
+
+    def incr(self, key: str):
+        self.ops.append(("incr", key, None))
+        return self
+
+    def incrby(self, key: str, amount: int):
+        self.ops.append(("incrby", key, amount))
+        return self
+
+    def expire(self, key: str, ttl: int):
+        self.ops.append(("expire", key, ttl))
+        return self
+
+    def execute(self):
+        for op, key, val in self.ops:
+            if op == "incr":
+                current = self.client.get(key)
+                next_val = int(current) + 1 if current else 1
+                self.client._store[key] = str(next_val)
+            elif op == "incrby":
+                current = self.client.get(key)
+                next_val = int(current) + int(val) if current else int(val)
+                self.client._store[key] = str(next_val)
+            elif op == "expire":
+                self.client.expire(key, int(val))
+        self.ops = []
+
+
+def _create_redis_client():
+    if not REDIS_URL:
+        return _InMemoryRedis()
+    try:
+        client = redis.from_url(REDIS_URL, decode_responses=True)
+        client.ping()
+        return client
+    except Exception:
+        return _InMemoryRedis()
+
+
+redis_client = _create_redis_client()
 
 
 # ============================================

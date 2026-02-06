@@ -6,10 +6,11 @@ import { Card } from '../components/Card'
 import { ThemeToggle } from '../components/ThemeToggle'
 import { ChatBubble } from '../components/ChatBubble'
 import { ConfirmationModal } from '../components/ConfirmationModal'
+import { ImageDropzone } from '../components/ImageDropzone'
 import { api } from '../lib/api'
 import { supabase } from '../lib/supabase'
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000'
+const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? '/api' : 'http://127.0.0.1:8000')
 const CHATS_URL = '/admin/chats'
 
 interface Item {
@@ -66,6 +67,7 @@ export function Admin({ onBack }: AdminProps) {
     const [error, setError] = useState<string | null>(null)
     const [editingItem, setEditingItem] = useState<Item | null>(null)
     const [showAddForm, setShowAddForm] = useState(false)
+    const [addStep, setAddStep] = useState<'upload' | 'form'>('upload')
     const [isMenuOpen, setIsMenuOpen] = useState(false)
 
 
@@ -84,8 +86,18 @@ export function Admin({ onBack }: AdminProps) {
         price: '',
         min_price: ''
     })
+    const [isSubmitting, setIsSubmitting] = useState(false)
     const [images, setImages] = useState<FileList | null>(null)
+    const [dragIndex, setDragIndex] = useState<number | null>(null)
     const [currentItemImages, setCurrentItemImages] = useState<string[]>([])
+
+    const [marketAdvice, setMarketAdvice] = useState<{
+        market_average: number,
+        min_price: number,
+        max_price: number,
+        suggested_listing: number,
+        source?: string
+    } | null>(null)
 
     // Tab state
     const [activeTab, setActiveTab] = useState<'items' | 'users' | 'orders'>('items')
@@ -145,6 +157,8 @@ export function Admin({ onBack }: AdminProps) {
         item_id: string
         item_name: string
         buyer_id: string
+        buyer_name?: string
+        buyer_email?: string
         amount: number
         recipient_name: string
         phone: string
@@ -405,12 +419,17 @@ export function Admin({ onBack }: AdminProps) {
 
     const handleAdd = async (e: React.FormEvent) => {
         e.preventDefault()
+        if (isSubmitting) return
+
+        setIsSubmitting(true)
+        setError(null) // Clear previous errors
 
         const form = new FormData()
         form.append('name', formData.name)
         form.append('description', formData.description)
         form.append('condition', formData.condition)
         form.append('price', formData.price)
+        form.append('min_price', formData.min_price || formData.price) // Base price, defaults to price
 
         if (images) {
             Array.from(images).forEach(file => {
@@ -435,6 +454,8 @@ export function Admin({ onBack }: AdminProps) {
             }
         } catch {
             setError('Connection error')
+        } finally {
+            setIsSubmitting(false)
         }
     }
 
@@ -450,10 +471,9 @@ export function Admin({ onBack }: AdminProps) {
     const performDeleteItem = async (itemId: string) => {
         setConfirmation(prev => ({ ...prev, isLoading: true }))
         try {
-            const res = await fetch(`${API_URL}/items`, {
+            const res = await fetch(`${API_URL}/items/${itemId}`, {
                 method: 'DELETE',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ item_id: itemId, name: '', description: '', condition: '', images: '' })
+                headers: { 'Content-Type': 'application/json' }
             })
 
             if (res.ok) {
@@ -493,6 +513,26 @@ export function Admin({ onBack }: AdminProps) {
         }
     }
 
+    const fetchMarketData = async (query: string, condition: string) => {
+        try {
+            // First clear existing advice
+            setMarketAdvice(null)
+
+            const res = await fetch(`${API_URL}/admin/market-valuation`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ query, condition })
+            })
+
+            if (res.ok) {
+                const data = await res.json()
+                setMarketAdvice(data)
+            }
+        } catch (e) {
+            console.error("Failed to fetch market data", e)
+        }
+    }
+
     const startEdit = (item: Item) => {
         setEditingItem(item)
 
@@ -513,6 +553,9 @@ export function Admin({ onBack }: AdminProps) {
             price: item.price.toString(),
             min_price: item.min_price?.toString() || ''
         })
+
+        // Fetch market advice for the item being edited
+        fetchMarketData(item.name, item.condition)
     }
 
     const handleDeleteImage = (imageIndex: number) => {
@@ -573,37 +616,47 @@ export function Admin({ onBack }: AdminProps) {
     // AI Auto-fill Logic
     const [isAnalyzing, setIsAnalyzing] = useState(false)
 
-    const handleAnalyzeImage = async (file: File) => {
-        if (!file) return
+    const handleAnalyzeImages = async (files: File[]) => {
+        if (!files.length) return
 
         setIsAnalyzing(true)
-        setError(null) // Clear previous errors
+        setError(null)
 
-        const formData = new FormData()
-        formData.append('image', file)
+        // Use first image for AI analysis
+        const firstFile = files[0]
+        const formDataPayload = new FormData()
+        formDataPayload.append('image', firstFile)
 
         try {
             const res = await fetch(`${API_URL}/admin/analyze-image`, {
                 method: 'POST',
-                body: formData
+                body: formDataPayload
             })
 
             if (res.ok) {
                 const data = await res.json()
 
-                // Populate form
+                // Populate form with AI data
                 setFormData(prev => ({
                     ...prev,
                     name: data.name || prev.name,
                     description: data.description || prev.description,
-                    condition: data.condition || 'Good'
+                    condition: data.condition || 'Good',
+                    price: data.market_data?.suggested_listing?.toString() || prev.price,
+                    min_price: data.market_data?.min_price?.toString() || prev.min_price
                 }))
 
-                // Also set the image as the selected file for upload
-                // We need to simulate a FileList for the 'images' state
+                if (data.market_data) {
+                    setMarketAdvice(data.market_data)
+                }
+
+                // Set ALL uploaded files as the form images
                 const dt = new DataTransfer()
-                dt.items.add(file)
+                files.forEach(file => dt.items.add(file))
                 setImages(dt.files)
+
+                // Transition to form step
+                setAddStep('form')
 
             } else {
                 const err = await res.json()
@@ -1108,8 +1161,11 @@ export function Admin({ onBack }: AdminProps) {
                                                             {item.min_price ? `RM${item.min_price}` : '-'}
                                                         </td>
                                                         <td className="px-4 py-3">
-                                                            <span className="px-2 py-1 text-xs rounded-full bg-green-600 text-white">
-                                                                Available
+                                                            <span className={`px-2 py-1 text-xs rounded-full text-white ${(item.status === 'sold')
+                                                                ? 'bg-gray-500'
+                                                                : 'bg-green-600'
+                                                                }`}>
+                                                                {item.status ? (item.status.charAt(0).toUpperCase() + item.status.slice(1)) : 'Available'}
                                                             </span>
                                                         </td>
                                                         <td className="px-4 py-3 text-right space-x-2 whitespace-nowrap">
@@ -1239,36 +1295,49 @@ export function Admin({ onBack }: AdminProps) {
                                 )}
 
                                 <div className="space-y-3">
-                                    {orders.map((order) => (
-                                        <div key={order.id} className="bg-[var(--card-bg)] border border-[var(--border)] rounded-xl p-4 flex gap-4">
-                                            <div className="flex-1 min-w-0">
-                                                <div className="flex items-start justify-between gap-2">
-                                                    <h3 className="font-semibold text-[var(--text-primary)] truncate">{order.item_name}</h3>
-                                                    <span className={`px-2 py-0.5 text-xs font-medium rounded border ${order.status === 'confirmed' ? 'bg-green-500/20 text-green-400 border-green-500/30' :
-                                                        order.status === 'shipped' ? 'bg-blue-500/20 text-blue-400 border-blue-500/30' :
-                                                            'bg-yellow-500/20 text-yellow-400 border-yellow-500/30'
-                                                        }`}>
-                                                        {order.status.charAt(0).toUpperCase() + order.status.slice(1).replace('_', ' ')}
-                                                    </span>
-                                                </div>
-                                                <p className="text-sm text-[var(--text-muted)] mt-1">
-                                                    Amount: <span className="font-bold text-[var(--accent)]">RM {order.amount.toFixed(2)}</span>
-                                                </p>
-                                                <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-sm text-[var(--text-muted)] bg-[var(--bg-tertiary)] p-3 rounded-lg">
-                                                    <p><span className="font-medium text-[var(--text-primary)]">Recipient:</span> {order.recipient_name || 'Pending'}</p>
-                                                    <p><span className="font-medium text-[var(--text-primary)]">Phone:</span> {order.phone || 'Pending'}</p>
-                                                    <div className="col-span-2">
-                                                        <span className="font-medium text-[var(--text-primary)]">Address:</span> {order.address || 'Pending info from buyer'}
+                                    {orders.map((order) => {
+                                        const status = order.status || 'pending'
+                                        const amount = typeof order.amount === 'number' ? order.amount : 0
+
+                                        return (
+                                            <div key={order.id} className="bg-[var(--card-bg)] border border-[var(--border)] rounded-xl p-4 flex gap-4">
+                                                <div className="flex-1 min-w-0">
+                                                    <div className="flex items-start justify-between gap-2">
+                                                        <div className="min-w-0">
+                                                            <h3 className="font-semibold text-[var(--text-primary)] truncate">{order.item_name}</h3>
+                                                            {order.buyer_email && (
+                                                                <div className="flex flex-col text-xs text-[var(--text-muted)] mt-0.5">
+                                                                    <span>Buyer: <span className="text-[var(--text-secondary)]">{order.buyer_name || 'Unknown'}</span></span>
+                                                                    <span className="opacity-75">{order.buyer_email}</span>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                        <span className={`px-2 py-0.5 text-xs font-medium rounded border ${status === 'confirmed' ? 'bg-green-500/20 text-green-400 border-green-500/30' :
+                                                            status === 'shipped' ? 'bg-blue-500/20 text-blue-400 border-blue-500/30' :
+                                                                'bg-yellow-500/20 text-yellow-400 border-yellow-500/30'
+                                                            }`}>
+                                                            {status.charAt(0).toUpperCase() + status.slice(1).replace('_', ' ')}
+                                                        </span>
+                                                    </div>
+                                                    <p className="text-sm text-[var(--text-muted)] mt-2">
+                                                        Amount: <span className="font-bold text-[var(--accent)]">RM {amount.toFixed(2)}</span>
+                                                    </p>
+                                                    <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-sm text-[var(--text-muted)] bg-[var(--bg-tertiary)] p-3 rounded-lg">
+                                                        <p><span className="font-medium text-[var(--text-primary)]">Recipient:</span> {order.recipient_name || 'Pending'}</p>
+                                                        <p><span className="font-medium text-[var(--text-primary)]">Phone:</span> {order.phone || 'Pending'}</p>
+                                                        <div className="col-span-2">
+                                                            <span className="font-medium text-[var(--text-primary)]">Address:</span> {order.address || 'Pending info from buyer'}
+                                                        </div>
+                                                    </div>
+                                                    <div className="mt-2 flex justify-end">
+                                                        <span className="text-xs text-[var(--text-muted)]">
+                                                            Ordered: {new Date(order.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                                        </span>
                                                     </div>
                                                 </div>
-                                                <div className="mt-2 flex justify-end">
-                                                    <span className="text-xs text-[var(--text-muted)]">
-                                                        Ordered: {new Date(order.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                                                    </span>
-                                                </div>
                                             </div>
-                                        </div>
-                                    ))}
+                                        )
+                                    })}
                                 </div>
                             </div>
                         )}
@@ -1494,13 +1563,18 @@ export function Admin({ onBack }: AdminProps) {
             )}
 
             {/* Modals outside the main container for proper z-index */}
-            {/* Add Form Modal */}
+            {/* Add Form Modal - Two Step Flow */}
             {showAddForm && (
                 <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in">
                     <div className="w-full max-w-md animate-slide-up flex flex-col items-start">
                         {/* Return to items link above the card */}
                         <button
-                            onClick={() => setShowAddForm(false)}
+                            onClick={() => {
+                                setShowAddForm(false)
+                                setAddStep('upload')
+                                setFormData({ name: '', description: '', condition: 'Good', price: '', min_price: '' })
+                                setImages(null)
+                            }}
                             className="flex items-center gap-2 text-white hover:text-white/80 transition-colors group mb-4"
                         >
                             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1513,104 +1587,182 @@ export function Admin({ onBack }: AdminProps) {
                         </button>
 
                         <Card className="w-full max-h-[85vh] overflow-y-auto">
-                            <h2 className="text-xl font-semibold text-[var(--text-primary)] mb-4">Add New Item</h2>
-                            <form onSubmit={handleAdd} className="space-y-4">
-                                <Input
-                                    label="Name"
-                                    value={formData.name}
-                                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                                    required
-                                />
-                                <Input
-                                    label="Description"
-                                    value={formData.description}
-                                    onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                                    required
-                                    multiline
-                                    rows={5}
-                                />
-                                <div className="grid grid-cols-2 gap-4">
-                                    <Input
-                                        label="Listed Price (RM)"
-                                        type="number"
-                                        value={formData.price}
-                                        onChange={(e) => setFormData({ ...formData, price: e.target.value })}
-                                        required
-                                    />
-                                    <Input
-                                        label="Base Price (RM)"
-                                        type="number"
-                                        placeholder="Min acceptable"
-                                        value={formData.min_price}
-                                        onChange={(e) => setFormData({ ...formData, min_price: e.target.value })}
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1.5">Condition</label>
-                                    <select
-                                        value={formData.condition}
-                                        onChange={(e) => setFormData({ ...formData, condition: e.target.value })}
-                                        className="w-full px-4 py-2.5 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded-lg text-[var(--text-primary)] focus:outline-none focus:border-[var(--input-focus-border)] transition-colors"
-                                    >
-                                        <option value="New">New</option>
-                                        <option value="Like New">Like New</option>
-                                        <option value="Good">Good</option>
-                                        <option value="Fair">Fair</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1.5">Images</label>
-                                    <input
-                                        type="file"
-                                        multiple
-                                        accept="image/*"
-                                        onChange={(e) => setImages(e.target.files)}
-                                        className="w-full text-[var(--text-secondary)] file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-[var(--bg-tertiary)] file:text-[var(--text-primary)] hover:file:bg-[var(--border)] transition-colors"
-                                    />
+                            {/* Step 1: Upload Images with AI */}
+                            {addStep === 'upload' && (
+                                <>
+                                    <h2 className="text-xl font-semibold text-[var(--text-primary)] mb-2">Add New Item <span className="text-sm font-normal text-gray-400 ml-1">(Max 4MB)</span></h2>
+                                    <p className="text-sm text-[var(--text-muted)] mb-6">Upload images and let AI auto-fill your listing details</p>
 
-
-                                </div>
-
-                                {/* AI Auto-fill Trigger */}
-                                <div>
-                                    <input
-                                        type="file"
-                                        id="ai-upload"
-                                        accept="image/*"
-                                        className="hidden"
-                                        onChange={(e) => {
-                                            const file = e.target.files?.[0]
-                                            if (file) handleAnalyzeImage(file)
-                                            // Reset so same file can be selected again if needed
-                                            e.target.value = ''
-                                        }}
-                                    />
-                                    <Button
-                                        type="button"
-                                        variant="filled"
-                                        fullWidth
-                                        onClick={() => document.getElementById('ai-upload')?.click()}
+                                    <ImageDropzone
+                                        onFilesSelected={handleAnalyzeImages}
+                                        isAnalyzing={isAnalyzing}
                                         disabled={isAnalyzing}
-                                    >
-                                        {isAnalyzing ? (
-                                            <span className="flex items-center gap-2 justify-center">
-                                                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                                                Analyzing Item...
-                                            </span>
-                                        ) : (
-                                            <span className="flex items-center gap-2 justify-center">
-                                                <svg width="18px" height="18px" viewBox="0 0 24 24" role="img" xmlns="http://www.w3.org/2000/svg"><title>OpenAI icon</title><path d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z" /></svg>
-                                                Auto-fill with AI
-                                            </span>
+                                    />
+
+                                    {error && (
+                                        <div className="mt-4 p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-sm">
+                                            {error}
+                                        </div>
+                                    )}
+
+                                    <div className="mt-6 flex flex-col items-center gap-3">
+                                        {/* Return/Cancel Button - Always visible to cancel flow */}
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setAddStep('upload') // Reset step if needed
+                                                setIsAnalyzing(false) // Stop analyzing spinning state
+                                                setShowAddForm(false) // Exit add mode
+                                            }}
+                                            className="text-sm font-medium text-red-400 hover:text-red-300 transition-colors"
+                                        >
+                                            Return / Cancel
+                                        </button>
+
+                                        {/* Skip Button - Hidden when analyzing */}
+                                        {!isAnalyzing && (
+                                            <button
+                                                type="button"
+                                                onClick={() => setAddStep('form')}
+                                                className="text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors group relative"
+                                            >
+                                                <span className="relative">
+                                                    Skip, I'll fill it manually
+                                                    <span className="absolute left-0 bottom-0 w-0 h-[1px] bg-[var(--text-primary)] transition-all duration-300 group-hover:w-full" />
+                                                </span>
+                                            </button>
                                         )}
-                                    </Button>
-                                </div>
-                                <div>
-                                    <Button type="submit" fullWidth variant="filled">
-                                        Add Item
-                                    </Button>
-                                </div>
-                            </form>
+                                    </div>
+                                </>
+                            )}
+
+                            {/* Step 2: Form Fields */}
+                            {addStep === 'form' && (
+                                <>
+                                    <h2 className="text-xl font-semibold text-[var(--text-primary)] mb-4">Add New Item</h2>
+
+                                    <form onSubmit={handleAdd} className="space-y-4">
+                                        <Input
+                                            label="Name"
+                                            value={formData.name}
+                                            onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                                            required
+                                        />
+                                        <Input
+                                            label="Description"
+                                            value={formData.description}
+                                            onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                                            required
+                                            multiline
+                                            rows={5}
+                                        />
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <Input
+                                                label="Listed Price (RM)"
+                                                type="number"
+                                                value={formData.price}
+                                                onChange={(e) => setFormData({ ...formData, price: e.target.value })}
+                                                required
+                                            />
+                                            <Input
+                                                label="Base Price (RM)"
+                                                type="number"
+                                                placeholder="Min acceptable"
+                                                value={formData.min_price}
+                                                onChange={(e) => setFormData({ ...formData, min_price: e.target.value })}
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1.5">Condition</label>
+                                            <select
+                                                value={formData.condition}
+                                                onChange={(e) => setFormData({ ...formData, condition: e.target.value })}
+                                                className="w-full px-4 py-2.5 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded-lg text-[var(--text-primary)] focus:outline-none focus:border-[var(--input-focus-border)] transition-colors"
+                                            >
+                                                <option value="New">New</option>
+                                                <option value="Like New">Like New</option>
+                                                <option value="Good">Good</option>
+                                                <option value="Fair">Fair</option>
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1.5">Images</label>
+                                            {images && images.length > 0 ? (
+                                                <div className="space-y-2">
+                                                    <div className="flex flex-wrap gap-2">
+                                                        {Array.from(images).map((file, i) => (
+                                                            <div
+                                                                key={i}
+                                                                draggable
+                                                                onDragStart={() => setDragIndex(i)}
+                                                                onDragOver={(e) => e.preventDefault()}
+                                                                onDrop={() => {
+                                                                    if (dragIndex === null || dragIndex === i) return
+                                                                    const arr = Array.from(images)
+                                                                    const [dragged] = arr.splice(dragIndex, 1)
+                                                                    arr.splice(i, 0, dragged)
+                                                                    const dt = new DataTransfer()
+                                                                    arr.forEach(f => dt.items.add(f))
+                                                                    setImages(dt.files)
+                                                                    setDragIndex(null)
+                                                                }}
+                                                                onDragEnd={() => setDragIndex(null)}
+                                                                className={`relative group cursor-grab active:cursor-grabbing transition-all duration-150 ${dragIndex === i ? 'opacity-50 scale-95' : ''}`}
+                                                            >
+                                                                <div className="w-16 h-16 rounded-lg overflow-hidden bg-[var(--bg-tertiary)] ring-2 ring-transparent hover:ring-[var(--accent)]/50 transition-all">
+                                                                    <img
+                                                                        src={URL.createObjectURL(file)}
+                                                                        alt={file.name}
+                                                                        className="w-full h-full object-cover pointer-events-none"
+                                                                    />
+                                                                </div>
+                                                                {/* Remove button */}
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation()
+                                                                        const arr = Array.from(images).filter((_, idx) => idx !== i)
+                                                                        const dt = new DataTransfer()
+                                                                        arr.forEach(f => dt.items.add(f))
+                                                                        setImages(dt.files.length > 0 ? dt.files : null)
+                                                                    }}
+                                                                    className="absolute -top-1.5 -right-1.5 w-5 h-5 flex items-center justify-center rounded-full bg-red-500 text-white opacity-0 group-hover:opacity-100 hover:bg-red-600 transition-all shadow-md"
+                                                                    title="Remove"
+                                                                >
+                                                                    <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                                                                        <path d="M18 6L6 18M6 6l12 12" />
+                                                                    </svg>
+                                                                </button>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                    <p className="text-xs text-[var(--text-muted)]">{images.length} image(s) • drag to reorder</p>
+                                                </div>
+                                            ) : (
+                                                <input
+                                                    type="file"
+                                                    multiple
+                                                    accept="image/*"
+                                                    onChange={(e) => setImages(e.target.files)}
+                                                    className="w-full text-[var(--text-secondary)] file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-[var(--bg-tertiary)] file:text-[var(--text-primary)] hover:file:bg-[var(--border)] transition-colors"
+                                                />
+                                            )}
+                                        </div>
+                                        <div>
+                                            <Button type="submit" fullWidth variant="filled" disabled={isSubmitting}>
+                                                {isSubmitting ? (
+                                                    <span className="flex items-center justify-center gap-2">
+                                                        <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                                        Adding...
+                                                    </span>
+                                                ) : (
+                                                    'Add Item'
+                                                )}
+                                            </Button>
+                                        </div>
+                                    </form>
+                                </>
+                            )}
                         </Card>
                     </div >
                 </div >
@@ -1651,6 +1803,59 @@ export function Admin({ onBack }: AdminProps) {
                                         onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                                         required
                                     />
+                                    {marketAdvice && (
+                                        <div className="relative overflow-hidden rounded-xl border border-[#ca9aff]/30 bg-[#ca9aff]/10 backdrop-blur-md p-5 shadow-lg animate-fade-in group">
+                                            {/* Decorative glow */}
+                                            <div className="absolute -right-6 -top-6 h-24 w-24 rounded-full bg-[#ca9aff]/20 blur-2xl transition-all duration-700 group-hover:bg-[#ca9aff]/30" />
+
+                                            <div className="relative z-10 mb-4 flex items-center justify-between">
+                                                <span className="flex items-center gap-2 text-base font-bold text-[var(--text-primary)]">
+                                                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[#ca9aff]">
+                                                        <path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z" />
+                                                    </svg>
+                                                    Market Insight
+                                                </span>
+                                                <span className="rounded-full border border-[#ca9aff]/30 bg-[#ca9aff]/10 px-3 py-1 text-xs font-medium text-[var(--text-secondary)]">
+                                                    {marketAdvice.source || 'AI Analysis'}
+                                                </span>
+                                            </div>
+
+                                            <div className="relative z-10 grid grid-cols-3 gap-3 text-center">
+                                                {/* Low Price */}
+                                                <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)]/50 p-3 shadow-sm transition-transform hover:scale-105">
+                                                    <div className="mb-1 text-xs font-medium text-[var(--text-muted)]">Low</div>
+                                                    <div className="font-semibold text-[var(--text-primary)]">
+                                                        RM{typeof marketAdvice.min_price === 'number' ? marketAdvice.min_price.toLocaleString() : marketAdvice.min_price}
+                                                    </div>
+                                                </div>
+
+                                                {/* Average Price (Highlighted) */}
+                                                <div className="rounded-lg border border-[#ca9aff]/50 bg-gradient-to-b from-[#ca9aff]/20 to-[var(--bg-secondary)]/50 p-3 shadow-md transform scale-105 ring-1 ring-[#ca9aff]/20">
+                                                    <div className="mb-1 text-xs font-bold text-[#ca9aff]">Average</div>
+                                                    <div className="text-lg font-bold text-[var(--text-primary)]">
+                                                        RM{typeof marketAdvice.market_average === 'number' ? marketAdvice.market_average.toLocaleString() : marketAdvice.market_average}
+                                                    </div>
+                                                </div>
+
+                                                {/* High Price */}
+                                                <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)]/50 p-3 shadow-sm transition-transform hover:scale-105">
+                                                    <div className="mb-1 text-xs font-medium text-[var(--text-muted)]">High</div>
+                                                    <div className="font-semibold text-[var(--text-primary)]">
+                                                        RM{typeof marketAdvice.max_price === 'number' ? marketAdvice.max_price.toLocaleString() : marketAdvice.max_price}
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            <div className="relative z-10 mt-4 text-center">
+                                                <div className="inline-block rounded-lg border border-[#ca9aff]/20 bg-[#ca9aff]/5 px-4 py-2 backdrop-blur-sm">
+                                                    <span className="text-sm text-[var(--text-secondary)]">Suggested List: </span>
+                                                    <span className="ml-1 text-base font-bold text-[#ca9aff]">
+                                                        RM{typeof marketAdvice.suggested_listing === 'number' ? marketAdvice.suggested_listing.toLocaleString() : marketAdvice.suggested_listing}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
                                     <div className="grid grid-cols-2 gap-4">
                                         <Input
                                             label="Listed Price (RM)"
@@ -1745,6 +1950,5 @@ export function Admin({ onBack }: AdminProps) {
         </div>
     )
 }
-
 
 

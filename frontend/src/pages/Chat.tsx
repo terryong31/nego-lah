@@ -13,7 +13,7 @@ interface ChatProps {
 }
 
 export function Chat({ userId, itemId, itemName, onBack, userAvatar, userName }: ChatProps) {
-    const { messages, isLoading, error, sendMessage, isPartnerTyping, sendTyping, loadMoreMessages } = useChat(userId)
+    const { messages, isLoading, error, sendMessage, isPartnerTyping, sendTyping, loadMoreMessages, historyLoading } = useChat(userId)
     const [input, setInput] = useState('')
     const [attachments, setAttachments] = useState<File[]>([])
     const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -175,7 +175,34 @@ export function Chat({ userId, itemId, itemName, onBack, userAvatar, userName }:
                         </div>
                     )}
 
-                    {messages.length === 0 && !isLoading && (
+                    {historyLoading && (
+                        <div className="space-y-4 animate-pulse">
+                            {/* Skeleton message bubbles */}
+                            <div className="flex gap-3">
+                                <div className="w-8 h-8 rounded-full bg-[var(--bg-tertiary)]" />
+                                <div className="flex-1">
+                                    <div className="h-4 bg-[var(--bg-tertiary)] rounded w-24 mb-2" />
+                                    <div className="h-16 bg-[var(--bg-tertiary)] rounded w-3/4" />
+                                </div>
+                            </div>
+                            <div className="flex gap-3 justify-end">
+                                <div className="flex-1 flex flex-col items-end">
+                                    <div className="h-4 bg-[var(--bg-tertiary)] rounded w-20 mb-2" />
+                                    <div className="h-12 bg-[var(--bg-tertiary)] rounded w-2/3" />
+                                </div>
+                                <div className="w-8 h-8 rounded-full bg-[var(--bg-tertiary)]" />
+                            </div>
+                            <div className="flex gap-3">
+                                <div className="w-8 h-8 rounded-full bg-[var(--bg-tertiary)]" />
+                                <div className="flex-1">
+                                    <div className="h-4 bg-[var(--bg-tertiary)] rounded w-28 mb-2" />
+                                    <div className="h-20 bg-[var(--bg-tertiary)] rounded w-4/5" />
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {messages.length === 0 && !isLoading && !historyLoading && (
                         <div className="text-center py-12">
                             <p className="text-[var(--text-muted)] mb-2">
                                 {itemName ? `Ask about "${itemName}"` : 'Start a conversation'}
@@ -332,11 +359,11 @@ export function Chat({ userId, itemId, itemName, onBack, userAvatar, userName }:
                                 sendTyping()
                             }}
                             onPaste={handlePaste}
-                            placeholder={placeholderText}
-                            disabled={isLoading}
-                            className="flex-1 px-4 py-3 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded-xl text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--input-focus-border)]"
+                            placeholder={historyLoading ? 'Loading messages...' : placeholderText}
+                            disabled={isLoading || historyLoading}
+                            className="flex-1 px-4 py-3 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded-xl text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--input-focus-border)] disabled:opacity-50"
                         />
-                        <Button type="submit" variant="filled" disabled={isLoading || (!input.trim() && attachments.length === 0)}>
+                        <Button type="submit" variant="filled" disabled={isLoading || historyLoading || (!input.trim() && attachments.length === 0)}>
                             Send
                         </Button>
                     </div>

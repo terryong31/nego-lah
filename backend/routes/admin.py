@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from admin_auth import verify_admin
 import secrets
-from typing import Optional, List, Annotated
+from typing import Optional, Annotated
 from cache import redis_client
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
@@ -63,35 +63,40 @@ def verify_token(token: str):
 def get_all_users():
     """Get all users with their profiles and chat settings."""
     from connector import admin_supabase
+    from fastapi import HTTPException
     
-    # Get all users from auth
-    users_response = admin_supabase.auth.admin.list_users()
-    
-    # Get profiles and chat settings
-    profiles = admin_supabase.table('user_profiles').select('*').execute()
-    settings = admin_supabase.table('chat_settings').select('*').execute()
-    
-    profiles_map = {p['id']: p for p in (profiles.data or [])}
-    settings_map = {s['user_id']: s for s in (settings.data or [])}
-    
-    users = []
-    for user in users_response:
-        user_id = user.id
-        profile = profiles_map.get(user_id, {})
-        setting = settings_map.get(user_id, {})
+    try:
+        # Get all users from auth
+        users_response = admin_supabase.auth.admin.list_users()
         
-        users.append({
-            "id": user_id,
-            "email": user.email,
-            "display_name": profile.get('display_name', user.email.split('@')[0] if user.email else 'User'),
-            "avatar_url": profile.get('avatar_url'),
-            "is_banned": profile.get('is_banned', False),
-            "ai_enabled": setting.get('ai_enabled', True),
-            "admin_intervening": setting.get('admin_intervening', False),
-            "created_at": user.created_at
-        })
-    
-    return users
+        # Get profiles and chat settings
+        profiles = admin_supabase.table('user_profiles').select('*').execute()
+        settings = admin_supabase.table('chat_settings').select('*').execute()
+        
+        profiles_map = {p['id']: p for p in (profiles.data or [])}
+        settings_map = {s['user_id']: s for s in (settings.data or [])}
+        
+        users = []
+        for user in users_response:
+            user_id = user.id
+            profile = profiles_map.get(user_id, {})
+            setting = settings_map.get(user_id, {})
+            
+            users.append({
+                "id": user_id,
+                "email": user.email,
+                "display_name": profile.get('display_name', user.email.split('@')[0] if user.email else 'User'),
+                "avatar_url": profile.get('avatar_url'),
+                "is_banned": profile.get('is_banned', False),
+                "ai_enabled": setting.get('ai_enabled', True),
+                "admin_intervening": setting.get('admin_intervening', False),
+                "created_at": user.created_at
+            })
+        
+        return users
+    except Exception as e:
+        print(f"Error in get_all_users: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.put("/users/{user_id}/profile")
@@ -322,9 +327,26 @@ def get_all_orders():
     result = admin_supabase.table('orders').select('*').order('created_at', desc=True).execute()
     orders_data = result.data or []
     
+    # Enrich with buyer info
+    try:
+        users_response = admin_supabase.auth.admin.list_users()
+        users_map = {u.id: u.email for u in users_response}
+        
+        # Get profiles for display names
+        profiles = admin_supabase.table('user_profiles').select('id, display_name').execute()
+        profiles_map = {p['id']: p['display_name'] for p in (profiles.data or [])}
+        
+        for order in orders_data:
+            buyer_id = order.get('buyer_id')
+            if buyer_id:
+                order['buyer_email'] = users_map.get(buyer_id, 'Unknown Email')
+                order['buyer_name'] = profiles_map.get(buyer_id, 'Unknown User')
+    except Exception as e:
+        print(f"Error enriching orders with user data: {e}")
+    
     # Calculate stats
     total_orders = len(orders_data)
-    total_sales = sum(order.get('amount', 0) for order in orders_data)
+    total_sales = sum((order.get('amount') or 0) for order in orders_data)
     
     return {
         "orders": orders_data,
@@ -355,7 +377,7 @@ def update_order_status(order_id: str, request: OrderStatusUpdate):
     """Update order status."""
     from connector import admin_supabase
     
-    valid_statuses = ['pending_info', 'confirmed', 'shipped', 'delivered']
+    valid_statuses = ['pending_info', 'confirmed', 'shipped', 'delivered', 'cancelled', 'refunded']
     if request.status not in valid_statuses:
         raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {valid_statuses}")
     
@@ -368,6 +390,65 @@ def update_order_status(order_id: str, request: OrderStatusUpdate):
     raise HTTPException(status_code=404, detail="Order not found")
 
 
+class OrderUpdate(BaseModel):
+    item_name: Optional[str] = None
+    amount: Optional[float] = None
+    status: Optional[str] = None
+    shipping_address: Optional[str] = None
+    shipping_phone: Optional[str] = None
+    shipping_name: Optional[str] = None
+    notes: Optional[str] = None
+
+
+@router.put("/orders/{order_id}")
+def update_order(order_id: str, request: OrderUpdate):
+    """Update order details."""
+    from connector import admin_supabase
+    
+    # Build update dict with only provided fields
+    update_data = {}
+    if request.item_name is not None:
+        update_data['item_name'] = request.item_name
+    if request.amount is not None:
+        update_data['amount'] = request.amount
+    if request.status is not None:
+        valid_statuses = ['pending_info', 'confirmed', 'shipped', 'delivered', 'cancelled', 'refunded']
+        if request.status not in valid_statuses:
+            raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {valid_statuses}")
+        update_data['status'] = request.status
+    if request.shipping_address is not None:
+        update_data['shipping_address'] = request.shipping_address
+    if request.shipping_phone is not None:
+        update_data['shipping_phone'] = request.shipping_phone
+    if request.shipping_name is not None:
+        update_data['shipping_name'] = request.shipping_name
+    if request.notes is not None:
+        update_data['notes'] = request.notes
+    
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    
+    result = admin_supabase.table('orders').update(update_data).eq('id', order_id).execute()
+    
+    if result.data:
+        return {"message": "Order updated successfully", "order": result.data[0]}
+    raise HTTPException(status_code=404, detail="Order not found")
+
+
+@router.delete("/orders/{order_id}")
+def delete_order(order_id: str):
+    """Delete an order."""
+    from connector import admin_supabase
+    
+    # Check if order exists first
+    check = admin_supabase.table('orders').select('id').eq('id', order_id).execute()
+    if not check.data:
+        raise HTTPException(status_code=404, detail="Order not found")
+    
+    admin_supabase.table('orders').delete().eq('id', order_id).execute()
+    return {"message": "Order deleted successfully"}
+
+
 # =====================
 # AI Image Analysis
 # =====================
@@ -378,13 +459,11 @@ async def analyze_item_image(
 ):
     """
     Analyze an uploaded image to generate item details (Name, Description, Condition).
-    Uses Gemini 1.5 Flash via LangChain.
+    Uses custom Image Analyzer service (Gemini Vision - NO APIFY).
     """
     import base64
-    from langchain_google_genai import ChatGoogleGenerativeAI
-    from langchain_core.messages import HumanMessage
-    from env import GEMINI_API_KEY
-    import json
+    from agent.tools.image_analyzer import image_analyzer
+    from agent.tools.market_price import market_service
     
     try:
         # Read image
@@ -392,50 +471,57 @@ async def analyze_item_image(
         base64_image = base64.b64encode(contents).decode('utf-8')
         image_type = image.content_type or "image/jpeg"
         
-        # Initialize Vision Model
-        vision_model = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
-            temperature=0.4,
-            google_api_key=GEMINI_API_KEY
-        )
+        # --- Custom Image Analyzer (Gemini Vision) ---
+        print("Analyzing image with custom Image Analyzer...")
+        data = await image_analyzer.analyze(base64_image, image_type)
+        print(f"Image analysis result: {data}")
         
-        prompt = """
-        You are an expert e-commerce listing assistant.
-        Analyze this image and generate a listing for a marketplace.
-        
-        Return a JSON object with strictly these fields:
-        {
-            "name": "A short, catchy title for the item",
-            "description": "A compelling, detailed description in Markdown format. Highlight features, condition, and appeal. Use bullet points if applicable.",
-            "condition": "One of: New, Like New, Good, Fair"
-        }
-        
-        Note:
-        - Determine the condition based on visual cues (box, wear, scratch). Default to 'Good' if unsure.
-        - Do NOT include price.
-        - The description should be ready to publish.
-        """
-        
-        msg = HumanMessage(
-            content=[
-                {"type": "text", "text": prompt},
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:{image_type};base64,{base64_image}"}
-                }
-            ]
-        )
-        
-        # Invoke model
-        response = vision_model.invoke([msg])
-        content = response.content
-        
-        # Extract JSON
-        clean_content = content.replace('```json', '').replace('```', '').strip()
-        data = json.loads(clean_content)
+        # --- Market Valuation ---
+        try:
+            print(f"Fetching market data for: {data.get('name')}")
+            market_data = market_service.get_market_valuation(
+                query=data.get('name', ''), 
+                condition=data.get('condition', 'good'),
+                category=data.get('category')
+            )
+            data['market_data'] = market_data
+        except Exception as market_error:
+            print(f"Market valuation failed: {market_error}")
+            data['market_data'] = None
         
         return data
 
     except Exception as e:
         print(f"Error analyzing image: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to analyze image: {str(e)}")
+
+
+# =====================
+# Market Valuation Endpoint
+# =====================
+
+class MarketValuationRequest(BaseModel):
+    query: str
+    condition: str = "good"
+    category: Optional[str] = None
+
+
+@router.post("/market-valuation")
+def get_market_valuation(request: MarketValuationRequest):
+    """
+    Get market valuation for an item directly.
+    Uses custom Market Valuator (NO APIFY - implement your own scraper!).
+    """
+    from agent.tools.market_price import market_service
+    
+    try:
+        print(f"Fetching market data for: {request.query} ({request.condition})")
+        market_data = market_service.get_market_valuation(
+            query=request.query, 
+            condition=request.condition,
+            category=request.category
+        )
+        return market_data
+    except Exception as e:
+        print(f"Market valuation failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

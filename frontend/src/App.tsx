@@ -82,12 +82,14 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 function AppRoutes() {
   const [chatContext, setChatContext] = useState<ChatContext>({})
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'warning' | 'info' } | null>(null)
-  const { user, signOut } = useAuth()
+  const { user, signOut, loading } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
 
   // Check for confirmation success or payment status in URL
   useEffect(() => {
+    if (loading) return
+
     const params = new URLSearchParams(location.search)
 
     // Handle email confirmation
@@ -99,14 +101,57 @@ function AppRoutes() {
 
     // Handle payment status
     const paymentStatus = params.get('payment')
+    const sessionId = params.get('session_id')
+    const urlItemId = params.get('item_id')  // From Payment Link redirect
+
     if (paymentStatus === 'success') {
+      // Call backend to confirm payment and update database
+      // This is a fallback in case the Stripe webhook fails
+      const confirmPayment = async () => {
+        try {
+          const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? '/api' : 'http://127.0.0.1:8000')
+
+          // Get item_id from URL (Payment Link) or localStorage (Checkout Session)
+          const pendingItemId = urlItemId || localStorage.getItem('pending_checkout_item_id')
+
+          if (pendingItemId || sessionId) {
+            const confirmParams = new URLSearchParams()
+            if (pendingItemId) confirmParams.append('item_id', pendingItemId)
+            if (user?.id) confirmParams.append('user_id', user.id)
+            if (sessionId) confirmParams.append('session_id', sessionId)
+
+            console.log('🔄 Confirming payment with params:', confirmParams.toString())
+
+            const res = await fetch(`${API_URL}/confirm-payment?${confirmParams.toString()}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' }
+            })
+
+            if (res.ok) {
+              const data = await res.json()
+              console.log('✅ Payment confirmed via fallback:', data)
+              localStorage.removeItem('pending_checkout_item_id')
+            } else {
+              const errorText = await res.text()
+              console.error('❌ Failed to confirm payment:', errorText)
+            }
+          } else {
+            console.warn('⚠️ No item_id or session_id available for payment confirmation')
+          }
+        } catch (err) {
+          console.error('❌ Error confirming payment:', err)
+        }
+      }
+
+      confirmPayment()
       setToast({ message: 'Payment successful! Thank you for your purchase.', type: 'success' })
       navigate('/', { replace: true })
     } else if (paymentStatus === 'cancelled') {
+      localStorage.removeItem('pending_checkout_item_id')
       setToast({ message: 'Payment was cancelled. Feel free to try again when ready.', type: 'warning' })
       navigate('/', { replace: true })
     }
-  }, [location.search, navigate])
+  }, [location.search, navigate, loading, user?.id])
 
   // Use Supabase user ID if logged in, otherwise guest ID
   const userId = user?.id || `guest-${Date.now()}`

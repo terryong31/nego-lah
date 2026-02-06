@@ -1,5 +1,5 @@
 fastapi
-dotenv
+python-dotenv
 uvicorn
 pydantic
 bcrypt
@@ -7,9 +7,12 @@ python-multipart
 langchain-google-genai
 supabase
 stripe
-faiss-cpu
 langchain-community
 langchain
 langchain-core
-redis
+redis>=4.6.0
+numpy
 pydantic-settings
+apify-client
+requests
+langgraph

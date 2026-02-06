@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+import os
 from fastapi.middleware.cors import CORSMiddleware
 
 # Import routers
@@ -11,7 +12,8 @@ from routes.admin import router as admin_router
 app = FastAPI(
     title="Second-Hand Store API",
     description="Fully autonomous second-hand store with AI negotiation",
-    version="1.0.0"
+    version="1.0.0",
+    root_path="/api" if os.environ.get("VERCEL") else ""
 )
 
 # CORS middleware
@@ -24,6 +26,7 @@ origins = [
     "http://127.0.0.1:8000",
     "https://nego-lah.terryong.me",
     "http://nego-lah.terryong.me",
+    "https://negolah.terryong.me"
 ]
 
 app.add_middleware(

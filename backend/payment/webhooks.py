@@ -1,7 +1,7 @@
 import stripe
 import requests
 from connector import admin_supabase
-from env import STRIPE_API_KEY, STRIPE_WEBHOOK_SECRET, SUPABASE_URL, SUPABASE_KEY
+from env import STRIPE_API_KEY, STRIPE_WEBHOOK_SECRET, SUPABASE_URL, USER_SUPABASE_KEY
 
 stripe.api_key = STRIPE_API_KEY
 
@@ -15,8 +15,8 @@ def broadcast_to_chat(user_id: str, content: str, role: str = "ai", source: str 
         # Broadcast to chat channel
         broadcast_url = f"{SUPABASE_URL}/realtime/v1/api/broadcast"
         headers = {
-            "apikey": SUPABASE_KEY,
-            "Authorization": f"Bearer {SUPABASE_KEY}",
+            "apikey": USER_SUPABASE_KEY,
+            "Authorization": f"Bearer {USER_SUPABASE_KEY}",
             "Content-Type": "application/json"
         }
         
@@ -77,6 +77,13 @@ def handle_checkout_completed(event) -> bool:
     print(f"💵 Amount: RM{amount}")
     print(f"{'='*50}")
     
+    # FALLBACK: If user_id missing but we have email, warn about it
+    # We relying on user_id being passed in metadata. 
+    # Querying auth.users directly via client is not simple/efficient here without admin API.
+    if not user_id and buyer_email:
+        print(f"⚠️ Missing user_id in metadata. Email was: {buyer_email}")
+        # Note: Previous fallback using public.users table was removed as table doesn't exist.
+
     if not item_id or not user_id:
         print("❌ Missing item_id or user_id in metadata")
         return False
@@ -88,6 +95,14 @@ def handle_checkout_completed(event) -> bool:
             'buyer_id': user_id
         }).eq('id', item_id).execute()
         print(f"✅ Item marked as sold, buyer_id set")
+        
+        # Invalidate cache so the status change shows up immediately
+        try:
+            from cache import invalidate_item_cache
+            invalidate_item_cache(item_id)
+            print(f"✅ Cache invalidated for item {item_id}")
+        except Exception as e:
+            print(f"⚠️ Could not invalidate cache: {e}")
         
         # 2. Create order record
         order_result = admin_supabase.table('orders').insert({

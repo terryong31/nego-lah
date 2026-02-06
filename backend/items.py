@@ -74,7 +74,8 @@ def get_items(keyword: str = None) -> List[str]:
                 return cached
         
         # Cache miss or stale - get full data from DB
-        retrieve = user_supabase.table('items').select('*').execute()
+        # Order by status (available first) then by created_at (newest first)
+        retrieve = user_supabase.table('items').select('*').order('status', desc=False).order('created_at', desc=True).execute()
         if retrieve.data:
             # Compute hash and cache with it
             count = len(retrieve.data)
@@ -85,7 +86,7 @@ def get_items(keyword: str = None) -> List[str]:
         return []
     else:
         # Keyword search - don't cache as results vary
-        retrieve = user_supabase.table('items').select('*').ilike('description', f'%{keyword}%').execute()
+        retrieve = user_supabase.table('items').select('*').ilike('description', f'%{keyword}%').order('status', desc=False).order('created_at', desc=True).execute()
         if retrieve.data:
             return retrieve.data
         return []
@@ -153,12 +154,20 @@ async def upload_item(
         return False
 
 def delete_item(item_id: str) -> bool:
+    """Delete an item and all related data (orders, conversations)."""
     try:
+        # Delete related conversations first to satisfy Foreign Key constraint
+        admin_supabase.table('conversations').delete().eq("item_id", item_id).execute()
+        
+        # Delete related orders
+        admin_supabase.table('orders').delete().eq("item_id", item_id).execute()
+        
+        # Then delete the item
         admin_supabase.table('items').delete().eq("id", item_id).execute()
         invalidate_item_cache(item_id)  # Clear cache
         return True
     except Exception as e:
-        print(f"Something wrong! Error: {e}")
+        print(f"Failed to delete item {item_id}: {e}")
         return False
 
 def update_item(

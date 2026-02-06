@@ -58,38 +58,84 @@ def save_conversation_history(user_id: str, messages: list, item_id: Optional[st
 @router.get("/chat/history/{user_id}")
 def get_chat_history(user_id: str, limit: int = 10, offset: int = 0):
     """
-    Get chat history for a user from SQLite.
+    Get chat history for a user from Supabase.
     This includes system messages (join/leave notifications).
     """
-    from agent.memory import conversation_memory
-    
-    history = conversation_memory.get_history(user_id, limit=limit, offset=offset)
-    return {"messages": history}
+    try:
+        from agent.memory import conversation_memory
+        
+        history = conversation_memory.get_history(user_id, limit=limit, offset=offset)
+        return {"messages": history}
+    except Exception as e:
+        print(f"Error getting chat history: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/chat/history/{user_id}")
+def clear_chat_history(user_id: str):
+    """Clear chat history for a user."""
+    try:
+        from agent.memory import conversation_memory
+        conversation_memory.clear_history(user_id)
+        return {"message": "Chat history cleared"}
+    except Exception as e:
+        print(f"Error clearing chat history: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/chat/settings/{user_id}")
+def get_chat_settings(user_id: str):
+    """Get chat settings (AI enabled status) for a user."""
+    try:
+        result = admin_supabase.table('chat_settings').select('ai_enabled').eq('user_id', user_id).execute()
+        if result.data and len(result.data) > 0:
+            return {"ai_enabled": result.data[0].get('ai_enabled', True)}
+        return {"ai_enabled": True}  # Default to enabled
+    except Exception as e:
+        print(f"Error getting chat settings: {e}")
+        return {"ai_enabled": True}  # Default to enabled on error
 
 
 @router.post("/chat")
 def chat_with_agent(request: ChatRequest):
     """
-    Chat with the negotiation agent.
-    
-    The agent will:
-    1. Answer questions about items
-    2. Negotiate prices
-    3. Create checkout links when a deal is made
+    Chat endpoint - Delegates logic to Apify Actor (Negotiator Brain) if enabled, 
+    otherwise falls back to local Agent logic.
     """
-    # Rate limit: 10 messages per minute per user
-    if not check_rate_limit(f"chat:{request.user_id}", max_requests=10, window=60):
-        raise HTTPException(status_code=429, detail="Too many messages. Please wait a moment.")
-    
+    from agent.memory import conversation_memory
     from agent.bot import chat
+    import os
+    from apify_client import ApifyClient
     
-    response = chat(
-        user_id=request.user_id,
-        message=request.message,
-        item_id=request.item_id
-    )
+    user_id = request.user_id
+    user_message = request.message
     
-    return {"response": response}
+    # Rate limit: 10 messages per minute per user
+    if not check_rate_limit(f"chat:{user_id}", max_requests=10, window=60):
+        raise HTTPException(status_code=429, detail="Too many messages. Please wait a moment.")
+
+    # Save user message
+    conversation_memory.add_message(user_id, "human", user_message, source="human")
+    
+    # --- Apify Negotiator Brain Integration ---
+    apify_token = os.getenv("APIFY_API_TOKEN")
+    
+    # Execute Local Agent (Primary)
+    try:
+        response = chat(
+            user_id=user_id,
+            message=user_message,
+            item_id=request.item_id
+        )
+        
+        # Save AI message
+        conversation_memory.add_message(user_id, "ai", response, source="ai")
+        
+        return {"response": response}
+        
+    except Exception as e:
+        print(f"Chat Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/chat/stream")

@@ -73,6 +73,17 @@ Guidelines:
             response = self.model.invoke([msg])
             content = response.content
             
+            # Handle case where content is a list (LangChain multimodal response)
+            if isinstance(content, list):
+                # Extract text from the list - usually first item or text part
+                text_parts = []
+                for part in content:
+                    if isinstance(part, str):
+                        text_parts.append(part)
+                    elif isinstance(part, dict) and 'text' in part:
+                        text_parts.append(part['text'])
+                content = ''.join(text_parts)
+            
             # Clean up the response
             clean_content = content.replace('```json', '').replace('```', '').strip()
             result = json.loads(clean_content)

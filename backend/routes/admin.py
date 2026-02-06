@@ -394,9 +394,14 @@ class OrderUpdate(BaseModel):
     item_name: Optional[str] = None
     amount: Optional[float] = None
     status: Optional[str] = None
+    # Backend field names (original)
     shipping_address: Optional[str] = None
     shipping_phone: Optional[str] = None
     shipping_name: Optional[str] = None
+    # Frontend field names (aliases)
+    address: Optional[str] = None
+    phone: Optional[str] = None
+    recipient_name: Optional[str] = None
     notes: Optional[str] = None
 
 
@@ -416,12 +421,22 @@ def update_order(order_id: str, request: OrderUpdate):
         if request.status not in valid_statuses:
             raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {valid_statuses}")
         update_data['status'] = request.status
-    if request.shipping_address is not None:
-        update_data['shipping_address'] = request.shipping_address
-    if request.shipping_phone is not None:
-        update_data['shipping_phone'] = request.shipping_phone
-    if request.shipping_name is not None:
-        update_data['shipping_name'] = request.shipping_name
+    
+    # Handle address - support both frontend 'address' and backend 'shipping_address'
+    addr = request.address or request.shipping_address
+    if addr is not None:
+        update_data['address'] = addr
+    
+    # Handle phone - support both frontend 'phone' and backend 'shipping_phone'
+    ph = request.phone or request.shipping_phone
+    if ph is not None:
+        update_data['phone'] = ph
+    
+    # Handle recipient name - support both frontend 'recipient_name' and backend 'shipping_name'
+    name = request.recipient_name or request.shipping_name
+    if name is not None:
+        update_data['recipient_name'] = name
+    
     if request.notes is not None:
         update_data['notes'] = request.notes
     

@@ -53,20 +53,24 @@ export function Chat({ userId, itemId, itemName, onBack, userAvatar, userName }:
         // Mark that we're loading history
         isLoadingHistoryRef.current = true
 
-        // Store current scroll height before loading
+        // Store current scroll state BEFORE loading
         const scrollHeightBefore = container.scrollHeight
+        const scrollTopBefore = container.scrollTop
 
         const success = await loadMoreMessages()
 
         if (success) {
-            // After loading, restore scroll position to same relative position
-            // This keeps the user looking at the same messages they were viewing
+            // Use double requestAnimationFrame for reliable DOM update
+            // First RAF waits for React to commit, second RAF waits for paint
             requestAnimationFrame(() => {
-                const scrollHeightAfter = container.scrollHeight
-                const scrollDiff = scrollHeightAfter - scrollHeightBefore
-                container.scrollTop = scrollDiff
-                // Reset flag after scroll restoration
-                isLoadingHistoryRef.current = false
+                requestAnimationFrame(() => {
+                    const scrollHeightAfter = container.scrollHeight
+                    const scrollDiff = scrollHeightAfter - scrollHeightBefore
+                    // Restore scroll so user sees same content they were viewing
+                    container.scrollTop = scrollTopBefore + scrollDiff
+                    // Reset flag after scroll restoration
+                    isLoadingHistoryRef.current = false
+                })
             })
         } else {
             isLoadingHistoryRef.current = false
@@ -351,17 +355,28 @@ export function Chat({ userId, itemId, itemName, onBack, userAvatar, userName }:
                             </svg>
                         </button>
 
-                        <input
-                            type="text"
+                        <textarea
                             value={input}
                             onChange={(e) => {
                                 setInput(e.target.value)
                                 sendTyping()
+                                // Auto-resize textarea
+                                e.target.style.height = 'auto'
+                                e.target.style.height = Math.min(e.target.scrollHeight, 150) + 'px'
+                            }}
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter' && !e.shiftKey) {
+                                    e.preventDefault()
+                                    if (!isLoading && !historyLoading && (input.trim() || attachments.length > 0)) {
+                                        handleSubmit(e as unknown as React.FormEvent)
+                                    }
+                                }
                             }}
                             onPaste={handlePaste}
                             placeholder={historyLoading ? 'Loading messages...' : placeholderText}
                             disabled={isLoading || historyLoading}
-                            className="flex-1 px-4 py-3 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded-xl text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--input-focus-border)] disabled:opacity-50"
+                            rows={1}
+                            className="flex-1 px-4 py-3 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded-xl text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--input-focus-border)] disabled:opacity-50 resize-none overflow-y-auto"
                         />
                         <Button type="submit" variant="filled" disabled={isLoading || historyLoading || (!input.trim() && attachments.length === 0)}>
                             Send

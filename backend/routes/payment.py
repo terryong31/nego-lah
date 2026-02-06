@@ -222,12 +222,22 @@ def confirm_payment(item_id: str, user_id: str = None, session_id: str = None):
         invalidate_item_cache(item_id)
         print(f"✅ Cache invalidated for item {item_id}")
         
+        # Get the actual amount paid from Stripe session (if available)
+        amount_paid = item.get('price', 0)  # Default fallback
+        if session_id:
+            try:
+                # Try to get the actual amount from the session we already retrieved
+                amount_paid = session.amount_total / 100  # Convert from cents
+                print(f"✅ Using Stripe session amount: RM{amount_paid}")
+            except:
+                print(f"⚠️ Could not get amount from session, using item price")
+        
         # Create order record
         order_data = {
             'item_id': item_id,
             'item_name': item.get('name', 'Unknown'),
             'buyer_id': user_id,
-            'amount': item.get('price', 0),
+            'amount': amount_paid,
             'status': 'pending_info'
         }
         

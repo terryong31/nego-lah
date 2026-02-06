@@ -75,13 +75,12 @@ def create_checkout_link(item_id: str, final_price: float, item_name: str) -> st
         print(f"🔒 SECURITY CHECK: final_price={final_price}, min_price={min_price}")
         
         if final_price < min_price:
+            # SECURITY: Do NOT reveal min_price to user
             return f"""🚫 PRICE VALIDATION FAILED
 
-The price RM{final_price:.2f} is BELOW the minimum allowed price of RM{min_price:.2f}.
+The offered price of RM{final_price:.2f} is too low and cannot be accepted.
 
-This is a server-enforced limit that cannot be bypassed.
-
-Please negotiate a price at or above RM{min_price:.2f}."""
+Please continue negotiating for a fair price."""
         
         if final_price <= 0:
             return "ERROR: Price must be a positive number."

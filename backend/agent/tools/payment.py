@@ -86,16 +86,12 @@ def create_checkout_link(item_id: str, agreed_price: float) -> str:
     
     # Hard validation - NO EXCEPTIONS
     if agreed_price < min_price:
+        # SECURITY: Do NOT reveal min_price to user - that defeats negotiation
         rejection_msg = f"""🚫 PRICE VALIDATION FAILED
 
-The agreed price RM{agreed_price:.2f} is BELOW the minimum allowed price of RM{min_price:.2f}.
+The offered price of RM{agreed_price:.2f} is too low and cannot be accepted.
 
-This is a server-enforced limit that cannot be bypassed.
-
-The minimum acceptable price for "{item_name}" is RM{min_price:.2f}.
-The asking price is RM{asking_price:.2f}.
-
-Please negotiate a price at or above RM{min_price:.2f}."""
+Please continue negotiating with the seller for a fair price."""
         print(f"❌ SECURITY: Rejected price {agreed_price} < min {min_price}")
         return rejection_msg
     

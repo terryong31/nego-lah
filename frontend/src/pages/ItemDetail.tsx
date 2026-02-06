@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import ReactMarkdown from 'react-markdown'
 import { ThemeToggle } from '../components/ThemeToggle'
 
 interface Item {
@@ -180,9 +181,9 @@ export function ItemDetail({ item, onBack, onChat, onBuy }: ItemDetailProps) {
                             {/* Description */}
                             <div className="mb-8">
                                 <h2 className="text-xs font-medium text-[var(--text-muted)] uppercase tracking-wide mb-2">Description</h2>
-                                <p className="text-[var(--text-secondary)] leading-relaxed whitespace-pre-wrap">
-                                    {item.description}
-                                </p>
+                                <div className="text-[var(--text-secondary)] leading-relaxed prose prose-sm prose-invert max-w-none [&>p]:mb-2 [&>ul]:list-disc [&>ul]:pl-4 [&>ol]:list-decimal [&>ol]:pl-4 [&>*:last-child]:mb-0">
+                                    <ReactMarkdown>{item.description || ''}</ReactMarkdown>
+                                </div>
                             </div>
                         </div>
 

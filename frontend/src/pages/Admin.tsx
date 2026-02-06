@@ -170,6 +170,8 @@ export function Admin({ onBack }: AdminProps) {
     const [orders, setOrders] = useState<AdminOrder[]>([])
     const [stats, setStats] = useState<{ total_orders: number, total_sales: number } | null>(null)
     const [ordersLoading, setOrdersLoading] = useState(false)
+    const [editingOrder, setEditingOrder] = useState<AdminOrder | null>(null)
+    const [orderForm, setOrderForm] = useState({ status: '', recipient_name: '', phone: '', address: '' })
 
     // User Management Functions
     const fetchUsers = async () => {
@@ -206,6 +208,73 @@ export function Admin({ onBack }: AdminProps) {
         } finally {
             setOrdersLoading(false)
         }
+    }
+
+    const handleEditOrder = (order: AdminOrder) => {
+        setEditingOrder(order)
+        setOrderForm({
+            status: order.status || 'pending_info',
+            recipient_name: order.recipient_name || '',
+            phone: order.phone || '',
+            address: order.address || ''
+        })
+    }
+
+    const handleUpdateOrder = async () => {
+        if (!editingOrder) return
+        try {
+            const res = await fetch(`${API_URL}/admin/orders/${editingOrder.id}`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${adminToken}`
+                },
+                body: JSON.stringify(orderForm)
+            })
+            if (res.ok) {
+                // Update local state
+                setOrders(prev => prev.map(o =>
+                    o.id === editingOrder.id ? { ...o, ...orderForm } : o
+                ))
+                setEditingOrder(null)
+            } else {
+                setError('Failed to update order')
+            }
+        } catch {
+            setError('Connection error')
+        }
+    }
+
+    const handleDeleteOrder = async (orderId: string) => {
+        setConfirmation({
+            isOpen: true,
+            title: 'Delete Order',
+            message: 'Are you sure you want to delete this order? This action cannot be undone.',
+            onConfirm: async () => {
+                try {
+                    const res = await fetch(`${API_URL}/admin/orders/${orderId}`, {
+                        method: 'DELETE',
+                        headers: { 'Authorization': `Bearer ${adminToken}` }
+                    })
+                    if (res.ok) {
+                        setOrders(prev => prev.filter(o => o.id !== orderId))
+                        // Update stats
+                        if (stats) {
+                            const deletedOrder = orders.find(o => o.id === orderId)
+                            setStats({
+                                total_orders: stats.total_orders - 1,
+                                total_sales: stats.total_sales - (deletedOrder?.amount || 0)
+                            })
+                        }
+                    } else {
+                        setError('Failed to delete order')
+                    }
+                } catch {
+                    setError('Connection error')
+                }
+                setConfirmation(prev => ({ ...prev, isOpen: false }))
+            }
+        })
     }
 
     const [adminReply, setAdminReply] = useState('')
@@ -1329,10 +1398,18 @@ export function Admin({ onBack }: AdminProps) {
                                                             <span className="font-medium text-[var(--text-primary)]">Address:</span> {order.address || 'Pending info from buyer'}
                                                         </div>
                                                     </div>
-                                                    <div className="mt-2 flex justify-end">
+                                                    <div className="mt-3 flex items-center justify-between">
                                                         <span className="text-xs text-[var(--text-muted)]">
                                                             Ordered: {new Date(order.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
                                                         </span>
+                                                        <div className="flex gap-2">
+                                                            <Button variant="ghost" size="sm" onClick={() => handleEditOrder(order)}>
+                                                                Edit
+                                                            </Button>
+                                                            <Button variant="danger" size="sm" onClick={() => handleDeleteOrder(order.id)}>
+                                                                Delete
+                                                            </Button>
+                                                        </div>
                                                     </div>
                                                 </div>
                                             </div>
@@ -1405,6 +1482,81 @@ export function Admin({ onBack }: AdminProps) {
 
                                 <div className="pt-2">
                                     <Button fullWidth variant="filled" onClick={handleSaveProfile}>
+                                        Save Changes
+                                    </Button>
+                                </div>
+                            </div>
+                        </Card>
+                    </div>
+                </div>
+            )}
+
+            {/* Edit Order Modal */}
+            {editingOrder && (
+                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in">
+                    <div className="w-full max-w-md animate-slide-up flex flex-col items-start">
+                        {/* Return to orders link */}
+                        <button
+                            onClick={() => setEditingOrder(null)}
+                            className="flex items-center gap-2 text-white hover:text-white/80 transition-colors group mb-4"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M19 12H5M12 19l-7-7 7-7" />
+                            </svg>
+                            <span className="text-sm font-medium relative">
+                                Return to orders
+                                <span className="absolute left-0 bottom-0 w-0 h-[1px] bg-white transition-all duration-300 group-hover:w-full" />
+                            </span>
+                        </button>
+
+                        <Card className="w-full">
+                            <h2 className="text-lg font-semibold text-[var(--text-primary)] mb-2">Edit Order</h2>
+                            <p className="text-sm text-[var(--text-muted)] mb-4">{editingOrder.item_name}</p>
+
+                            <div className="space-y-4">
+                                {/* Status Dropdown */}
+                                <div>
+                                    <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1">Status</label>
+                                    <select
+                                        value={orderForm.status}
+                                        onChange={(e) => setOrderForm(prev => ({ ...prev, status: e.target.value }))}
+                                        className="w-full px-4 py-2 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded-lg text-[var(--text-primary)] focus:outline-none focus:border-[var(--input-focus-border)]"
+                                    >
+                                        <option value="pending_info">Pending Info</option>
+                                        <option value="confirmed">Confirmed</option>
+                                        <option value="shipped">Shipped</option>
+                                        <option value="delivered">Delivered</option>
+                                        <option value="cancelled">Cancelled</option>
+                                    </select>
+                                </div>
+
+                                <Input
+                                    label="Recipient Name"
+                                    value={orderForm.recipient_name}
+                                    onChange={(e) => setOrderForm(prev => ({ ...prev, recipient_name: e.target.value }))}
+                                    placeholder="Enter recipient name"
+                                />
+
+                                <Input
+                                    label="Phone"
+                                    value={orderForm.phone}
+                                    onChange={(e) => setOrderForm(prev => ({ ...prev, phone: e.target.value }))}
+                                    placeholder="Enter phone number"
+                                />
+
+                                <div>
+                                    <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1">Address</label>
+                                    <textarea
+                                        value={orderForm.address}
+                                        onChange={(e) => setOrderForm(prev => ({ ...prev, address: e.target.value }))}
+                                        placeholder="Enter shipping address"
+                                        rows={3}
+                                        className="w-full px-4 py-2 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded-lg text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--input-focus-border)] resize-none"
+                                    />
+                                </div>
+
+                                <div className="pt-2">
+                                    <Button fullWidth variant="filled" onClick={handleUpdateOrder}>
                                         Save Changes
                                     </Button>
                                 </div>
@@ -1538,16 +1690,24 @@ export function Admin({ onBack }: AdminProps) {
                     <footer className="flex-shrink-0 border-t border-[var(--border)] bg-[var(--header-bg)] backdrop-blur-sm z-20">
                         <div className="max-w-2xl mx-auto px-4 py-4">
                             <div className="flex gap-3 items-center">
-                                <input
-                                    type="text"
+                                <textarea
                                     value={adminReply}
                                     onChange={(e) => {
                                         setAdminReply(e.target.value)
                                         sendTyping()
+                                        // Auto-resize textarea
+                                        e.target.style.height = 'auto'
+                                        e.target.style.height = Math.min(e.target.scrollHeight, 150) + 'px'
                                     }}
-                                    placeholder="Enter your message"
-                                    className="flex-1 px-4 py-3 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded-xl text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--input-focus-border)]"
-                                    onKeyDown={(e) => e.key === 'Enter' && handleSendAdminMessage()}
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter' && !e.shiftKey) {
+                                            e.preventDefault()
+                                            handleSendAdminMessage()
+                                        }
+                                    }}
+                                    placeholder="Enter your message (Shift+Enter for new line)"
+                                    rows={1}
+                                    className="flex-1 px-4 py-3 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded-xl text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--input-focus-border)] resize-none overflow-y-auto"
                                 />
                                 <Button
                                     variant="filled"

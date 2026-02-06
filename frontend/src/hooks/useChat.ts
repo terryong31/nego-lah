@@ -397,13 +397,23 @@ export function useChat(userId: string) {
                 },
                 (payload) => {
                     // Update local messages when DB changes (e.g. Admin sent a message)
-                    const newMessages = payload.new.messages as Message[]
-                    if (newMessages && Array.isArray(newMessages)) {
-                        // Convert timestamp strings back to Date objects
-                        const parsedMessages = newMessages.map(msg => ({
-                            ...msg,
-                            timestamp: new Date(msg.timestamp)
-                        }))
+                    const dbMessages = payload.new.messages as any[]
+                    if (dbMessages && Array.isArray(dbMessages)) {
+                        // Convert backend format to frontend format
+                        // Backend uses 'human'/'ai', frontend expects 'user'/'assistant'
+                        const parsedMessages: Message[] = dbMessages.map(msg => {
+                            const frontendRole = msg.role === 'human' ? 'user' :
+                                msg.role === 'ai' ? 'assistant' :
+                                    msg.role as 'user' | 'assistant' | 'system'
+
+                            return {
+                                id: msg.id || crypto.randomUUID(),
+                                role: frontendRole,
+                                content: msg.content,
+                                timestamp: new Date(msg.timestamp),
+                                source: msg.source
+                            }
+                        })
                         setState(prev => ({ ...prev, messages: parsedMessages }))
                     }
                 }

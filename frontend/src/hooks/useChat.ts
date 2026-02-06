@@ -34,6 +34,7 @@ export function useChat(userId: string) {
     const [historyLoaded, setHistoryLoaded] = useState(false)
     const [historyLoading, setHistoryLoading] = useState(true) // True until first load completes
     const isTypingRef = useRef(false) // Track if typing animation is in progress
+    const isSendingRef = useRef(false) // Track entire send/response flow
 
     // Load conversation history on mount
     useEffect(() => {
@@ -137,8 +138,10 @@ export function useChat(userId: string) {
             source: 'ai'
         }
 
-        // Add user message, and only add assistant placeholder if AI is enabled
         if (aiEnabled) {
+            // Mark that we're in the send flow - block postgres_changes updates
+            isSendingRef.current = true
+
             setState(prev => ({
                 ...prev,
                 messages: [...prev.messages, userMessage, assistantPlaceholder],
@@ -231,6 +234,9 @@ export function useChat(userId: string) {
                                             continue
                                         }
 
+                                        // Mark typing animation BEFORE clearing isLoading
+                                        isTypingRef.current = true
+
                                         // Stop loading immediately
                                         setState(prev => ({ ...prev, isLoading: false }))
 
@@ -303,6 +309,8 @@ export function useChat(userId: string) {
                                                 setTimeout(typeCharWithCallback, 200) // Pause between bubbles
                                             } else {
                                                 finishTyping()
+                                                // Also end sending flow
+                                                isSendingRef.current = false
                                             }
                                         }
 
@@ -316,6 +324,10 @@ export function useChat(userId: string) {
                     }
                 } finally {
                     setState(prev => ({ ...prev, isLoading: false }))
+                    // Ensure sending ref is cleared even if something fails
+                    if (!isTypingRef.current) {
+                        isSendingRef.current = false
+                    }
                 }
             } else {
                 // ... fallback code ...
@@ -344,6 +356,7 @@ export function useChat(userId: string) {
                             isLoading: false
                         }))
                     }
+                    isSendingRef.current = false
                 } else {
                     const data = await fallbackRes.json()
                     setState(prev => ({
@@ -351,6 +364,7 @@ export function useChat(userId: string) {
                         isLoading: false,
                         error: data.detail || 'Failed to send message'
                     }))
+                    isSendingRef.current = false
                 }
             }
         } catch {
@@ -359,6 +373,7 @@ export function useChat(userId: string) {
                 isLoading: false,
                 error: 'Connection error'
             }))
+            isSendingRef.current = false
         }
     }, [userId, currentItemId])
 
@@ -409,9 +424,9 @@ export function useChat(userId: string) {
                     filter: `user_id=eq.${userId}`
                 },
                 (payload) => {
-                    // Skip updates while loading or typing animation is in progress
-                    // This prevents DB sync from overwriting the typing effect
-                    if (isTypingRef.current) return
+                    // Skip updates while sending/typing - this prevents DB sync from overwriting
+                    // the local state during the entire message send/response flow
+                    if (isSendingRef.current || isTypingRef.current) return
 
                     setState(prev => {
                         if (prev.isLoading) return prev

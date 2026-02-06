@@ -74,6 +74,43 @@ def create_checkout_link(item_id: str, agreed_price: float) -> str:
     item_name = item.get('name', 'Item')
     print(f"✅ Item found: {item_name}")
     
+    # ========================================
+    # CRITICAL: SERVER-SIDE PRICE VALIDATION
+    # This check CANNOT be bypassed by prompt injection
+    # The LLM's decision is irrelevant - code enforces rules
+    # ========================================
+    min_price = float(item.get('min_price') or item.get('price', 0))
+    asking_price = float(item.get('price', 0))
+    
+    print(f"🔒 SECURITY CHECK: agreed_price={agreed_price}, min_price={min_price}, asking_price={asking_price}")
+    
+    # Hard validation - NO EXCEPTIONS
+    if agreed_price < min_price:
+        rejection_msg = f"""🚫 PRICE VALIDATION FAILED
+
+The agreed price RM{agreed_price:.2f} is BELOW the minimum allowed price of RM{min_price:.2f}.
+
+This is a server-enforced limit that cannot be bypassed.
+
+The minimum acceptable price for "{item_name}" is RM{min_price:.2f}.
+The asking price is RM{asking_price:.2f}.
+
+Please negotiate a price at or above RM{min_price:.2f}."""
+        print(f"❌ SECURITY: Rejected price {agreed_price} < min {min_price}")
+        return rejection_msg
+    
+    # Additional sanity checks
+    if agreed_price <= 0:
+        print(f"❌ SECURITY: Rejected non-positive price {agreed_price}")
+        return "ERROR: Price must be a positive number."
+    
+    if agreed_price > asking_price * 10:
+        print(f"❌ SECURITY: Rejected suspiciously high price {agreed_price}")
+        return f"ERROR: Price RM{agreed_price:.2f} seems unreasonably high. Please verify the correct price."
+    
+    print(f"✅ SECURITY: Price {agreed_price} >= min {min_price} - APPROVED")
+
+    
     try:
         # Create Stripe Product (so we can archive it later)
         print(f"🔄 Creating Stripe Product...")

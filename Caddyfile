@@ -4,5 +4,10 @@
 }
 
 nego-lah.terryong.me {
+    # Increase max body size for file uploads (100MB)
+    request_body {
+        max_size 100MB
+    }
+    
     reverse_proxy frontend:80
 }

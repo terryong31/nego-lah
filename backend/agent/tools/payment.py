@@ -107,7 +107,7 @@ def create_checkout_link(item_id: str, agreed_price: float) -> str:
             after_completion={
                 "type": "redirect",
                 "redirect": {
-                    "url": f"https://negolah.terryong.me/?payment=success&item_id={item_id}"
+                    "url": f"https://nego-lah.terryong.me/?payment=success&item_id={item_id}"
                 }
             }
         )

@@ -16,3 +16,5 @@ pydantic-settings
 apify-client
 requests
 langgraph
+playwright
+beautifulsoup4

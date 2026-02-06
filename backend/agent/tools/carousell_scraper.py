@@ -172,10 +172,18 @@ class CarousellScraper:
         listings = []
         
         async with async_playwright() as p:
-            # Launch browser
+            # Launch browser with memory-saving args for server environment
             browser = await p.chromium.launch(
                 headless=self.headless,
-                args=["--disable-blink-features=AutomationControlled"]
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",  # Overcome limited shared memory in Docker
+                    "--disable-gpu",
+                    "--single-process",  # Reduce memory usage
+                    "--disable-extensions",
+                    "--disable-software-rasterizer",
+                ]
             )
             
             context = await browser.new_context(
@@ -361,7 +369,15 @@ class CarousellScraper:
         from playwright.async_api import async_playwright
         
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=self.headless)
+            browser = await p.chromium.launch(
+                headless=self.headless,
+                args=[
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                    "--single-process",
+                ]
+            )
             context = await browser.new_context(
                 user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
             )

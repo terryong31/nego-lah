@@ -33,6 +33,7 @@ export function useChat(userId: string) {
     const [currentItemId, setCurrentItemId] = useState<string | null>(null)
     const [historyLoaded, setHistoryLoaded] = useState(false)
     const [historyLoading, setHistoryLoading] = useState(true) // True until first load completes
+    const isTypingRef = useRef(false) // Track if typing animation is in progress
 
     // Load conversation history on mount
     useEffect(() => {
@@ -264,8 +265,18 @@ export function useChat(userId: string) {
                                             return { ...prev, messages: newMessages }
                                         })
 
-                                        const typeChar = () => {
-                                            if (paragraphIndex >= paragraphs.length) return
+                                        // Mark typing animation as started
+                                        isTypingRef.current = true
+
+                                        const finishTyping = () => {
+                                            isTypingRef.current = false
+                                        }
+
+                                        const typeCharWithCallback = () => {
+                                            if (paragraphIndex >= paragraphs.length) {
+                                                finishTyping()
+                                                return
+                                            }
 
                                             const currentParagraph = paragraphs[paragraphIndex]
                                             charIndex += Math.floor(Math.random() * 2) + 1
@@ -284,16 +295,18 @@ export function useChat(userId: string) {
                                             })
 
                                             if (charIndex < currentParagraph.length) {
-                                                setTimeout(typeChar, typingSpeed)
+                                                setTimeout(typeCharWithCallback, typingSpeed)
                                             } else if (paragraphIndex < paragraphs.length - 1) {
                                                 // Move to next paragraph after a small pause
                                                 paragraphIndex++
                                                 charIndex = 0
-                                                setTimeout(typeChar, 200) // Pause between bubbles
+                                                setTimeout(typeCharWithCallback, 200) // Pause between bubbles
+                                            } else {
+                                                finishTyping()
                                             }
                                         }
 
-                                        typeChar()
+                                        typeCharWithCallback()
                                     } else {
                                         // Streaming update (not done yet) - ignore if we are simulating
                                     }
@@ -396,26 +409,35 @@ export function useChat(userId: string) {
                     filter: `user_id=eq.${userId}`
                 },
                 (payload) => {
-                    // Update local messages when DB changes (e.g. Admin sent a message)
-                    const dbMessages = payload.new.messages as any[]
-                    if (dbMessages && Array.isArray(dbMessages)) {
-                        // Convert backend format to frontend format
-                        // Backend uses 'human'/'ai', frontend expects 'user'/'assistant'
-                        const parsedMessages: Message[] = dbMessages.map(msg => {
-                            const frontendRole = msg.role === 'human' ? 'user' :
-                                msg.role === 'ai' ? 'assistant' :
-                                    msg.role as 'user' | 'assistant' | 'system'
+                    // Skip updates while loading or typing animation is in progress
+                    // This prevents DB sync from overwriting the typing effect
+                    if (isTypingRef.current) return
 
-                            return {
-                                id: msg.id || crypto.randomUUID(),
-                                role: frontendRole,
-                                content: msg.content,
-                                timestamp: new Date(msg.timestamp),
-                                source: msg.source
-                            }
-                        })
-                        setState(prev => ({ ...prev, messages: parsedMessages }))
-                    }
+                    setState(prev => {
+                        if (prev.isLoading) return prev
+
+                        // Update local messages when DB changes (e.g. Admin sent a message)
+                        const dbMessages = payload.new.messages as any[]
+                        if (dbMessages && Array.isArray(dbMessages)) {
+                            // Convert backend format to frontend format
+                            // Backend uses 'human'/'ai', frontend expects 'user'/'assistant'
+                            const parsedMessages: Message[] = dbMessages.map(msg => {
+                                const frontendRole = msg.role === 'human' ? 'user' :
+                                    msg.role === 'ai' ? 'assistant' :
+                                        msg.role as 'user' | 'assistant' | 'system'
+
+                                return {
+                                    id: msg.id || crypto.randomUUID(),
+                                    role: frontendRole,
+                                    content: msg.content,
+                                    timestamp: new Date(msg.timestamp),
+                                    source: msg.source
+                                }
+                            })
+                            return { ...prev, messages: parsedMessages }
+                        }
+                        return prev
+                    })
                 }
             )
             .on(

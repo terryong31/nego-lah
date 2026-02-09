@@ -332,15 +332,28 @@ def get_all_orders():
         users_response = admin_supabase.auth.admin.list_users()
         users_map = {u.id: u.email for u in users_response}
         
-        # Get profiles for display names
+        # Build map of names from auth metadata first
+        names_map = {}
+        for u in users_response:
+            meta = u.user_metadata or {}
+            # Try to get name from various metadata fields
+            name = meta.get('full_name') or meta.get('name') or meta.get('display_name')
+            if name:
+                names_map[u.id] = name
+
+        # Get profiles for display names (override if exists and not null)
         profiles = admin_supabase.table('user_profiles').select('id, display_name').execute()
-        profiles_map = {p['id']: p['display_name'] for p in (profiles.data or [])}
+        for p in (profiles.data or []):
+            if p.get('display_name'):
+                names_map[p['id']] = p['display_name']
         
         for order in orders_data:
             buyer_id = order.get('buyer_id')
             if buyer_id:
                 order['buyer_email'] = users_map.get(buyer_id, 'Unknown Email')
-                order['buyer_name'] = profiles_map.get(buyer_id, 'Unknown User')
+                # Use name from map, or fallback to email part, or 'Unknown User'
+                email_name = users_map.get(buyer_id, '').split('@')[0] if users_map.get(buyer_id) else 'Unknown User'
+                order['buyer_name'] = names_map.get(buyer_id, email_name)
     except Exception as e:
         print(f"Error enriching orders with user data: {e}")
     

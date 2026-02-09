@@ -1,8 +1,9 @@
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from schemas import ChatRequest
 from cache import check_rate_limit, check_ai_token_limit, track_ai_tokens
 from connector import admin_supabase
+from auth_middleware import verify_user_token, get_user_id_from_body_or_token
 from typing import Optional
 import json
 import base64
@@ -56,11 +57,19 @@ def save_conversation_history(user_id: str, messages: list, item_id: Optional[st
 
 
 @router.get("/chat/history/{user_id}")
-def get_chat_history(user_id: str, limit: int = 10, offset: int = 0):
+async def get_chat_history(
+    user_id: str, 
+    limit: int = 10, 
+    offset: int = 0,
+    token_user_id: str = Depends(verify_user_token)
+):
     """
     Get chat history for a user from Supabase.
-    This includes system messages (join/leave notifications).
+    Requires valid JWT token matching the user_id.
     """
+    # Validate token matches requested user_id
+    get_user_id_from_body_or_token(user_id, token_user_id)
+    
     try:
         from agent.memory import conversation_memory
         
@@ -72,8 +81,14 @@ def get_chat_history(user_id: str, limit: int = 10, offset: int = 0):
 
 
 @router.delete("/chat/history/{user_id}")
-def clear_chat_history(user_id: str):
-    """Clear chat history for a user."""
+async def clear_chat_history(
+    user_id: str,
+    token_user_id: str = Depends(verify_user_token)
+):
+    """Clear chat history for a user. Requires valid JWT token."""
+    # Validate token matches requested user_id
+    get_user_id_from_body_or_token(user_id, token_user_id)
+    
     try:
         from agent.memory import conversation_memory
         conversation_memory.clear_history(user_id)
@@ -84,8 +99,14 @@ def clear_chat_history(user_id: str):
 
 
 @router.get("/chat/settings/{user_id}")
-def get_chat_settings(user_id: str):
-    """Get chat settings (AI enabled status) for a user."""
+async def get_chat_settings(
+    user_id: str,
+    token_user_id: str = Depends(verify_user_token)
+):
+    """Get chat settings (AI enabled status) for a user. Requires valid JWT token."""
+    # Validate token matches requested user_id
+    get_user_id_from_body_or_token(user_id, token_user_id)
+    
     try:
         result = admin_supabase.table('chat_settings').select('ai_enabled').eq('user_id', user_id).execute()
         if result.data and len(result.data) > 0:
@@ -97,9 +118,13 @@ def get_chat_settings(user_id: str):
 
 
 @router.post("/chat")
-def chat_with_agent(request: ChatRequest):
+async def chat_with_agent(
+    request: ChatRequest,
+    token_user_id: str = Depends(verify_user_token)
+):
     """
-    Chat endpoint - Delegates logic to Apify Actor (Negotiator Brain) if enabled, 
+    Chat endpoint - Requires valid JWT token.
+    Delegates logic to Apify Actor (Negotiator Brain) if enabled, 
     otherwise falls back to local Agent logic.
     """
     from agent.memory import conversation_memory
@@ -107,7 +132,8 @@ def chat_with_agent(request: ChatRequest):
     import os
     from apify_client import ApifyClient
     
-    user_id = request.user_id
+    # Validate token matches request user_id
+    user_id = get_user_id_from_body_or_token(request.user_id, token_user_id)
     user_message = request.message
     
     # Rate limit: 10 messages per minute per user
@@ -142,8 +168,12 @@ def chat_with_agent(request: ChatRequest):
 async def chat_stream(request: Request):
     """
     Stream chat response using Server-Sent Events.
+    Requires valid JWT token in Authorization header.
     Accepts both JSON body and multipart form data with optional file attachments.
     """
+    # Validate JWT token FIRST
+    token_user_id = await verify_user_token(request)
+    
     content_type = request.headers.get("content-type", "")
     
     # Parse request based on content type
@@ -152,7 +182,7 @@ async def chat_stream(request: Request):
     if "multipart/form-data" in content_type:
         # Handle FormData with potential file attachments
         form = await request.form()
-        user_id = form.get("user_id", "")
+        body_user_id = form.get("user_id", "")
         message = form.get("message", "")
         item_id = form.get("item_id")
         
@@ -169,13 +199,16 @@ async def chat_stream(request: Request):
     else:
         # Handle JSON body
         body = await request.json()
-        user_id = body.get("user_id", "")
+        body_user_id = body.get("user_id", "")
         message = body.get("message", "")
         item_id = body.get("item_id")
     
+    # Validate token matches body user_id
+    user_id = get_user_id_from_body_or_token(body_user_id, token_user_id)
+    
     # Validate required fields - allow empty message if files are present
-    if not user_id or (not message and not file_data):
-        raise HTTPException(status_code=400, detail="user_id and message (or files) are required")
+    if not message and not file_data:
+        raise HTTPException(status_code=400, detail="message or files are required")
     
     # Rate limit: 10 messages per minute per user
     if not check_rate_limit(f"chat:{user_id}", max_requests=10, window=60):

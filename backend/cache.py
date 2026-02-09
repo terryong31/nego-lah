@@ -101,6 +101,8 @@ redis_client = _create_redis_client()
 def cache_session(user_id: str, token: str, ttl: int = 7200):
     """Cache user session (2 hours default - auto logout after TTL)"""
     redis_client.setex(f"session:{user_id}", ttl, token)
+    # Also cache reverse lookup for token validation
+    redis_client.setex(f"token:{token}", ttl, user_id)
 
 
 def get_session(user_id: str) -> Optional[str]:
@@ -110,7 +112,30 @@ def get_session(user_id: str) -> Optional[str]:
 
 def invalidate_session(user_id: str):
     """Logout - remove session"""
+    # Get token first to remove reverse lookup
+    token = redis_client.get(f"session:{user_id}")
+    if token:
+        redis_client.delete(f"token:{token}")
     redis_client.delete(f"session:{user_id}")
+
+
+# ============================================
+# TOKEN -> USER_ID CACHING (for auth middleware)
+# ============================================
+
+def cache_token_user(token: str, user_id: str, ttl: int = 7200):
+    """Cache token -> user_id mapping (2 hours default)"""
+    redis_client.setex(f"token:{token}", ttl, user_id)
+
+
+def get_cached_user_by_token(token: str) -> Optional[str]:
+    """Get user_id from cached token"""
+    return redis_client.get(f"token:{token}")
+
+
+def invalidate_token(token: str):
+    """Remove token from cache"""
+    redis_client.delete(f"token:{token}")
 
 
 # ============================================

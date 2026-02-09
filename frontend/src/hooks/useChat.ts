@@ -3,6 +3,19 @@ import { supabase } from '../lib/supabase' // For real-time subscriptions only
 
 const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? '/api' : 'http://127.0.0.1:8000')
 
+// Helper to get auth headers with JWT token
+const getAuthHeaders = (contentType?: string): HeadersInit => {
+    const token = localStorage.getItem('token')
+    const headers: HeadersInit = {}
+    if (contentType) {
+        headers['Content-Type'] = contentType
+    }
+    if (token) {
+        headers['Authorization'] = `Bearer ${token}`
+    }
+    return headers
+}
+
 interface Attachment {
     name: string
     type: string
@@ -44,7 +57,9 @@ export function useChat(userId: string) {
 
             try {
                 // Fetch from backend API which includes system messages
-                const response = await fetch(`${API_URL}/chat/history/${userId}`)
+                const response = await fetch(`${API_URL}/chat/history/${userId}`, {
+                    headers: getAuthHeaders()
+                })
                 if (response.ok) {
                     const data = await response.json()
                     if (data.messages && Array.isArray(data.messages)) {
@@ -120,7 +135,9 @@ export function useChat(userId: string) {
         // Check AI status from backend BEFORE showing placeholder
         let aiEnabled = true
         try {
-            const response = await fetch(`${API_URL}/chat/settings/${userId}`)
+            const response = await fetch(`${API_URL}/chat/settings/${userId}`, {
+                headers: getAuthHeaders()
+            })
             if (response.ok) {
                 const data = await response.json()
                 aiEnabled = data.ai_enabled ?? true
@@ -181,12 +198,13 @@ export function useChat(userId: string) {
 
                 res = await fetch(`${API_URL}/chat/stream`, {
                     method: 'POST',
+                    headers: getAuthHeaders(),  // Auth header only, FormData sets its own Content-Type
                     body: formData
                 })
             } else {
                 res = await fetch(`${API_URL}/chat/stream`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: getAuthHeaders('application/json'),
                     body: JSON.stringify({
                         user_id: userId,
                         message,
@@ -333,7 +351,7 @@ export function useChat(userId: string) {
                 // ... fallback code ...
                 const fallbackRes = await fetch(`${API_URL}/chat`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: getAuthHeaders('application/json'),
                     body: JSON.stringify({
                         user_id: userId,
                         message,
@@ -388,7 +406,10 @@ export function useChat(userId: string) {
         // Delete from backend
         if (!userId.startsWith('guest-')) {
             try {
-                await fetch(`${API_URL}/chat/history/${userId}`, { method: 'DELETE' })
+                await fetch(`${API_URL}/chat/history/${userId}`, {
+                    method: 'DELETE',
+                    headers: getAuthHeaders()
+                })
             } catch (error) {
                 console.error('Failed to clear conversation:', error)
             }
@@ -505,7 +526,9 @@ export function useChat(userId: string) {
         try {
             // Get current message count directly from state at call time
             const currentCount = state.messages.length
-            const response = await fetch(`${API_URL}/chat/history/${userId}?limit=20&offset=${currentCount}`)
+            const response = await fetch(`${API_URL}/chat/history/${userId}?limit=20&offset=${currentCount}`, {
+                headers: getAuthHeaders()
+            })
             if (response.ok) {
                 const data = await response.json()
                 if (data.messages && Array.isArray(data.messages) && data.messages.length > 0) {

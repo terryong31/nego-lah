@@ -67,8 +67,25 @@ def handle_checkout_completed(event) -> bool:
     agreed_price = metadata.get('agreed_price')
     
     buyer_email = session.get('customer_details', {}).get('email')
-    amount = session.get('amount_total', 0) / 100  # Convert from cents
+    stripe_amount = session.get('amount_total', 0) / 100  # Convert from cents
     payment_intent = session.get('payment_intent')
+    
+    # Get the actual amount paid - priority order:
+    # 1. agreed_price from Redis (set during AI negotiation)
+    # 2. amount_total from Stripe session
+    amount = stripe_amount  # Default to Stripe amount
+    
+    if user_id and item_id:
+        try:
+            from payment.payment_state import get_pending_payment
+            pending = get_pending_payment(user_id, item_id)
+            if pending and pending.get('agreed_price'):
+                amount = float(pending['agreed_price'])
+                print(f"✅ Using negotiated price from Redis: RM{amount}")
+            else:
+                print(f"ℹ️ No Redis price found, using Stripe amount: RM{amount}")
+        except Exception as e:
+            print(f"⚠️ Could not check pending payment: {e}")
     
     print(f"\n{'='*50}")
     print(f"💰 PAYMENT COMPLETED!")

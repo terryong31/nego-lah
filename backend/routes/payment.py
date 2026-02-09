@@ -222,15 +222,36 @@ def confirm_payment(item_id: str, user_id: str = None, session_id: str = None):
         invalidate_item_cache(item_id)
         print(f"✅ Cache invalidated for item {item_id}")
         
-        # Get the actual amount paid from Stripe session (if available)
-        amount_paid = item.get('price', 0)  # Default fallback
-        if session_id:
+        # Get the actual amount paid - priority order:
+        # 1. agreed_price from Redis (set during AI negotiation)
+        # 2. amount_total from Stripe session (if available)
+        # 3. Fallback to original item price
+        amount_paid = None
+        
+        # Check Redis for negotiated price first
+        if user_id:
+            try:
+                from payment.payment_state import get_pending_payment
+                pending = get_pending_payment(user_id, item_id)
+                if pending and pending.get('agreed_price'):
+                    amount_paid = float(pending['agreed_price'])
+                    print(f"✅ Using negotiated price from Redis: RM{amount_paid}")
+            except Exception as e:
+                print(f"⚠️ Could not check pending payment: {e}")
+        
+        # Try Stripe session amount if no Redis price
+        if amount_paid is None and session_id:
             try:
                 # Try to get the actual amount from the session we already retrieved
                 amount_paid = session.amount_total / 100  # Convert from cents
                 print(f"✅ Using Stripe session amount: RM{amount_paid}")
             except:
-                print(f"⚠️ Could not get amount from session, using item price")
+                print(f"⚠️ Could not get amount from session")
+        
+        # Final fallback to item price
+        if amount_paid is None:
+            amount_paid = item.get('price', 0)
+            print(f"⚠️ Using original item price as fallback: RM{amount_paid}")
         
         # Create order record
         order_data = {

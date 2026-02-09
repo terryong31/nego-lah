@@ -24,9 +24,9 @@ origins = [
     "http://127.0.0.1",
     "http://127.0.0.1:5173",
     "http://127.0.0.1:8000",
-    "https://nego-lah.terryong.me",
-    "http://nego-lah.terryong.me",
-    "https://negolah.terryong.me"
+    "https://negolah.my",
+    "http://negolah.my",
+    "https://www.negolah.my"
 ]
 
 app.add_middleware(

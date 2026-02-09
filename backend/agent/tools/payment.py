@@ -140,7 +140,7 @@ Please continue negotiating with the seller for a fair price."""
             after_completion={
                 "type": "redirect",
                 "redirect": {
-                    "url": f"https://nego-lah.terryong.me/?payment=success&item_id={item_id}"
+                    "url": f"https://negolah.my/?payment=success&item_id={item_id}"
                 }
             }
         )

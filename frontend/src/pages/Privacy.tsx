@@ -117,7 +117,7 @@ export function Privacy() {
                                     Contact Us
                                 </h2>
                                 <p>
-                                    If you have any questions about this privacy policy or our privacy practices, please contact us at: <a href="mailto:nego-lah@terryong.me" className="text-[var(--accent)] hover:text-[var(--accent-hover)] transition-colors underline">nego-lah@terryong.me</a>
+                                    If you have any questions about this privacy policy or our privacy practices, please contact us at: <a href="mailto:hello@negolah.my" className="text-[var(--accent)] hover:text-[var(--accent-hover)] transition-colors underline">hello@negolah.my</a>
                                 </p>
                             </section>
                         </div>

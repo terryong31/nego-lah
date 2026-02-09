@@ -3,7 +3,7 @@
     email terryong30@gmail.com
 }
 
-nego-lah.terryong.me {
+negolah.my {
     # Increase max body size for file uploads (100MB)
     request_body {
         max_size 100MB

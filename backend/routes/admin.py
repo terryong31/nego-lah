@@ -1,11 +1,34 @@
-from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi import APIRouter, HTTPException, UploadFile, File, Request, Depends
 from pydantic import BaseModel
 from admin_auth import verify_admin
 import secrets
-from typing import Optional, Annotated
+from typing import Optional, Annotated, List
 from cache import redis_client
 
-router = APIRouter(prefix="/admin", tags=["Admin"])
+# IP Allowlist
+ALLOWED_IPS = ["175.139.168.163", "127.0.0.1", "::1", "localhost"]
+
+async def verify_admin_ip(request: Request):
+    """
+    Verify that the request comes from an allowed IP address.
+    Checks X-Forwarded-For header first (for proxies/Caddy), then client host.
+    """
+    # Get IP from X-Forwarded-For header (primary for proxy)
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        # X-Forwarded-For can be a comma-separated list, first one is original client
+        client_ip = forwarded.split(",")[0].strip()
+    else:
+        # Fallback to direct client host
+        client_ip = request.client.host if request.client else "unknown"
+    
+    # print(f"Admin Access Alert: IP {client_ip} trying to access admin panel")
+    
+    if client_ip not in ALLOWED_IPS:
+        print(f"⛔️ Blocked Admin Access from IP: {client_ip}")
+        raise HTTPException(status_code=403, detail="Access denied: Restricted IP")
+
+router = APIRouter(prefix="/admin", tags=["Admin"], dependencies=[Depends(verify_admin_ip)])
 
 # Admin session TTL: 2 hours
 ADMIN_SESSION_TTL = 7200  # seconds

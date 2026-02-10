@@ -3,7 +3,7 @@ from fastapi.responses import StreamingResponse
 from schemas import ChatRequest
 from cache import check_rate_limit, check_ai_token_limit, track_ai_tokens
 from connector import admin_supabase
-from auth_middleware import verify_user_token, get_user_id_from_body_or_token, verify_user_token_optional
+from auth_middleware import verify_user_token, get_user_id_from_body_or_token
 from typing import Optional
 import json
 import base64
@@ -101,9 +101,9 @@ async def clear_chat_history(
 @router.get("/chat/settings/{user_id}")
 async def get_chat_settings(
     user_id: str,
-    token_user_id: Optional[str] = Depends(verify_user_token_optional)
+    token_user_id: str = Depends(verify_user_token)
 ):
-    """Get chat settings (AI enabled status) for a user. Supports guests."""
+    """Get chat settings (AI enabled status) for a user. Requires valid JWT token."""
     # Validate token matches requested user_id
     get_user_id_from_body_or_token(user_id, token_user_id)
     
@@ -120,10 +120,10 @@ async def get_chat_settings(
 @router.post("/chat")
 async def chat_with_agent(
     request: ChatRequest,
-    token_user_id: Optional[str] = Depends(verify_user_token_optional)
+    token_user_id: str = Depends(verify_user_token)
 ):
     """
-    Chat endpoint - Supports authenticated users and guests.
+    Chat endpoint - Requires valid JWT token.
     Delegates logic to Apify Actor (Negotiator Brain) if enabled, 
     otherwise falls back to local Agent logic.
     """
@@ -168,11 +168,11 @@ async def chat_with_agent(
 async def chat_stream(request: Request):
     """
     Stream chat response using Server-Sent Events.
-    Requires valid JWT token OR guest- user_id.
+    Requires valid JWT token in Authorization header.
     Accepts both JSON body and multipart form data with optional file attachments.
     """
-    # Validate JWT token (Optional)
-    token_user_id = await verify_user_token_optional(request)
+    # Validate JWT token FIRST
+    token_user_id = await verify_user_token(request)
     
     content_type = request.headers.get("content-type", "")
     

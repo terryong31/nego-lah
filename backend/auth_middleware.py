@@ -53,36 +53,15 @@ async def verify_user_token(request: Request) -> str:
         raise HTTPException(status_code=401, detail="Invalid token")
 
 
-def get_user_id_from_body_or_token(body_user_id: Optional[str], token_user_id: Optional[str]) -> str:
+def get_user_id_from_body_or_token(body_user_id: Optional[str], token_user_id: str) -> str:
     """
     Validate that body user_id matches token user_id.
     This prevents users from sending requests on behalf of other users.
     """
-    if not token_user_id:
-        # If no token, only allow if body_user_id is a guest
-        if body_user_id and body_user_id.startswith("guest-"):
-            return body_user_id
-        raise HTTPException(status_code=401, detail="Authentication required")
-        
     if body_user_id and body_user_id != token_user_id:
         raise HTTPException(
             status_code=403, 
             detail="User ID mismatch: cannot act on behalf of another user"
         )
     return token_user_id
-
-
-async def verify_user_token_optional(request: Request) -> Optional[str]:
-    """
-    Same as verify_user_token but returns None if no header/invalid instead of raising 401.
-    Used for endpoints that support both authenticated users and guests.
-    """
-    auth_header = request.headers.get("Authorization")
-    if not auth_header:
-        return None
-        
-    try:
-        return await verify_user_token(request)
-    except HTTPException:
-        return None
 

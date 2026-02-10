@@ -43,6 +43,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     useEffect(() => {
         // Get initial session
         supabase.auth.getSession().then(async ({ data: { session } }) => {
+            if (session?.access_token) {
+                localStorage.setItem('token', session.access_token)
+            } else {
+                localStorage.removeItem('token')
+            }
+
             if (session?.user) {
                 // Check ban status for existing session
                 const banned = await checkBanStatus(session.user.id)
@@ -53,6 +59,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                     setSession(null)
                     setUser(null)
                     setLoading(false)
+                    localStorage.removeItem('token')
                     return
                 }
             }
@@ -65,6 +72,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const { data: { subscription } } = supabase.auth.onAuthStateChange(
             async (event, session) => {
                 console.log('Auth event:', event)
+
+                if (session?.access_token) {
+                    localStorage.setItem('token', session.access_token)
+                } else {
+                    localStorage.removeItem('token')
+                }
 
                 // Handle password recovery specially
                 if (event === 'PASSWORD_RECOVERY') {
@@ -90,6 +103,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                         setSession(null)
                         setUser(null)
                         setLoading(false)
+                        localStorage.removeItem('token')
                         return
                     }
                 }
@@ -104,6 +118,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 // Clear password recovery flag on sign out
                 if (event === 'SIGNED_OUT') {
                     setIsPasswordRecovery(false)
+                    localStorage.removeItem('token')
                 }
             }
         )

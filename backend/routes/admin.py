@@ -5,8 +5,41 @@ import secrets
 from typing import Optional, Annotated, List
 from cache import redis_client
 
-# IP Allowlist
-ALLOWED_IPS = ["175.139.168.163", "127.0.0.1", "::1", "localhost"]
+# IP Allowlist - managed dynamically via Supabase (admin_allowed_ips table)
+# Redis cache key and TTL
+_IP_CACHE_KEY = "admin:allowed_ips"
+_IP_CACHE_TTL = 300  # 5 minutes
+
+
+def _get_allowed_ips() -> list[str]:
+    """
+    Fetch the list of allowed IPs.
+    Checks Redis cache first; falls back to Supabase DB.
+    Always allows localhost as a safety net during DB failures.
+    """
+    import json
+    # Try Redis cache first
+    cached = redis_client.get(_IP_CACHE_KEY)
+    if cached:
+        try:
+            return json.loads(cached)
+        except Exception:
+            pass
+
+    # Fetch from Supabase
+    try:
+        from connector import admin_supabase
+        result = admin_supabase.table("admin_allowed_ips").select("ip_address").execute()
+        ips = [row["ip_address"] for row in (result.data or [])]
+        if ips:
+            redis_client.setex(_IP_CACHE_KEY, _IP_CACHE_TTL, json.dumps(ips))
+            return ips
+    except Exception as e:
+        print(f"[WARN] Failed to fetch allowed IPs from DB: {e}")
+
+    # Safety fallback — never lock out localhost
+    return ["127.0.0.1", "::1", "localhost"]
+
 
 async def verify_admin_ip(request: Request):
     """
@@ -16,16 +49,13 @@ async def verify_admin_ip(request: Request):
     # Get IP from X-Forwarded-For header (primary for proxy)
     forwarded = request.headers.get("X-Forwarded-For")
     if forwarded:
-        # X-Forwarded-For can be a comma-separated list, first one is original client
         client_ip = forwarded.split(",")[0].strip()
     else:
-        # Fallback to direct client host
         client_ip = request.client.host if request.client else "unknown"
-    
-    # print(f"Admin Access Alert: IP {client_ip} trying to access admin panel")
-    
-    if client_ip not in ALLOWED_IPS:
-        print(f"⛔️ Blocked Admin Access from IP: {client_ip}")
+
+    allowed_ips = _get_allowed_ips()
+    if client_ip not in allowed_ips:
+        print(f"Blocked Admin Access from IP: {client_ip}")
         raise HTTPException(status_code=403, detail="Access denied: Restricted IP")
 
 router = APIRouter(prefix="/admin", tags=["Admin"], dependencies=[Depends(verify_admin_ip)])

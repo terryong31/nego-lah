@@ -5,6 +5,7 @@ import secrets
 from typing import Optional, Annotated, List
 from cache import redis_client
 from logger import logger
+from env import ADMIN_ROUTE_PREFIX
 
 # IP Allowlist - managed dynamically via Supabase (admin_allowed_ips table)
 # Redis cache key and TTL
@@ -59,7 +60,7 @@ async def verify_admin_ip(request: Request):
         logger.warning(f"Blocked Admin Access from IP: {client_ip}")
         raise HTTPException(status_code=403, detail="Access denied: Restricted IP")
 
-router = APIRouter(prefix="/admin", tags=["Admin"], dependencies=[Depends(verify_admin_ip)])
+router = APIRouter(prefix=ADMIN_ROUTE_PREFIX, tags=["System"], dependencies=[Depends(verify_admin_ip)])
 
 # Admin session TTL: 2 hours
 ADMIN_SESSION_TTL = 7200  # seconds

@@ -91,6 +91,7 @@ export function Admin({ onBack }: AdminProps) {
     const [images, setImages] = useState<FileList | null>(null)
     const [dragIndex, setDragIndex] = useState<number | null>(null)
     const [currentItemImages, setCurrentItemImages] = useState<string[]>([])
+    const [editDragIndex, setEditDragIndex] = useState<number | null>(null)
 
     const [marketAdvice, setMarketAdvice] = useState<{
         market_average: number,
@@ -680,6 +681,21 @@ export function Admin({ onBack }: AdminProps) {
             }
         } catch {
             setError('Connection error')
+        }
+    }
+
+    // Image reorder for edit panel
+    const handleReorderImages = async (newOrder: string[]) => {
+        if (!editingItem) return
+        setCurrentItemImages(newOrder) // optimistic update
+        try {
+            await fetch(`${API_URL}/items/${editingItem.id}/images/reorder`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ordered_urls: newOrder })
+            })
+        } catch {
+            setError('Failed to save image order')
         }
     }
 
@@ -2050,7 +2066,22 @@ export function Admin({ onBack }: AdminProps) {
                                         <label className="block text-sm font-medium text-[var(--text-secondary)] mb-2">Images</label>
                                         <div className="flex flex-wrap gap-3">
                                             {currentItemImages.map((img, idx) => (
-                                                <div key={idx} className="relative group">
+                                                <div
+                                                    key={idx}
+                                                    draggable
+                                                    onDragStart={() => setEditDragIndex(idx)}
+                                                    onDragOver={(e) => e.preventDefault()}
+                                                    onDrop={() => {
+                                                        if (editDragIndex === null || editDragIndex === idx) return
+                                                        const reordered = [...currentItemImages]
+                                                        const [moved] = reordered.splice(editDragIndex, 1)
+                                                        reordered.splice(idx, 0, moved)
+                                                        setEditDragIndex(null)
+                                                        handleReorderImages(reordered)
+                                                    }}
+                                                    onDragEnd={() => setEditDragIndex(null)}
+                                                    className={`relative group cursor-grab active:cursor-grabbing transition-all duration-150 ${editDragIndex === idx ? 'opacity-50 scale-95' : ''}`}
+                                                >
                                                     <img
                                                         src={img}
                                                         alt={`Item ${idx + 1}`}
@@ -2087,7 +2118,8 @@ export function Admin({ onBack }: AdminProps) {
                             </Card>
                         </div>
                     </div>
-                )}
+                )
+            }
             {/* Confirmation Modal */}
             <ConfirmationModal
                 isOpen={confirmation.isOpen}
@@ -2108,7 +2140,7 @@ export function Admin({ onBack }: AdminProps) {
                 confirmText="Logout"
                 isLoading={isLoggingOut}
             />
-        </div>
+        </div >
     )
 }
 

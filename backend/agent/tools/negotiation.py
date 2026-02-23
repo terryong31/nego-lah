@@ -1,4 +1,5 @@
 from langchain_core.tools import tool
+from logger import logger
 
 @tool
 def assess_discount_eligibility(buyer_reason: str) -> str:

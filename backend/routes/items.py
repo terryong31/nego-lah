@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException, status, File, UploadFile, Form
 from typing import List, Annotated, Optional
+from pydantic import BaseModel
 from items import get_items, upload_item, delete_item, update_item
 from schemas import ItemSchema
 
@@ -240,3 +241,42 @@ async def add_images(
     admin_supabase.table('items').update({'image_path': new_json}).eq('id', item_id).execute()
     
     return {"message": "Images added successfully", "images": list(images_map.values())}
+
+
+class ImageReorderRequest(BaseModel):
+    ordered_urls: List[str]
+
+
+@router.put('/{item_id}/images/reorder')
+def reorder_images(item_id: str, body: ImageReorderRequest) -> dict:
+    """Reorder images for an item. Accepts a list of URLs in the desired order."""
+    from connector import admin_supabase
+    import json
+
+    response = admin_supabase.table('items').select('image_path').eq('id', item_id).execute()
+
+    if not response.data or len(response.data) == 0:
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    current_images_json = response.data[0].get('image_path')
+    images_map = {}
+    if current_images_json:
+        try:
+            images_map = json.loads(current_images_json)
+        except Exception:
+            images_map = {}
+
+    # Build a reverse map: url -> key
+    url_to_key = {v: k for k, v in images_map.items()}
+
+    # Reconstruct map in the new order (skip any URLs not recognised)
+    new_map = {}
+    for url in body.ordered_urls:
+        key = url_to_key.get(url)
+        if key:
+            new_map[key] = url
+
+    admin_supabase.table('items').update({'image_path': json.dumps(new_map)}).eq('id', item_id).execute()
+
+    return {"message": "Images reordered successfully", "images": list(new_map.values())}
+

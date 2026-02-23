@@ -5,6 +5,7 @@ Analyzes images using Gemini Vision API directly (no Apify dependency).
 
 import json
 from langchain_google_genai import ChatGoogleGenerativeAI
+from logger import logger
 from langchain_core.messages import HumanMessage
 from env import GEMINI_API_KEY
 

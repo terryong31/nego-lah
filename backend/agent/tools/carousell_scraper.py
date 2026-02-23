@@ -25,6 +25,7 @@ from datetime import datetime, timedelta
 from typing import Optional, List
 from dataclasses import dataclass, asdict
 from bs4 import BeautifulSoup
+from logger import logger
 
 
 @dataclass

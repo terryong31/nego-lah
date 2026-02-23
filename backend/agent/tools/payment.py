@@ -1,4 +1,5 @@
 from langchain_core.tools import tool
+from logger import logger
 
 @tool
 def create_checkout_link(item_id: str, agreed_price: float) -> str:

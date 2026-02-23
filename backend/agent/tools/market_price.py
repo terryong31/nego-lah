@@ -12,6 +12,7 @@ NO APIFY DEPENDENCY - 100% custom implementation.
 import asyncio
 import statistics
 from typing import Optional, List
+from logger import logger
 
 
 # Condition multipliers (higher = better condition = higher price)

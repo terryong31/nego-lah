@@ -9,6 +9,7 @@ from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
 from env import GEMINI_API_KEY
+from logger import logger
 from .config import SELLER_PERSONA
 from .memory import ConversationMemory
 from .vector_store import VectorMemory
@@ -137,7 +138,6 @@ def call_stripe_agent(request: str) -> str:
 customer_tools = [
     call_item_agent,
     call_stripe_agent,
-    evaluate_offer, 
     evaluate_offer, 
     assess_discount_eligibility,
     web_search,

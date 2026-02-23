@@ -1,9 +1,8 @@
 import os
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 
-# Load .env from the root directory level
-env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env')
-load_dotenv(dotenv_path=env_path)
+# Find .env automatically by walking up the directory tree
+load_dotenv(find_dotenv())
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 ADMIN_SUPABASE_KEY = os.getenv("ADMIN_SUPABASE_KEY")

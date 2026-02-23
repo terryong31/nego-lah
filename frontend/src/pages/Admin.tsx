@@ -11,7 +11,8 @@ import { api } from '../lib/api'
 import { supabase } from '../lib/supabase'
 
 const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? '/api' : 'http://127.0.0.1:8000')
-const CHATS_URL = '/admin/chats'
+const ADMIN_PREFIX = import.meta.env.VITE_ADMIN_PREFIX || '/_sys'
+const CHATS_URL = `${ADMIN_PREFIX}/chats`
 
 interface Item {
     id: string
@@ -177,7 +178,7 @@ export function Admin({ onBack }: AdminProps) {
     const fetchUsers = async () => {
         setUsersLoading(true)
         try {
-            const res = await fetch(`${API_URL}/admin/users`, {
+            const res = await fetch(`${API_URL}${ADMIN_PREFIX}/users`, {
                 headers: { 'Authorization': `Bearer ${adminToken}` }
             })
             if (res.ok) {
@@ -195,7 +196,7 @@ export function Admin({ onBack }: AdminProps) {
     const fetchOrders = async () => {
         setOrdersLoading(true)
         try {
-            const res = await fetch(`${API_URL}/admin/orders`, {
+            const res = await fetch(`${API_URL}${ADMIN_PREFIX}/orders`, {
                 headers: { 'Authorization': `Bearer ${adminToken}` }
             })
             if (res.ok) {
@@ -223,7 +224,7 @@ export function Admin({ onBack }: AdminProps) {
     const handleUpdateOrder = async () => {
         if (!editingOrder) return
         try {
-            const res = await fetch(`${API_URL}/admin/orders/${editingOrder.id}`, {
+            const res = await fetch(`${API_URL}${ADMIN_PREFIX}/orders/${editingOrder.id}`, {
                 method: 'PUT',
                 headers: {
                     'Content-Type': 'application/json',
@@ -252,7 +253,7 @@ export function Admin({ onBack }: AdminProps) {
             message: 'Are you sure you want to delete this order? This action cannot be undone.',
             onConfirm: async () => {
                 try {
-                    const res = await fetch(`${API_URL}/admin/orders/${orderId}`, {
+                    const res = await fetch(`${API_URL}${ADMIN_PREFIX}/orders/${orderId}`, {
                         method: 'DELETE',
                         headers: { 'Authorization': `Bearer ${adminToken}` }
                     })
@@ -317,7 +318,7 @@ export function Admin({ onBack }: AdminProps) {
 
     const verifyToken = async () => {
         try {
-            const res = await fetch(`${API_URL}/admin/verify?token=${adminToken}`)
+            const res = await fetch(`${API_URL}${ADMIN_PREFIX}/verify?token=${adminToken}`)
             const data = await res.json()
             if (data.valid) {
                 setIsLoggedIn(true)
@@ -433,7 +434,7 @@ export function Admin({ onBack }: AdminProps) {
         setError(null)
 
         try {
-            const res = await fetch(`${API_URL}/admin/login`, {
+            const res = await fetch(`${API_URL}${ADMIN_PREFIX}/login`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ username, password })
@@ -587,7 +588,7 @@ export function Admin({ onBack }: AdminProps) {
             // First clear existing advice
             setMarketAdvice(null)
 
-            const res = await fetch(`${API_URL}/admin/market-valuation`, {
+            const res = await fetch(`${API_URL}${ADMIN_PREFIX}/market-valuation`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ query, condition })
@@ -697,7 +698,7 @@ export function Admin({ onBack }: AdminProps) {
         formDataPayload.append('image', firstFile)
 
         try {
-            const res = await fetch(`${API_URL}/admin/analyze-image`, {
+            const res = await fetch(`${API_URL}${ADMIN_PREFIX}/analyze-image`, {
                 method: 'POST',
                 body: formDataPayload
             })
@@ -744,7 +745,7 @@ export function Admin({ onBack }: AdminProps) {
 
     const handleBanUser = async (userId: string, ban: boolean) => {
         try {
-            const res = await fetch(`${API_URL}/admin/users/${userId}/ban`, {
+            const res = await fetch(`${API_URL}${ADMIN_PREFIX}/users/${userId}/ban`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ is_banned: ban })
@@ -764,7 +765,7 @@ export function Admin({ onBack }: AdminProps) {
         ))
 
         try {
-            const res = await fetch(`${API_URL}/admin/users/${userId}/ai`, {
+            const res = await fetch(`${API_URL}${ADMIN_PREFIX}/users/${userId}/ai`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ ai_enabled: enable })
@@ -888,7 +889,7 @@ export function Admin({ onBack }: AdminProps) {
         formData.append('avatar', file)
 
         try {
-            const res = await fetch(`${API_URL}/admin/users/${editingUser.id}/avatar`, {
+            const res = await fetch(`${API_URL}${ADMIN_PREFIX}/users/${editingUser.id}/avatar`, {
                 method: 'POST',
                 body: formData
             })
@@ -913,7 +914,7 @@ export function Admin({ onBack }: AdminProps) {
     const handleSaveProfile = async () => {
         if (!editingUser) return
         try {
-            await api.put(`/admin/users/${editingUser.id}/profile`, {
+            await api.put(`${ADMIN_PREFIX}/users/${editingUser.id}/profile`, {
                 display_name: editForm.displayName,
                 avatar_url: editForm.avatarUrl || null
             })
@@ -929,7 +930,7 @@ export function Admin({ onBack }: AdminProps) {
         if (!selectedUserChat || !adminReply.trim()) return
 
         try {
-            const res = await fetch(`${API_URL}/admin/chats/${selectedUserChat.userId}/message`, {
+            const res = await fetch(`${API_URL}${ADMIN_PREFIX}/chats/${selectedUserChat.userId}/message`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ message: adminReply })

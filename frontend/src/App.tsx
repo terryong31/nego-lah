@@ -80,6 +80,8 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
+const ADMIN_ROUTE = import.meta.env.VITE_ADMIN_PREFIX || '/_sys'
+
 function AppRoutes() {
   const [chatContext, setChatContext] = useState<ChatContext>({})
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'warning' | 'info' } | null>(null)
@@ -231,7 +233,7 @@ function AppRoutes() {
           }
         />
         <Route
-          path="/admin"
+          path={ADMIN_ROUTE}
           element={<Admin onBack={handleBackToHome} />}
         />
         <Route

@@ -8,6 +8,7 @@ from typing import Optional
 import json
 import base64
 from limiter import limiter
+from logger import logger
 
 router = APIRouter(prefix="", tags=["Chat"])
 
@@ -54,7 +55,7 @@ def save_conversation_history(user_id: str, messages: list, item_id: Optional[st
                 'messages': messages
             }).execute()
     except Exception as e:
-        logger.info(f"Error saving conversation: {e}")
+        logger.error(f"Error saving conversation: {e}")
 
 
 @router.get("/chat/history/{user_id}")
@@ -77,7 +78,7 @@ async def get_chat_history(
         history = conversation_memory.get_history(user_id, limit=limit, offset=offset)
         return {"messages": history}
     except Exception as e:
-        logger.info(f"Error getting chat history: {e}")
+        logger.error(f"Error getting chat history: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -95,7 +96,7 @@ async def clear_chat_history(
         conversation_memory.clear_history(user_id)
         return {"message": "Chat history cleared"}
     except Exception as e:
-        logger.info(f"Error clearing chat history: {e}")
+        logger.error(f"Error clearing chat history: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -114,7 +115,7 @@ async def get_chat_settings(
             return {"ai_enabled": result.data[0].get('ai_enabled', True)}
         return {"ai_enabled": True}  # Default to enabled
     except Exception as e:
-        logger.info(f"Error getting chat settings: {e}")
+        logger.error(f"Error getting chat settings: {e}")
         return {"ai_enabled": True}  # Default to enabled on error
 
 
@@ -159,7 +160,7 @@ async def chat_with_agent(
         return {"response": response}
         
     except Exception as e:
-        logger.info(f"Chat Error: {e}")
+        logger.error(f"Chat Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

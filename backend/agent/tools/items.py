@@ -14,16 +14,16 @@ def get_item_info(item_id: str) -> str:
     """
     from connector import user_supabase
     
-    print(f"\n{'='*50}")
-    print(f"🔍 GET_ITEM_INFO CALLED")
-    print(f"📦 Item ID: {item_id}")
-    print(f"{'='*50}")
+    logger.info(f"\n{'='*50}")
+    logger.info(f"🔍 GET_ITEM_INFO CALLED")
+    logger.info(f"📦 Item ID: {item_id}")
+    logger.info(f"{'='*50}")
     
     response = user_supabase.table('items').select('*').eq('id', item_id).execute()
     
-    print(f"📊 Query result: {len(response.data) if response.data else 0} items found")
+    logger.info(f"📊 Query result: {len(response.data) if response.data else 0} items found")
     if response.data:
-        print(f"📋 Data: {response.data}")
+        logger.info(f"📋 Data: {response.data}")
     
     if response.data and len(response.data) > 0:
         item = response.data[0]
@@ -35,9 +35,9 @@ Price: RM{item.get('price', 'N/A')}
 Condition: {item.get('condition', 'Unknown')}
 Status: {item.get('status', 'available')}
 """
-        print(f"✅ Returning item info")
+        logger.info(f"✅ Returning item info")
         return result
-    print(f"❌ Item not found!")
+    logger.info(f"❌ Item not found!")
     return "Item not found."
 
 
@@ -55,26 +55,26 @@ def search_items(search_term: str) -> str:
     """
     from connector import user_supabase
     
-    print(f"\n{'='*50}")
-    print(f"🔎 SEARCH_ITEMS CALLED")
-    print(f"🔤 Search term: '{search_term}'")
-    print(f"{'='*50}")
+    logger.info(f"\n{'='*50}")
+    logger.info(f"🔎 SEARCH_ITEMS CALLED")
+    logger.info(f"🔤 Search term: '{search_term}'")
+    logger.info(f"{'='*50}")
     
     # Search by name (case-insensitive)
     query = f'%{search_term}%'
-    print(f"📝 SQL ILIKE query: name ILIKE '{query}'")
+    logger.info(f"📝 SQL ILIKE query: name ILIKE '{query}'")
     
     response = user_supabase.table('items').select('id, name, price, condition, status').ilike('name', query).limit(5).execute()
     
-    print(f"📊 Query result: {len(response.data) if response.data else 0} items found")
+    logger.info(f"📊 Query result: {len(response.data) if response.data else 0} items found")
     if response.data:
-        print(f"📋 Raw data: {response.data}")
+        logger.info(f"📋 Raw data: {response.data}")
     
     if response.data and len(response.data) > 0:
         results = []
         for item in response.data:
             status = item.get('status')
-            print(f"  - {item.get('name')}: status={status}")
+            logger.info(f"  - {item.get('name')}: status={status}")
             
             # Use 'available' as the default status if it's missing or stick to what's in DB
             display_status = status if status else 'available'
@@ -83,10 +83,10 @@ def search_items(search_term: str) -> str:
             results.append(f"• ID: {item.get('id')} | Name: {item.get('name')} | Price: RM{item.get('price')} | Status: {display_status}")
             
         result_str = "\n".join(results)
-        print(f"✅ Returning {len(results)} items")
+        logger.info(f"✅ Returning {len(results)} items")
         return result_str
         
-    print(f"❌ No matching items found")
+    logger.info(f"❌ No matching items found")
     return "No matching items found."
 
 
@@ -101,9 +101,9 @@ def list_all_items() -> str:
     """
     from connector import user_supabase
     
-    print(f"\n{'='*50}")
-    print(f"📋 LIST_ALL_ITEMS CALLED")
-    print(f"{'='*50}")
+    logger.info(f"\n{'='*50}")
+    logger.info(f"📋 LIST_ALL_ITEMS CALLED")
+    logger.info(f"{'='*50}")
     
     response = user_supabase.table('items').select('id, name, price, condition, status').eq('status', 'available').limit(10).execute()
     
@@ -112,8 +112,8 @@ def list_all_items() -> str:
         for item in response.data:
             results.append(f"• ID: {item.get('id')} | Name: {item.get('name')} | Price: RM{item.get('price')}")
         
-        print(f"✅ Returning {len(results)} items")
+        logger.info(f"✅ Returning {len(results)} items")
         return "\n".join(results)
         
-    print(f"❌ No available items found")
+    logger.info(f"❌ No available items found")
     return "No available items found."

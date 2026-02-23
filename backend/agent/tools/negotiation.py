@@ -15,10 +15,10 @@ def assess_discount_eligibility(buyer_reason: str) -> str:
     from .config import DISCOUNT_SCORING_GUIDE
     
     # LOG: Tool was called
-    print(f"\n{'='*50}")
-    print(f"🎯 ASSESS_DISCOUNT_ELIGIBILITY CALLED")
-    print(f"📝 Buyer's reason: {buyer_reason}")
-    print(f"{'='*50}\n")
+    logger.info(f"\n{'='*50}")
+    logger.info(f"🎯 ASSESS_DISCOUNT_ELIGIBILITY CALLED")
+    logger.info(f"📝 Buyer's reason: {buyer_reason}")
+    logger.info(f"{'='*50}\n")
     
     # This tool returns the scoring guide for the AI to use in its assessment
     # The AI will evaluate and decide based on the guide
@@ -55,12 +55,12 @@ def evaluate_offer(item_id: str, offered_price: float, extra_discount_percent: f
     from connector import user_supabase
     
     # LOG: Tool was called
-    print(f"\n{'='*50}")
-    print(f"💰 EVALUATE_OFFER CALLED")
-    print(f"📦 Item ID: {item_id}")
-    print(f"💵 Offered Price: RM{offered_price}")
-    print(f"🎁 Extra Discount: {extra_discount_percent}%")
-    print(f"{'='*50}")
+    logger.info(f"\n{'='*50}")
+    logger.info(f"💰 EVALUATE_OFFER CALLED")
+    logger.info(f"📦 Item ID: {item_id}")
+    logger.info(f"💵 Offered Price: RM{offered_price}")
+    logger.info(f"🎁 Extra Discount: {extra_discount_percent}%")
+    logger.info(f"{'='*50}")
     
     # Retrieve context item_id if available
     context_item_id = getattr(evaluate_offer, '_current_item_id', None)
@@ -69,12 +69,12 @@ def evaluate_offer(item_id: str, offered_price: float, extra_discount_percent: f
     
     # Fallback: if lookup failed and context ID exists, try that
     if not response.data and context_item_id and item_id != context_item_id:
-        print(f"⚠️ Lookup for '{item_id}' failed, falling back to context ID: {context_item_id}")
+        logger.info(f"⚠️ Lookup for '{item_id}' failed, falling back to context ID: {context_item_id}")
         item_id = context_item_id
         response = user_supabase.table('items').select('*').eq('id', item_id).execute()
     
     if not response.data:
-        print("❌ Item not found!")
+        logger.info("❌ Item not found!")
         return "Cannot evaluate - item not found."
     
     item = response.data[0]
@@ -86,10 +86,10 @@ def evaluate_offer(item_id: str, offered_price: float, extra_discount_percent: f
     adjusted_threshold = max(listed_price - discount_amount, min_price)
     
     # LOG: Price calculations
-    print(f"📊 Listed Price: RM{listed_price}")
-    print(f"🔻 Min Price (floor): RM{min_price}")
-    print(f"🎯 Adjusted Threshold: RM{adjusted_threshold}")
-    print(f"{'='*50}\n")
+    logger.info(f"📊 Listed Price: RM{listed_price}")
+    logger.info(f"🔻 Min Price (floor): RM{min_price}")
+    logger.info(f"🎯 Adjusted Threshold: RM{adjusted_threshold}")
+    logger.info(f"{'='*50}\n")
     
     if offered_price >= listed_price:
         result = f"ACCEPT: Offer of RM{offered_price} meets or exceeds listed price of RM{listed_price}."
@@ -112,5 +112,5 @@ def evaluate_offer(item_id: str, offered_price: float, extra_discount_percent: f
     else:
         result = f"REJECT_FLOOR: Offer of RM{offered_price} is below the absolute minimum of RM{min_price}. Tell buyer: 'Sorry, that's below my cost. The lowest I can do is RM{min_price}.'"
     
-    print(f"📋 RESULT: {result}")
+    logger.info(f"📋 RESULT: {result}")
     return result

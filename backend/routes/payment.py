@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Request, Header, status
 from schemas import CheckoutRequest
 from connector import admin_supabase
 from payment.pay import create_checkout_session
+from logger import logger
 
 router = APIRouter(prefix="", tags=["Payment"])
 
@@ -36,7 +37,7 @@ def checkout(request: CheckoutRequest):
     except HTTPException:
         raise
     except Exception as e:
-        logger.info(f"Error in checkout: {str(e)}")
+        logger.error(f"Error in checkout: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Checkout failed: {str(e)}"
@@ -62,7 +63,7 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None))
     event = verify_webhook(payload, stripe_signature)
     
     if not event:
-        logger.info("❌ Webhook signature verification FAILED")
+        logger.error("❌ Webhook signature verification FAILED")
         raise HTTPException(status_code=400, detail="Invalid webhook signature")
     
     event_type = event['type']
@@ -172,7 +173,7 @@ def confirm_payment(item_id: str, user_id: str = None, session_id: str = None):
             try:
                 session = stripe.checkout.Session.retrieve(session_id)
                 if session.payment_status != 'paid':
-                    logger.info(f"❌ Payment not completed: {session.payment_status}")
+                    logger.error(f"❌ Payment not completed: {session.payment_status}")
                     raise HTTPException(status_code=400, detail="Payment not completed")
                 
                 # Get user_id from session metadata if not provided
@@ -185,7 +186,7 @@ def confirm_payment(item_id: str, user_id: str = None, session_id: str = None):
                     
                 logger.info(f"✅ Stripe session verified - payment_status: {session.payment_status}")
             except stripe.error.InvalidRequestError:
-                logger.info(f"⚠️ Could not verify session {session_id}, proceeding anyway")
+                logger.warning(f"⚠️ Could not verify session {session_id}, proceeding anyway")
         
         if not item_id:
             raise HTTPException(status_code=400, detail="item_id is required")
@@ -206,7 +207,7 @@ def confirm_payment(item_id: str, user_id: str = None, session_id: str = None):
                 invalidate_item_cache(item_id)
                 logger.info(f"✅ Cache forced invalidation for already-sold item {item_id}")
             except Exception as e:
-                logger.info(f"⚠️ Could not invalidate cache: {e}")
+                logger.warning(f"⚠️ Could not invalidate cache: {e}")
                 
             return {"status": "already_sold", "message": "Item was already marked as sold"}
         
@@ -237,7 +238,7 @@ def confirm_payment(item_id: str, user_id: str = None, session_id: str = None):
                     amount_paid = float(pending['agreed_price'])
                     logger.info(f"✅ Using negotiated price from Redis: RM{amount_paid}")
             except Exception as e:
-                logger.info(f"⚠️ Could not check pending payment: {e}")
+                logger.warning(f"⚠️ Could not check pending payment: {e}")
         
         # Try Stripe session amount if no Redis price
         if amount_paid is None and session_id:
@@ -246,7 +247,7 @@ def confirm_payment(item_id: str, user_id: str = None, session_id: str = None):
                 amount_paid = session.amount_total / 100  # Convert from cents
                 logger.info(f"✅ Using Stripe session amount: RM{amount_paid}")
             except:
-                logger.info(f"⚠️ Could not get amount from session")
+                logger.warning(f"⚠️ Could not get amount from session")
         
         # Final fallback to item price
         if amount_paid is None:
@@ -279,7 +280,7 @@ def confirm_payment(item_id: str, user_id: str = None, session_id: str = None):
             }).execute()
             logger.info(f"✅ Transaction recorded")
         except Exception as e:
-            logger.info(f"⚠️ Could not record transaction: {e}")
+            logger.error(f"⚠️ Could not record transaction: {e}")
         
         return {
             "status": "success",
@@ -290,5 +291,5 @@ def confirm_payment(item_id: str, user_id: str = None, session_id: str = None):
     except HTTPException:
         raise
     except Exception as e:
-        logger.info(f"❌ Error confirming payment: {e}")
+        logger.error(f"❌ Error confirming payment: {e}")
         raise HTTPException(status_code=500, detail=str(e))

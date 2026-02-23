@@ -38,7 +38,7 @@ class VectorMemory:
             result = self._supabase.table('vector_memory').select('id').limit(1).execute()
             self.enabled = True
         except Exception as e:
-            print(f"VectorMemory disabled: {e}")
+            logger.info(f"VectorMemory disabled: {e}")
             self.enabled = False
             
     def add_item_knowledge(self, item_id: str, description: str):
@@ -58,7 +58,7 @@ class VectorMemory:
                 "embedding": embedding.tolist()
             }).execute()
         except Exception as e:
-            print(f"Error adding item knowledge: {e}")
+            logger.info(f"Error adding item knowledge: {e}")
     
     def add_negotiation_summary(self, user_id: str, item_id: str, summary: str):
         """Store a negotiation summary for future reference."""
@@ -77,7 +77,7 @@ class VectorMemory:
                 "embedding": embedding.tolist()
             }).execute()
         except Exception as e:
-            print(f"Error adding negotiation summary: {e}")
+            logger.info(f"Error adding negotiation summary: {e}")
     
     def search_similar(self, query: str, n_results: int = 3, filter_type: str = None) -> List[str]:
         """Find relevant items or past negotiations using pgvector similarity search."""
@@ -98,7 +98,7 @@ class VectorMemory:
                 return [doc['content'] for doc in result.data]
             return []
         except Exception as e:
-            print(f"Error searching: {e}")
+            logger.info(f"Error searching: {e}")
             return []
     
     def count(self) -> int:

@@ -57,7 +57,7 @@ class MarketPriceService:
                 from .carousell_scraper import CarousellScraper
                 self._scraper = CarousellScraper(headless=True)
             except ImportError:
-                print("[MarketPriceService] carousell_scraper not available")
+                logger.info("[MarketPriceService] carousell_scraper not available")
                 self._scraper = False  # Mark as unavailable
         return self._scraper if self._scraper else None
     
@@ -91,7 +91,7 @@ class MarketPriceService:
                     if result.get("sample_size", 0) > 0:
                         return result
             except Exception as e:
-                print(f"[MarketPriceService] Scraper error: {e}")
+                logger.info(f"[MarketPriceService] Scraper error: {e}")
         
         # Fallback to estimation
         return self._estimate_price(query, condition, category)

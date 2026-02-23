@@ -82,7 +82,7 @@ class ConversationMemory:
                 }).execute()
                 
         except Exception as e:
-            print(f"[ConversationMemory] Error saving message: {e}")
+            logger.info(f"[ConversationMemory] Error saving message: {e}")
     
     def get_history(self, user_id: str, limit: int = 50, offset: int = 0) -> List[Dict]:
         """Get conversation history for a user from Supabase."""
@@ -111,7 +111,7 @@ class ConversationMemory:
             ]
             
         except Exception as e:
-            print(f"[ConversationMemory] Error getting history: {e}")
+            logger.info(f"[ConversationMemory] Error getting history: {e}")
             return []
     
     def get_all_histories(self) -> Dict[str, List[Dict]]:
@@ -136,7 +136,7 @@ class ConversationMemory:
             return all_histories
             
         except Exception as e:
-            print(f"[ConversationMemory] Error getting all histories: {e}")
+            logger.info(f"[ConversationMemory] Error getting all histories: {e}")
             return {}
     
     def clear_history(self, user_id: str):
@@ -144,7 +144,7 @@ class ConversationMemory:
         try:
             self.supabase.table('conversations').delete().eq('user_id', user_id).execute()
         except Exception as e:
-            print(f"[ConversationMemory] Error clearing history: {e}")
+            logger.info(f"[ConversationMemory] Error clearing history: {e}")
     
     def broadcast_message(self, user_id: str, role: str, message: str, source: str):
         """Broadcast is handled by Supabase Realtime automatically."""

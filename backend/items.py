@@ -6,6 +6,7 @@ import json
 import uuid
 import hashlib
 from cache import cache_items_with_hash, get_cached_items_with_hash, invalidate_item_cache
+from logger import logger
 import redis
 from env import REDIS_URL
 
@@ -59,7 +60,7 @@ def get_items(keyword: str = None) -> List[str]:
             # Only validate against Supabase every 30 seconds
             if should_validate_cache():
                 # Time to check if data has changed
-                count, max_timestamp = get_items_fingerlogger.info()
+                count, max_timestamp = get_items_fingerprint()
                 current_hash = compute_items_hash(count, max_timestamp)
                 
                 if current_hash != cached_hash:
@@ -150,7 +151,7 @@ async def upload_item(
         return True
 
     except Exception as e:
-        logger.info(f"An error has occured! Error: {e}")
+        logger.error(f"An error has occured! Error: {e}")
         return False
 
 def delete_item(item_id: str) -> bool:
@@ -167,7 +168,7 @@ def delete_item(item_id: str) -> bool:
         invalidate_item_cache(item_id)  # Clear cache
         return True
     except Exception as e:
-        logger.info(f"Failed to delete item {item_id}: {e}")
+        logger.error(f"Failed to delete item {item_id}: {e}")
         return False
 
 def update_item(
@@ -213,5 +214,5 @@ def update_item(
         invalidate_item_cache(item_id)  # Clear cache
         return True
     except Exception as e:
-        logger.info(f"Something wrong! Error: {e}")
+        logger.error(f"Something wrong! Error: {e}")
         return False

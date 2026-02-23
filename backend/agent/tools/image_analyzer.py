@@ -98,11 +98,11 @@ Guidelines:
             return result
             
         except json.JSONDecodeError as e:
-            print(f"Failed to parse Gemini response as JSON: {e}")
-            print(f"Raw response: {content}")
+            logger.info(f"Failed to parse Gemini response as JSON: {e}")
+            logger.info(f"Raw response: {content}")
             return self._get_fallback_response()
         except Exception as e:
-            print(f"Image analysis error: {e}")
+            logger.info(f"Image analysis error: {e}")
             return self._get_fallback_response()
     
     def _get_fallback_response(self) -> dict:

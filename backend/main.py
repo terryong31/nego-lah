@@ -14,6 +14,17 @@ from routes.items import router as items_router
 from routes.chat import router as chat_router
 from routes.payment import router as payment_router
 from routes.admin import router as admin_router
+from env import SUPABASE_URL, USER_SUPABASE_KEY
+import sentry_sdk
+
+# Initialize Sentry for error tracking
+sentry_dsn = os.environ.get("SENTRY_DSN")
+if sentry_dsn:
+    sentry_sdk.init(
+        dsn=sentry_dsn,
+        traces_sample_rate=1.0,
+        profiles_sample_rate=1.0,
+    )
 
 app = FastAPI(
     title="Second-Hand Store API",

@@ -167,7 +167,7 @@ class CarousellScraper:
         from playwright.async_api import async_playwright
         
         url = self._build_search_url(query, condition, min_price, max_price)
-        print(f"[CarousellScraper] Searching: {url}")
+        logger.info(f"[CarousellScraper] Searching: {url}")
         
         listings = []
         
@@ -212,7 +212,7 @@ class CarousellScraper:
                 # Find main content container
                 main = soup.find("main")
                 if not main:
-                    print("[CarousellScraper] Could not find main content")
+                    logger.info("[CarousellScraper] Could not find main content")
                     await browser.close()
                     return listings
                 
@@ -279,30 +279,30 @@ class CarousellScraper:
                         )
                         
                         listings.append(listing)
-                        print(f"  [{len(listings)}] {listing.title[:40]} - RM {listing.price}")
+                        logger.info(f"  [{len(listings)}] {listing.title[:40]} - RM {listing.price}")
                     
                     except Exception as e:
-                        print(f"[CarousellScraper] Error parsing listing: {e}")
+                        logger.info(f"[CarousellScraper] Error parsing listing: {e}")
                         continue
                 
                 # Try alternative parsing if we got no results
                 if not listings:
-                    print("[CarousellScraper] Trying alternative parsing method...")
+                    logger.info("[CarousellScraper] Trying alternative parsing method...")
                     listings = await self._parse_alternative(page, limit)
                 
             except Exception as e:
-                print(f"[CarousellScraper] Error: {e}")
+                logger.info(f"[CarousellScraper] Error: {e}")
                 # Save screenshot for debugging
                 try:
                     await page.screenshot(path="carousell_error.png")
-                    print("[CarousellScraper] Error screenshot saved to carousell_error.png")
+                    logger.info("[CarousellScraper] Error screenshot saved to carousell_error.png")
                 except:
                     pass
             
             finally:
                 await browser.close()
         
-        print(f"[CarousellScraper] Found {len(listings)} listings")
+        logger.info(f"[CarousellScraper] Found {len(listings)} listings")
         return listings
     
     async def _parse_alternative(self, page, limit: int) -> List[CarousellListing]:
@@ -320,7 +320,7 @@ class CarousellScraper:
             for selector in selectors:
                 elements = await page.query_selector_all(selector)
                 if elements:
-                    print(f"[CarousellScraper] Found {len(elements)} elements with selector: {selector}")
+                    logger.info(f"[CarousellScraper] Found {len(elements)} elements with selector: {selector}")
                     
                     for el in elements[:limit]:
                         try:
@@ -352,7 +352,7 @@ class CarousellScraper:
                     if listings:
                         break
         except Exception as e:
-            print(f"[CarousellScraper] Alternative parsing failed: {e}")
+            logger.info(f"[CarousellScraper] Alternative parsing failed: {e}")
         
         return listings
     
@@ -423,7 +423,7 @@ class CarousellScraper:
                 return details
                 
             except Exception as e:
-                print(f"[CarousellScraper] Error getting listing details: {e}")
+                logger.info(f"[CarousellScraper] Error getting listing details: {e}")
                 return None
             
             finally:
@@ -450,9 +450,9 @@ async def search_market_prices(query: str, limit: int = 10) -> List[dict]:
 
 async def main():
     """Test the scraper."""
-    print("="*60)
-    print("Carousell Malaysia Scraper")
-    print("="*60)
+    logger.info("="*60)
+    logger.info("Carousell Malaysia Scraper")
+    logger.info("="*60)
     
     query = input("\nEnter search query (e.g., 'bmx bicycle'): ").strip() or "bmx bicycle"
     
@@ -462,34 +462,34 @@ async def main():
     
     scraper = CarousellScraper(headless=headless)
     
-    print(f"\nSearching for '{query}'...")
-    print("-"*60)
+    logger.info(f"\nSearching for '{query}'...")
+    logger.info("-"*60)
     
     results = await scraper.search(query, limit=10)
     
     if results:
-        print(f"\n{'='*60}")
-        print(f"FOUND {len(results)} LISTINGS")
-        print("="*60)
+        logger.info(f"\n{'='*60}")
+        logger.info(f"FOUND {len(results)} LISTINGS")
+        logger.info("="*60)
         
         for i, listing in enumerate(results, 1):
-            print(f"\n[{i}] {listing.title}")
-            print(f"    Price: RM {listing.price:.2f}")
-            print(f"    URL: {listing.url}")
+            logger.info(f"\n[{i}] {listing.title}")
+            logger.info(f"    Price: RM {listing.price:.2f}")
+            logger.info(f"    URL: {listing.url}")
             if listing.image_url:
-                print(f"    Image: {listing.image_url[:60]}...")
+                logger.info(f"    Image: {listing.image_url[:60]}...")
         
         # Calculate price stats
         prices = [l.price for l in results if l.price > 0]
         if prices:
-            print(f"\n{'='*60}")
-            print("PRICE ANALYSIS")
-            print("="*60)
-            print(f"  Average: RM {sum(prices)/len(prices):.2f}")
-            print(f"  Min: RM {min(prices):.2f}")
-            print(f"  Max: RM {max(prices):.2f}")
+            logger.info(f"\n{'='*60}")
+            logger.info("PRICE ANALYSIS")
+            logger.info("="*60)
+            logger.info(f"  Average: RM {sum(prices)/len(prices):.2f}")
+            logger.info(f"  Min: RM {min(prices):.2f}")
+            logger.info(f"  Max: RM {max(prices):.2f}")
     else:
-        print("\nNo results found. Try a different query or run non-headless to debug.")
+        logger.info("\nNo results found. Try a different query or run non-headless to debug.")
 
 
 if __name__ == "__main__":

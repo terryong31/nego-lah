@@ -72,7 +72,7 @@ def create_checkout_link(item_id: str, final_price: float, item_name: str) -> st
         min_price = float(item.get('min_price') or item.get('price', 0))
         asking_price = float(item.get('price', 0))
         
-        print(f"🔒 SECURITY CHECK: final_price={final_price}, min_price={min_price}")
+        logger.info(f"🔒 SECURITY CHECK: final_price={final_price}, min_price={min_price}")
         
         if final_price < min_price:
             # SECURITY: Do NOT reveal min_price to user
@@ -85,7 +85,7 @@ Please continue negotiating for a fair price."""
         if final_price <= 0:
             return "ERROR: Price must be a positive number."
         
-        print(f"✅ SECURITY: Price {final_price} >= min {min_price} - APPROVED")
+        logger.info(f"✅ SECURITY: Price {final_price} >= min {min_price} - APPROVED")
         
         # Convert to cents (Stripe uses smallest currency unit)
         price_cents = int(final_price * 100)

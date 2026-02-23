@@ -54,7 +54,7 @@ def call_item_agent(query: str) -> str:
     Args:
         query: The user's question or search request regarding items
     """
-    print(f"📞 Calling Item Agent with: {query}")
+    logger.info(f"📞 Calling Item Agent with: {query}")
     response = item_agent.invoke({"messages": [HumanMessage(content=query)]})
     return response['messages'][-1].content
 
@@ -76,7 +76,7 @@ def call_stripe_agent(request: str) -> str:
     
     # 1. Fallback Resolution: If no item_id in context, try to find it from history using Item Agent
     if not current_item_id or current_item_id in ['test-item-id', 'None']:
-        print(f"🕵️‍♂️ Missing context item_id. Attempting to resolve from history...")
+        logger.info(f"🕵️‍♂️ Missing context item_id. Attempting to resolve from history...")
         
         # Get recent history
         if current_user_id:
@@ -116,7 +116,7 @@ def call_stripe_agent(request: str) -> str:
             resolved_id = resolved_id.replace('```', '').strip()
             
             if resolved_id and resolved_id != 'NOT_FOUND' and len(resolved_id) > 10: # Basic UUID sanity check
-                print(f"✅ Resolved missing item_id to: {resolved_id}")
+                logger.info(f"✅ Resolved missing item_id to: {resolved_id}")
                 current_item_id = resolved_id
                 
                 # Update context on tools
@@ -124,7 +124,7 @@ def call_stripe_agent(request: str) -> str:
                 cancel_payment_link._current_item_id = current_item_id
                 evaluate_offer._current_item_id = current_item_id
             else:
-                print(f"❌ Could not resolve item_id from history.")
+                logger.info(f"❌ Could not resolve item_id from history.")
     
     response = stripe_agent.invoke({"messages": [HumanMessage(content=request)]})
     return response['messages'][-1].content
@@ -233,7 +233,7 @@ Buyer: {message}"""
                     # Get first 2 images to give context without overloading
                     item_images = list(images_map.values())[:2]
             except Exception as e:
-                print(f"Failed to parse item images: {e}")
+                logger.info(f"Failed to parse item images: {e}")
         else:
             input_message = f"Buyer: {message}"
     
@@ -289,7 +289,7 @@ Buyer: {message}"""
     # create_checkout_link is imported from .tools.payment, so we match the reference.
     
     # Invoke Customer Agent
-    print(f"🤖 Customer Agent processing message for user {user_id}...")
+    logger.info(f"🤖 Customer Agent processing message for user {user_id}...")
     result = _get_customer_agent().invoke({"messages": messages})
     
     # Extract response

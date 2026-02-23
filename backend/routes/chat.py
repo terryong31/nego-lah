@@ -151,7 +151,7 @@ async def chat_with_agent(
         response = chat(
             user_id=user_id,
             message=user_message,
-            item_id=request.item_id
+            item_id=chat_req.item_id
         )
         
         # Save AI message

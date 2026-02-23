@@ -1,21 +1,20 @@
-MIT License
+ALL RIGHTS RESERVED
 
 Copyright (c) 2026 Terry Ong
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+1. Ownership and Use
+This software and associated documentation files (the "Software") are the exclusive property of Terry Ong. 
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+2. Non-Commercial Use Only
+This Software is strictly NOT FOR COMMERCIAL USE by any party other than the owner of the code itself, Terry Ong. 
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+3. Restrictions
+You are granted permission to VIEW the source code for educational or personal reference only. You are strictly PROHIBITED from:
+- Copying, modifying, merging, or adapting the Software.
+- Distributing, publishing, sublicensing, or selling copies of the Software.
+- Using the Software, entirely or in part, to generate revenue or for any commercial purposes.
+
+4. Legal Action
+Any unauthorized use, theft, or attempt to earn from this code by any third party will result in immediate legal action. Violators will be sued to the fullest extent permitted by law.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED. THE AUTHOR ASSUMES NO LIABILITY FOR ANY DAMAGES ARISING FROM THE USE OF THIS SOFTWARE.

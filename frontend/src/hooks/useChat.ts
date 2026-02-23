@@ -35,13 +35,15 @@ interface ChatState {
     messages: Message[]
     isLoading: boolean
     error: string | null
+    activePaymentUrls: string[]
 }
 
 export function useChat(userId: string) {
     const [state, setState] = useState<ChatState>({
         messages: [],
         isLoading: false,
-        error: null
+        error: null,
+        activePaymentUrls: []
     })
     const [currentItemId, setCurrentItemId] = useState<string | null>(null)
     const [historyLoaded, setHistoryLoaded] = useState(false)
@@ -113,6 +115,28 @@ export function useChat(userId: string) {
             setHistoryLoading(false)
         }
     }, [userId, historyLoaded])
+
+    // Fetch active payment URLs
+    const fetchActivePayments = useCallback(async () => {
+        if (!userId || userId.startsWith('guest-')) return
+        try {
+            const response = await fetch(`${API_URL}/payment/active/${userId}`)
+            if (response.ok) {
+                const data = await response.json()
+                setState(prev => ({
+                    ...prev,
+                    activePaymentUrls: data.active_urls || []
+                }))
+            }
+        } catch {
+            // Silently fail if we can't fetch payment status
+        }
+    }, [userId])
+
+    // Initial fetch of active payments
+    useEffect(() => {
+        fetchActivePayments()
+    }, [fetchActivePayments])
 
     // NOTE: Messages are saved by backend (memory.py) - no frontend persistence needed
 
@@ -346,6 +370,9 @@ export function useChat(userId: string) {
                     if (!isTypingRef.current) {
                         isSendingRef.current = false
                     }
+
+                    // Refresh active payments after AI finishes responding
+                    fetchActivePayments()
                 }
             } else {
                 // ... fallback code ...
@@ -384,6 +411,9 @@ export function useChat(userId: string) {
                     }))
                     isSendingRef.current = false
                 }
+
+                // Refresh active payments after fallback completes
+                fetchActivePayments()
             }
         } catch {
             setState(prev => ({
@@ -396,11 +426,12 @@ export function useChat(userId: string) {
     }, [userId, currentItemId])
 
     const clearChat = useCallback(async () => {
-        setState({
+        setState(prev => ({
+            ...prev,
             messages: [],
             isLoading: false,
             error: null
-        })
+        }))
         setCurrentItemId(null)
 
         // Delete from backend
@@ -569,6 +600,8 @@ export function useChat(userId: string) {
         setCurrentItemId,
         isPartnerTyping,
         sendTyping,
-        loadMoreMessages
+        loadMoreMessages,
+        activePaymentUrls: state.activePaymentUrls,
+        refreshPayments: fetchActivePayments
     }
 }

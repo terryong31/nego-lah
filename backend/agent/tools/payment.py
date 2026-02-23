@@ -190,20 +190,26 @@ def cancel_payment_link(item_id: str) -> str:
     logger.info(f"📦 Item ID: {item_id}")
     logger.info(f"{'='*50}")
     
-    # Get current user_id from conversation context
+    # Get current user_id and item_id from conversation context
     user_id = getattr(cancel_payment_link, '_current_user_id', None)
+    context_item_id = getattr(cancel_payment_link, '_current_item_id', None)
+    
+    # Use context item_id if available, otherwise fallback to LLM provided
+    target_item_id = context_item_id if context_item_id else item_id
+    
     logger.info(f"👤 User ID: {user_id}")
+    logger.info(f"📦 Target Item ID: {target_item_id}")
     
     if not user_id:
         return "ERROR: Cannot cancel - user not identified."
     
     # Check if payment link exists
-    existing = get_pending_payment(user_id, item_id)
+    existing = get_pending_payment(user_id, target_item_id)
     if not existing:
         return "No active payment link found for this item. You can continue negotiating or ask about other items."
     
     # Delete from Redis and cleanup Stripe
-    success = delete_pending_payment(user_id, item_id, cleanup_stripe=True)
+    success = delete_pending_payment(user_id, target_item_id, cleanup_stripe=True)
     
     if success:
         logger.info(f"✅ Payment link cancelled successfully")

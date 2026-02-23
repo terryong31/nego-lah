@@ -15,6 +15,7 @@ interface ChatBubbleProps {
     avatarText?: string  // Explicit avatar text override
     isAi?: boolean
     attachments?: Attachment[]
+    activePaymentUrls?: string[]
 }
 
 // Detect if message contains a payment link or payment text - SIMPLIFIED
@@ -43,15 +44,19 @@ function extractPaymentAmount(message: string): string {
     return ''
 }
 
-export function ChatBubble({ message, isUser, isAi, timestamp, avatarUrl, userName, avatarText, attachments }: ChatBubbleProps) {
+export function ChatBubble({ message, isUser, isAi, timestamp, avatarUrl, userName, avatarText, attachments, activePaymentUrls }: ChatBubbleProps) {
     const initials = avatarText || (userName
         ? userName.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase()
         : isUser ? 'ME' : isAi ? 'AI' : 'U')
 
-    // Check for payment bubble - only for AI messages
     const hasPaymentLink = !isUser && isPaymentLink(message)
     const paymentUrl = hasPaymentLink ? extractPaymentUrl(message) : null
     const paymentAmount = hasPaymentLink ? extractPaymentAmount(message) : ''
+
+    // Determine if the payment link is active
+    // If activePaymentUrls is undefined, we assume it's active (backward compatibility)
+    // If we have an array, check if the paymentUrl is in the array
+    const isPaymentActive = paymentUrl && (!activePaymentUrls || activePaymentUrls.includes(paymentUrl))
 
     return (
         <div className={`flex gap-3 ${isUser ? 'flex-row-reverse' : 'flex-row'}`}>
@@ -87,18 +92,29 @@ export function ChatBubble({ message, isUser, isAi, timestamp, avatarUrl, userNa
                     {/* Pay Button */}
                     <div className="px-5 pb-5">
                         {paymentUrl ? (
-                            <a
-                                href={paymentUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="payment-button block w-full py-3.5 px-6 font-bold rounded-xl text-center text-sm uppercase tracking-wide cursor-pointer flex items-center justify-center gap-2"
-                            >
-                                <span>Click to Pay</span>
-                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <path d="M5 12h14" />
-                                    <path d="M12 5l7 7-7 7" />
-                                </svg>
-                            </a>
+                            isPaymentActive ? (
+                                <a
+                                    href={paymentUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="payment-button block w-full py-3.5 px-6 font-bold rounded-xl text-center text-sm uppercase tracking-wide cursor-pointer flex items-center justify-center gap-2"
+                                >
+                                    <span>Click to Pay</span>
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                        <path d="M5 12h14" />
+                                        <path d="M12 5l7 7-7 7" />
+                                    </svg>
+                                </a>
+                            ) : (
+                                <div className="block w-full py-3.5 px-6 font-bold rounded-xl text-center text-sm uppercase tracking-wide cursor-not-allowed flex items-center justify-center gap-2 bg-gray-500 text-gray-200 opacity-80">
+                                    <span>Cancelled / Expired</span>
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                        <circle cx="12" cy="12" r="10"></circle>
+                                        <line x1="15" y1="9" x2="9" y2="15"></line>
+                                        <line x1="9" y1="9" x2="15" y2="15"></line>
+                                    </svg>
+                                </div>
+                            )
                         ) : (
                             <div className="w-full py-3.5 px-6 bg-gray-100 dark:bg-gray-800 text-gray-500 font-medium rounded-xl text-center border border-gray-200 dark:border-gray-700 text-sm">
                                 Link unavailable

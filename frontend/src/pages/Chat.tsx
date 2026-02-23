@@ -13,7 +13,7 @@ interface ChatProps {
 }
 
 export function Chat({ userId, itemId, itemName, onBack, userAvatar, userName }: ChatProps) {
-    const { messages, isLoading, error, sendMessage, isPartnerTyping, sendTyping, loadMoreMessages, historyLoading } = useChat(userId)
+    const { messages, isLoading, error, sendMessage, isPartnerTyping, sendTyping, loadMoreMessages, historyLoading, activePaymentUrls } = useChat(userId)
     const [input, setInput] = useState('')
     const [attachments, setAttachments] = useState<File[]>([])
     const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -259,6 +259,7 @@ export function Chat({ userId, itemId, itemName, onBack, userAvatar, userName }:
                                 userName={getUserName()}
                                 avatarText={getAvatarText()}
                                 attachments={msg.attachments}
+                                activePaymentUrls={activePaymentUrls}
                             />
                         )
                     })}

@@ -81,6 +81,26 @@ def get_pending_payment(user_id: str, item_id: str) -> Optional[Dict]:
         return json.loads(data)
     return None
 
+def get_active_payments_for_user(user_id: str) -> list:
+    """
+    Get all active payment links for a user.
+    
+    Returns:
+        List of active payment URLs
+    """
+    pattern = f"payment:{user_id}:*"
+    keys = redis_client.keys(pattern)
+    
+    urls = []
+    for key in keys:
+        if key != "payment:cleanup_queue":
+            data = redis_client.get(key)
+            if data:
+                payment = json.loads(data)
+                if payment.get('payment_url'):
+                    urls.append(payment['payment_url'])
+    
+    return urls
 
 def has_active_payment(user_id: str, item_id: str) -> bool:
     """Check if there's an active payment link for this user/item."""

@@ -44,6 +44,21 @@ def checkout(request: CheckoutRequest):
         )
 
 
+@router.get("/active/{user_id}")
+def get_active_payments(user_id: str):
+    """Get all active payment link URLs for a user."""
+    from payment.payment_state import get_active_payments_for_user
+    try:
+        urls = get_active_payments_for_user(user_id)
+        return {"active_urls": urls}
+    except Exception as e:
+        logger.error(f"Error fetching active payments for user {user_id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch active payments: {str(e)}"
+        )
+
+
 @router.post("/webhook/stripe")
 async def stripe_webhook(request: Request, stripe_signature: str = Header(None)):
     """

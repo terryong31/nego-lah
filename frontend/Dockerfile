@@ -1,11 +1,11 @@
 
 # Build Stage
-FROM node:18-alpine as build
+FROM node:22-alpine as build
 
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm install
+RUN --mount=type=cache,target=/root/.npm npm install
 
 COPY . .
 RUN npm run build

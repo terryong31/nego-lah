@@ -737,6 +737,11 @@ export function Home({ onChat, onLogin, onOpenProfile, isAuthenticated, onLogout
                             Terms
                             <span className="absolute left-0 bottom-0 w-0 h-[1px] bg-[var(--text-primary)] transition-all duration-300 group-hover/link:w-full" />
                         </a>
+                        <span>•</span>
+                        <a href="/about" className="relative group/link cursor-pointer hover:text-[var(--text-primary)] transition-colors">
+                            About
+                            <span className="absolute left-0 bottom-0 w-0 h-[1px] bg-[var(--text-primary)] transition-all duration-300 group-hover/link:w-full" />
+                        </a>
                     </div>
                 </div>
             </footer >

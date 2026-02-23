@@ -13,6 +13,7 @@ import { AuthProvider, useAuth } from './context/AuthContext'
 import { NotFound } from './pages/NotFound'
 import { useState, useCallback, useEffect } from 'react'
 import { useUnreadMessages } from './hooks/useUnreadMessages'
+import { About } from './pages/About'
 
 interface ChatContext {
   itemId?: string
@@ -260,6 +261,7 @@ function AppRoutes() {
 
         <Route path="/privacy" element={<Privacy />} />
         <Route path="/terms" element={<Terms />} />
+        <Route path="/about" element={<About />} />
         <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="*" element={<NotFound />} />
       </Routes >

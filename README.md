@@ -49,8 +49,8 @@ Follow these instructions to set up the project on your local machine.
 
 ### 1. clone the Repository
 ```bash
-git clone https://github.com/terryong31/second-hand-online-store.git
-cd second-hand-online-store
+git clone https://github.com/terryong31/nego-lah.git
+cd nego-lah
 ```
 
 ### 2. Backend Setup

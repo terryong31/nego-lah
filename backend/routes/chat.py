@@ -7,6 +7,7 @@ from auth_middleware import verify_user_token, get_user_id_from_body_or_token
 from typing import Optional
 import json
 import base64
+from limiter import limiter
 
 router = APIRouter(prefix="", tags=["Chat"])
 
@@ -53,7 +54,7 @@ def save_conversation_history(user_id: str, messages: list, item_id: Optional[st
                 'messages': messages
             }).execute()
     except Exception as e:
-        print(f"Error saving conversation: {e}")
+        logger.info(f"Error saving conversation: {e}")
 
 
 @router.get("/chat/history/{user_id}")
@@ -76,7 +77,7 @@ async def get_chat_history(
         history = conversation_memory.get_history(user_id, limit=limit, offset=offset)
         return {"messages": history}
     except Exception as e:
-        print(f"Error getting chat history: {e}")
+        logger.info(f"Error getting chat history: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -94,7 +95,7 @@ async def clear_chat_history(
         conversation_memory.clear_history(user_id)
         return {"message": "Chat history cleared"}
     except Exception as e:
-        print(f"Error clearing chat history: {e}")
+        logger.info(f"Error clearing chat history: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -113,13 +114,15 @@ async def get_chat_settings(
             return {"ai_enabled": result.data[0].get('ai_enabled', True)}
         return {"ai_enabled": True}  # Default to enabled
     except Exception as e:
-        print(f"Error getting chat settings: {e}")
+        logger.info(f"Error getting chat settings: {e}")
         return {"ai_enabled": True}  # Default to enabled on error
 
 
 @router.post("/chat")
+@limiter.limit("10/minute")
 async def chat_with_agent(
-    request: ChatRequest,
+    request: Request,
+    chat_req: ChatRequest,
     token_user_id: str = Depends(verify_user_token)
 ):
     """
@@ -133,12 +136,8 @@ async def chat_with_agent(
     from apify_client import ApifyClient
     
     # Validate token matches request user_id
-    user_id = get_user_id_from_body_or_token(request.user_id, token_user_id)
-    user_message = request.message
-    
-    # Rate limit: 10 messages per minute per user
-    if not check_rate_limit(f"chat:{user_id}", max_requests=10, window=60):
-        raise HTTPException(status_code=429, detail="Too many messages. Please wait a moment.")
+    user_id = get_user_id_from_body_or_token(chat_req.user_id, token_user_id)
+    user_message = chat_req.message
 
     # Save user message
     conversation_memory.add_message(user_id, "human", user_message, source="human")
@@ -160,7 +159,7 @@ async def chat_with_agent(
         return {"response": response}
         
     except Exception as e:
-        print(f"Chat Error: {e}")
+        logger.info(f"Chat Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

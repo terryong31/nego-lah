@@ -45,6 +45,6 @@ def get_ban_status(user_id: str) -> dict:
             return {"is_banned": result.data[0].get('is_banned', False)}
         return {"is_banned": False}  # Not in profiles table = not banned
     except Exception as e:
-        print(f"Error checking ban status: {e}")
+        logger.info(f"Error checking ban status: {e}")
         return {"is_banned": False}  # Default to not banned on error
 

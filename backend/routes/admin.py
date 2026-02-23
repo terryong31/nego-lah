@@ -35,7 +35,7 @@ def _get_allowed_ips() -> list[str]:
             redis_client.setex(_IP_CACHE_KEY, _IP_CACHE_TTL, json.dumps(ips))
             return ips
     except Exception as e:
-        print(f"[WARN] Failed to fetch allowed IPs from DB: {e}")
+        logger.info(f"[WARN] Failed to fetch allowed IPs from DB: {e}")
 
     # Safety fallback — never lock out localhost
     return ["127.0.0.1", "::1", "localhost"]
@@ -55,7 +55,7 @@ async def verify_admin_ip(request: Request):
 
     allowed_ips = _get_allowed_ips()
     if client_ip not in allowed_ips:
-        print(f"Blocked Admin Access from IP: {client_ip}")
+        logger.info(f"Blocked Admin Access from IP: {client_ip}")
         raise HTTPException(status_code=403, detail="Access denied: Restricted IP")
 
 router = APIRouter(prefix="/admin", tags=["Admin"], dependencies=[Depends(verify_admin_ip)])
@@ -148,7 +148,7 @@ def get_all_users():
         
         return users
     except Exception as e:
-        print(f"Error in get_all_users: {e}")
+        logger.info(f"Error in get_all_users: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -296,9 +296,9 @@ def toggle_user_ai(user_id: str, request: AIToggleRequest):
             }]
         }
         resp = requests.post(broadcast_url, json=payload, headers=headers, timeout=2)
-        print(f"Broadcast response: {resp.status_code} - {resp.text}")
+        logger.info(f"Broadcast response: {resp.status_code} - {resp.text}")
     except Exception as e:
-        print(f"Failed to broadcast system message: {e}")
+        logger.info(f"Failed to broadcast system message: {e}")
     
     return {"message": f"AI {'enabled' if request.ai_enabled else 'disabled'} for user"}
 
@@ -408,7 +408,7 @@ def get_all_orders():
                 email_name = users_map.get(buyer_id, '').split('@')[0] if users_map.get(buyer_id) else 'Unknown User'
                 order['buyer_name'] = names_map.get(buyer_id, email_name)
     except Exception as e:
-        print(f"Error enriching orders with user data: {e}")
+        logger.info(f"Error enriching orders with user data: {e}")
     
     # Calculate stats
     total_orders = len(orders_data)
@@ -553,13 +553,13 @@ async def analyze_item_image(
         image_type = image.content_type or "image/jpeg"
         
         # --- Custom Image Analyzer (Gemini Vision) ---
-        print("Analyzing image with custom Image Analyzer...")
+        logger.info("Analyzing image with custom Image Analyzer...")
         data = await image_analyzer.analyze(base64_image, image_type)
-        print(f"Image analysis result: {data}")
+        logger.info(f"Image analysis result: {data}")
         
         # --- Market Valuation ---
         try:
-            print(f"Fetching market data for: {data.get('name')}")
+            logger.info(f"Fetching market data for: {data.get('name')}")
             market_data = market_service.get_market_valuation(
                 query=data.get('name', ''), 
                 condition=data.get('condition', 'good'),
@@ -567,13 +567,13 @@ async def analyze_item_image(
             )
             data['market_data'] = market_data
         except Exception as market_error:
-            print(f"Market valuation failed: {market_error}")
+            logger.info(f"Market valuation failed: {market_error}")
             data['market_data'] = None
         
         return data
 
     except Exception as e:
-        print(f"Error analyzing image: {e}")
+        logger.info(f"Error analyzing image: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to analyze image: {str(e)}")
 
 
@@ -596,7 +596,7 @@ def get_market_valuation(request: MarketValuationRequest):
     from agent.tools.market_price import market_service
     
     try:
-        print(f"Fetching market data for: {request.query} ({request.condition})")
+        logger.info(f"Fetching market data for: {request.query} ({request.condition})")
         market_data = market_service.get_market_valuation(
             query=request.query, 
             condition=request.condition,
@@ -604,5 +604,5 @@ def get_market_valuation(request: MarketValuationRequest):
         )
         return market_data
     except Exception as e:
-        print(f"Market valuation failed: {e}")
+        logger.info(f"Market valuation failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))

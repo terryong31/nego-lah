@@ -1060,7 +1060,7 @@ export function Admin({ onBack }: AdminProps) {
             </div>
 
             {/* Header */}
-            <header className="border-b border-[var(--border)] bg-[var(--header-bg)] backdrop-blur-sm sticky top-0 z-10 relative transition-colors duration-300">
+            <header className="border-b border-[var(--border)] bg-[var(--header-bg)] backdrop-blur-sm sticky top-0 z-40 transition-colors duration-300">
                 <div className="max-w-4xl mx-auto px-4 py-4 flex flex-wrap gap-4 items-center justify-between">
                     <div className="flex items-center gap-4">
                         <button

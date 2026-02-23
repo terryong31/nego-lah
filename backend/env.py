@@ -1,11 +1,14 @@
 import os
 from dotenv import load_dotenv
 
-load_dotenv()
+# Load .env from the root directory level
+env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env')
+load_dotenv(dotenv_path=env_path)
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 ADMIN_SUPABASE_KEY = os.getenv("ADMIN_SUPABASE_KEY")
 USER_SUPABASE_KEY = os.getenv("USER_SUPABASE_KEY")
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 REDIS_URL = os.getenv("REDIS_URL")
 if not REDIS_URL:

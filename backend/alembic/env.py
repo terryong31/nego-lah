@@ -14,6 +14,12 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
+import os
+from dotenv import load_dotenv
+
+env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), '.env')
+load_dotenv(dotenv_path=env_path)
+
 # add your model's MetaData object here
 # for 'autogenerate' support
 # from myapp import mymodel
@@ -41,8 +47,10 @@ def run_migrations_offline() -> None:
     url = config.get_main_option("sqlalchemy.url")
     if url == "driver://user:pass@localhost/dbname":
         import os
-        from env import SUPABASE_DB_URL
-        url = os.environ.get("DATABASE_URL", SUPABASE_DB_URL)
+        from env import DATABASE_URL
+        print(f"DEBUG OFFLINE: from env DATABASE_URL import='{DATABASE_URL}'")
+        url = os.environ.get("DATABASE_URL", DATABASE_URL)
+        print(f"DEBUG OFFLINE: final url='{url}'")
         
     context.configure(
         url=url,
@@ -65,8 +73,11 @@ def run_migrations_online() -> None:
     section = config.get_section(config.config_ini_section, {})
     if section.get("sqlalchemy.url") == "driver://user:pass@localhost/dbname":
         import os
-        from env import SUPABASE_DB_URL
-        section["sqlalchemy.url"] = os.environ.get("DATABASE_URL", SUPABASE_DB_URL)
+        from env import DATABASE_URL
+        print(f"DEBUG ONLINE: from env DATABASE_URL import='{DATABASE_URL}'")
+        print(f"DEBUG ONLINE: os.environ.get='{os.environ.get('DATABASE_URL')}'")
+        section["sqlalchemy.url"] = os.environ.get("DATABASE_URL", DATABASE_URL)
+        print(f"DEBUG ONLINE: final url='{section['sqlalchemy.url']}'")
         
     connectable = engine_from_config(
         section,

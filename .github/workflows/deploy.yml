@@ -72,6 +72,9 @@ jobs:
             # Best approach for this setup: use scp-action to copy files, then ssh to run docker.
             echo "Deploying..."
             
+      - name: Clean up heavy directories before SCP
+        run: rm -rf frontend/node_modules backend/venv .git backend/__pycache__ frontend/dist
+
       - name: Copy files via SCP
         uses: appleboy/scp-action@v0.1.7
         with:
@@ -80,7 +83,6 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           source: "."
           target: "~/nego-lah"
-          exclude: "node_modules,venv,.git,__pycache__,dist"
 
       - name: Restart Docker Compose
         uses: appleboy/ssh-action@v1.0.3

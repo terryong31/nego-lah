@@ -8,7 +8,7 @@ from ..tools.payment import create_checkout_link, cancel_payment_link, collect_s
 
 # Initialize the model
 model = ChatGoogleGenerativeAI(
-    model="gemini-2.5-flash",
+    model="gemini-3-flash-preview",
     temperature=0.1, # Extremely low temperature for strict payment logic
     google_api_key=GEMINI_API_KEY
 )
@@ -31,8 +31,11 @@ RULES:
 - Be professional and efficient.
 """
 
-stripe_agent = create_react_agent(
+stripe_agent_graph = create_react_agent(
     model, 
     tools=[create_checkout_link, cancel_payment_link, collect_shipping_info],
     prompt=STRIPE_AGENT_PROMPT
 )
+
+# Allow more steps for retry logic
+stripe_agent = stripe_agent_graph.with_config({"recursion_limit": 10})

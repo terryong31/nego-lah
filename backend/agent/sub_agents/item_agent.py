@@ -8,7 +8,7 @@ from ..tools.items import get_item_info, search_items, list_all_items
 
 # Initialize the model
 model = ChatGoogleGenerativeAI(
-    model="gemini-2.5-flash",
+    model="gemini-3-flash-preview",
     temperature=0.3, # Low temperature for factual retrieval
     google_api_key=GEMINI_API_KEY
 )
@@ -30,8 +30,11 @@ RULES:
 - Do NOT negotiate prices. That is the job of the Negotiator Agent.
 """
 
-item_agent = create_react_agent(
+item_agent_graph = create_react_agent(
     model, 
     tools=[get_item_info, search_items, list_all_items], 
     prompt=ITEM_AGENT_PROMPT
 )
+
+# Allow more steps for retry logic
+item_agent = item_agent_graph.with_config({"recursion_limit": 10})

@@ -37,7 +37,7 @@ def _get_model():
     if not GEMINI_API_KEY:
         raise RuntimeError("Missing GEMINI_API_KEY")
     _model = ChatGoogleGenerativeAI(
-        model="gemini-2.5-flash",
+        model="gemini-3-flash-preview",
         temperature=0.7,
         google_api_key=GEMINI_API_KEY,
     )
@@ -161,6 +161,8 @@ YOUR ROLE:
 - If the deal is struck -> Ask Stripe Agent to create the link.
 
 IMPORTANT:
+- When calling `evaluate_offer` or `call_stripe_agent`, you MUST use the real 36-character UUID of the item. Never invent or guess an ID (like '12345' or '67890').
+- If you don't know the item's real UUID, you MUST call `call_item_agent` first to search for the item and get its UUID.
 - When calling `call_stripe_agent` to create a link, you MUST include the `item_id` and the `agreed_price`.
 - To save shipping info, you NEED the `order_id`. If you don't have it, call `check_user_orders` to find the correct Order ID for the item. Do NOT ask the user for the Order ID.
 - Verify you have the IDs before calling tools.
@@ -170,7 +172,10 @@ def _get_customer_agent():
     global _customer_agent
     if _customer_agent is not None:
         return _customer_agent
-    _customer_agent = create_react_agent(_get_model(), customer_tools, prompt=CUSTOMER_AGENT_PROMPT)
+    
+    agent_graph = create_react_agent(_get_model(), customer_tools, prompt=CUSTOMER_AGENT_PROMPT)
+    # Allow the main agent up to 15 steps to do complex negotiation/tool chaining
+    _customer_agent = agent_graph.with_config({"recursion_limit": 15})
     return _customer_agent
 
 

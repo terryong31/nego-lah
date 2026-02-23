@@ -1,4 +1,5 @@
 from langchain_core.tools import tool
+from logger import logger
 
 @tool
 def get_item_info(item_id: str) -> str:

@@ -128,10 +128,6 @@ export function Privacy() {
             <footer className="border-t border-[var(--border)] py-6 relative z-10 mt-auto">
                 <div className="max-w-6xl mx-auto px-6 flex justify-between items-center text-sm text-[var(--text-muted)]">
                     <p>&copy; Nego-lah {new Date().getFullYear()}</p>
-                    <div className="flex gap-4">
-                        <a href="/privacy" className="hover:text-[var(--text-primary)] transition-colors">Privacy</a>
-                        <a href="/terms" className="hover:text-[var(--text-primary)] transition-colors">Terms</a>
-                    </div>
                 </div>
             </footer>
         </div >

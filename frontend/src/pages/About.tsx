@@ -1,7 +1,10 @@
 import { Card } from '../components/Card'
 import { FaLinkedin, FaGithub } from "react-icons/fa";
+import { useNavigate } from 'react-router-dom'
 
 export function About() {
+    const navigate = useNavigate()
+
     return (
         <div className="min-h-screen relative flex flex-col pb-20">
             {/* Stars Background */}
@@ -22,15 +25,24 @@ export function About() {
             </header>
 
             <main className="flex-1 w-full max-w-3xl mx-auto px-4 py-12 relative z-10 animate-fade-in text-[var(--text-primary)]">
-                <div className="mb-12 text-center">
-                    <h1 className="text-4xl md:text-5xl font-bold mb-4 tracking-tight">About Nego-lah</h1>
-                    <p className="text-lg text-[var(--text-secondary)] max-w-2xl mx-auto leading-relaxed">
-                        A passion project built to explore the boundaries of what autonomous AI can do in real-world commerce.
-                    </p>
+                <div className="mb-6">
+                    <button
+                        onClick={() => navigate('/')}
+                        className="flex items-center gap-2 text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors group"
+                    >   ←
+                        <span className="text-sm font-medium relative">
+                            Back to Home
+                            <span className="absolute left-0 bottom-0 w-0 h-[1px] bg-[var(--text-primary)] transition-all duration-300 group-hover:w-full" />
+                        </span>
+                    </button>
                 </div>
 
                 <div className="space-y-8">
                     <Card padding="lg" className="backdrop-blur-xl bg-[var(--card-bg)]/80 border-[var(--border)] shadow-2xl overflow-hidden relative">
+                        <div className="mb-12 text-left">
+                            <h1 className="text-4xl md:text-5xl font-bold mb-4 tracking-tight">About Nego-lah</h1>
+                        </div>
+
                         {/* Decorative gradient orb */}
                         <div className="absolute -top-32 -right-32 w-64 h-64 bg-indigo-500/20 rounded-full blur-3xl pointer-events-none" />
 

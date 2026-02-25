@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useLayoutEffect } from 'react'
 import { Button } from '../components/Button'
 import { ChatBubble } from '../components/ChatBubble'
 import { useChat } from '../hooks/useChat'
@@ -19,6 +19,7 @@ export function Chat({ userId, itemId, itemName, onBack, userAvatar, userName }:
     const messagesEndRef = useRef<HTMLDivElement>(null)
     const mainRef = useRef<HTMLDivElement>(null)
     const fileInputRef = useRef<HTMLInputElement>(null)
+    const textareaRef = useRef<HTMLTextAreaElement>(null)
     const hasSetInitialPlaceholder = useRef(false)
 
     // Placeholder is always "Enter your message" - the initial item text is put directly in input
@@ -44,6 +45,14 @@ export function Chat({ userId, itemId, itemName, onBack, userAvatar, userName }:
         if (isLoadingHistoryRef.current) return
         scrollToBottom()
     }, [messages])
+
+    // Auto-resize textarea when input changes (including initial item message)
+    useLayoutEffect(() => {
+        if (textareaRef.current) {
+            textareaRef.current.style.height = 'auto'
+            textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight + 2, 104)}px`
+        }
+    }, [input])
 
     // Wrap loadMoreMessages to preserve scroll position
     const handleLoadMore = async () => {
@@ -357,13 +366,11 @@ export function Chat({ userId, itemId, itemName, onBack, userAvatar, userName }:
                         </button>
 
                         <textarea
+                            ref={textareaRef}
                             value={input}
                             onChange={(e) => {
                                 setInput(e.target.value)
                                 sendTyping()
-                                // Auto-resize textarea
-                                e.target.style.height = 'auto'
-                                e.target.style.height = Math.min(e.target.scrollHeight, 150) + 'px'
                             }}
                             onKeyDown={(e) => {
                                 if (e.key === 'Enter' && !e.shiftKey) {

@@ -5,8 +5,6 @@ alembic==1.18.4
 annotated-doc==0.0.4
 annotated-types==0.7.0
 anyio==4.12.1
-apify_client==2.5.0
-apify_shared==2.2.0
 attrs==25.4.0
 bcrypt==5.0.0
 beautifulsoup4==4.14.3

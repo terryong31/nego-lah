@@ -2,14 +2,10 @@
 Custom Market Valuator Service
 ================================
 
-Provides market price valuations using:
-1. Carousell Malaysia scraper (real data)
-2. Intelligent estimation fallback (when scraper fails)
-
-NO APIFY DEPENDENCY - 100% custom implementation.
+Provides market price valuations using intelligent estimation
+based on item category and condition.
 """
 
-import asyncio
 import statistics
 from typing import Optional, List
 from logger import logger
@@ -40,34 +36,15 @@ CATEGORY_BASE_PRICES = {
 
 class MarketPriceService:
     """
-    Provides market price valuations for items.
-    
-    Uses:
-    1. Carousell Malaysia scraper for real market data
-    2. Intelligent estimation fallback when scraper fails
+    Provides market price valuations for items using intelligent estimation
+    based on item category and condition.
     """
-    
-    def __init__(self):
-        self._scraper = None
-    
-    @property
-    def scraper(self):
-        """Lazy load the scraper to avoid import issues."""
-        if self._scraper is None:
-            try:
-                from .carousell_scraper import CarousellScraper
-                self._scraper = CarousellScraper(headless=True)
-            except ImportError:
-                logger.info("[MarketPriceService] carousell_scraper not available")
-                self._scraper = False  # Mark as unavailable
-        return self._scraper if self._scraper else None
     
     def get_market_valuation(
         self, 
         query: str, 
         condition: str = "good",
         category: Optional[str] = None,
-        use_scraper: bool = True
     ) -> dict:
         """
         Get market valuation for an item.
@@ -76,31 +53,11 @@ class MarketPriceService:
             query: Item name/search query
             condition: Item condition (new, like new, good, fair)
             category: Item category (optional, will be inferred from query)
-            use_scraper: Whether to try Carousell scraper (default: True)
         
         Returns:
             dict with market_average, min_price, max_price, suggested_listing, currency
         """
-        
-        # Try scraping real market data
-        if use_scraper and self.scraper:
-            try:
-                # Run async scraper in sync context
-                scraped_data = asyncio.run(self._scrape_async(query))
-                if scraped_data:
-                    result = self._analyze_scraped_prices(scraped_data, condition)
-                    if result.get("sample_size", 0) > 0:
-                        return result
-            except Exception as e:
-                logger.info(f"[MarketPriceService] Scraper error: {e}")
-        
-        # Fallback to estimation
         return self._estimate_price(query, condition, category)
-    
-    async def _scrape_async(self, query: str, limit: int = 10) -> List[dict]:
-        """Run the async scraper."""
-        listings = await self.scraper.search(query, limit=limit)
-        return [l.to_dict() for l in listings]
     
     def _estimate_price(
         self, 
@@ -141,7 +98,7 @@ class MarketPriceService:
             "max_price": self._round_price(max_price),
             "suggested_listing": self._round_price(suggested),
             "currency": "MYR",
-            "source": "Estimation (implement scraper for real data)",
+            "source": "Estimation",
             "category_detected": category,
             "condition_used": condition,
         }

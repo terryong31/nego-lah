@@ -68,12 +68,12 @@ export function Privacy() {
                                 </h2>
                                 <p>
                                     We may collect, use, store and transfer different kinds of personal data about you which we have grouped together follows:
-                                    <ul className="list-disc pl-6 mt-4 space-y-2">
-                                        <li><strong>Identity Data:</strong> includes first name, last name, username or similar identifier.</li>
-                                        <li><strong>Contact Data:</strong> includes email address.</li>
-                                        <li><strong>Technical Data:</strong> includes internet protocol (IP) address, your login data, browser type and version, time zone setting and location, browser plug-in types and versions, operating system and platform, and other technology on the devices you use to access this website.</li>
-                                    </ul>
                                 </p>
+                                <ul className="list-disc pl-6 mt-4 space-y-2">
+                                    <li><strong>Identity Data:</strong> includes first name, last name, username or similar identifier.</li>
+                                    <li><strong>Contact Data:</strong> includes email address.</li>
+                                    <li><strong>Technical Data:</strong> includes internet protocol (IP) address, your login data, browser type and version, time zone setting and location, browser plug-in types and versions, operating system and platform, and other technology on the devices you use to access this website.</li>
+                                </ul>
                             </section>
 
                             <section>

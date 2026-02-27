@@ -81,7 +81,7 @@ export function About() {
                         </div>
                     </Card>
 
-                    <div className="flex flex-col sm:flex-row gap-6 justify-center pt-8">
+                    <div className="flex flex-col flex-row gap-6 justify-center items-center pt-8">
                         <a
                             href="https://github.com/terryong31"
                             target="_blank"

@@ -70,14 +70,14 @@ export function Terms() {
                                 </h2>
                                 <p>
                                     Permission is granted to temporarily download one copy of the materials (information or software) on Nego-lah's website for personal, non-commercial transitory viewing only. This is the grant of a license, not a transfer of title, and under this license you may not:
-                                    <ul className="list-disc pl-6 mt-4 space-y-2">
-                                        <li>Modify or copy the materials;</li>
-                                        <li>Use the materials for any commercial purpose, or for any public display (commercial or non-commercial);</li>
-                                        <li>Attempt to decompile or reverse engineer any software contained on Nego-lah's website;</li>
-                                        <li>Remove any copyright or other proprietary notations from the materials; or</li>
-                                        <li>Transfer the materials to another person or "mirror" the materials on any other server.</li>
-                                    </ul>
                                 </p>
+                                <ul className="list-disc pl-6 mt-4 space-y-2">
+                                    <li>Modify or copy the materials;</li>
+                                    <li>Use the materials for any commercial purpose, or for any public display (commercial or non-commercial);</li>
+                                    <li>Attempt to decompile or reverse engineer any software contained on Nego-lah's website;</li>
+                                    <li>Remove any copyright or other proprietary notations from the materials; or</li>
+                                    <li>Transfer the materials to another person or "mirror" the materials on any other server.</li>
+                                </ul>
                             </section>
 
                             <section>

@@ -2,8 +2,25 @@ import { useState, useEffect } from 'react'
 
 type Theme = 'dark' | 'light'
 
+const listeners = new Set<(theme: Theme) => void>()
+
+function setGlobalTheme(newTheme: Theme) {
+    if (typeof window !== 'undefined') {
+        localStorage.setItem('theme', newTheme)
+        const root = document.documentElement
+        if (newTheme === 'light') {
+            root.classList.add('light')
+            root.classList.remove('dark')
+        } else {
+            root.classList.add('dark')
+            root.classList.remove('light')
+        }
+    }
+    listeners.forEach(listener => listener(newTheme))
+}
+
 export function useTheme() {
-    const [theme, setTheme] = useState<Theme>(() => {
+    const [theme, setThemeState] = useState<Theme>(() => {
         if (typeof window !== 'undefined') {
             const saved = localStorage.getItem('theme') as Theme
             return saved || 'dark'
@@ -12,6 +29,8 @@ export function useTheme() {
     })
 
     useEffect(() => {
+        listeners.add(setThemeState)
+        // Ensure initial DOM state is correct
         const root = document.documentElement
         if (theme === 'light') {
             root.classList.add('light')
@@ -20,11 +39,17 @@ export function useTheme() {
             root.classList.add('dark')
             root.classList.remove('light')
         }
-        localStorage.setItem('theme', theme)
+        return () => {
+            listeners.delete(setThemeState)
+        }
     }, [theme])
 
+    const setTheme = (newTheme: Theme) => {
+        setGlobalTheme(newTheme)
+    }
+
     const toggleTheme = () => {
-        setTheme(prev => prev === 'dark' ? 'light' : 'dark')
+        setGlobalTheme(theme === 'dark' ? 'light' : 'dark')
     }
 
     return { theme, toggleTheme, setTheme }

@@ -14,7 +14,6 @@ from routes.items import router as items_router
 from routes.chat import router as chat_router
 from routes.payment import router as payment_router
 from routes.admin import router as admin_router
-from env import SUPABASE_URL, USER_SUPABASE_KEY
 import sentry_sdk
 
 # Initialize Sentry for error tracking

@@ -93,13 +93,6 @@ export function Admin({ onBack }: AdminProps) {
     const [currentItemImages, setCurrentItemImages] = useState<string[]>([])
     const [editDragIndex, setEditDragIndex] = useState<number | null>(null)
 
-    const [marketAdvice, setMarketAdvice] = useState<{
-        market_average: number,
-        min_price: number,
-        max_price: number,
-        suggested_listing: number,
-        source?: string
-    } | null>(null)
 
     // Tab state
     const [activeTab, setActiveTab] = useState<'items' | 'users' | 'orders'>('items')
@@ -584,25 +577,6 @@ export function Admin({ onBack }: AdminProps) {
         }
     }
 
-    const fetchMarketData = async (query: string, condition: string) => {
-        try {
-            // First clear existing advice
-            setMarketAdvice(null)
-
-            const res = await fetch(`${API_URL}${ADMIN_PREFIX}/market-valuation`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ query, condition })
-            })
-
-            if (res.ok) {
-                const data = await res.json()
-                setMarketAdvice(data)
-            }
-        } catch (e) {
-            console.error("Failed to fetch market data", e)
-        }
-    }
 
     const startEdit = (item: Item) => {
         setEditingItem(item)
@@ -624,9 +598,6 @@ export function Admin({ onBack }: AdminProps) {
             price: item.price.toString(),
             min_price: item.min_price?.toString() || ''
         })
-
-        // Fetch market advice for the item being edited
-        fetchMarketData(item.name, item.condition)
     }
 
     const handleDeleteImage = (imageIndex: number) => {
@@ -731,10 +702,6 @@ export function Admin({ onBack }: AdminProps) {
                     price: data.market_data?.suggested_listing?.toString() || prev.price,
                     min_price: data.market_data?.min_price?.toString() || prev.min_price
                 }))
-
-                if (data.market_data) {
-                    setMarketAdvice(data.market_data)
-                }
 
                 // Set ALL uploaded files as the form images
                 const dt = new DataTransfer()
@@ -1025,7 +992,7 @@ export function Admin({ onBack }: AdminProps) {
                         )}
 
                         <form onSubmit={handleLogin} className="space-y-4">
-                            <div className="animate-slide-up" style={{ animationDelay: '0.1s' }}>
+                            <div className="animate-slide-up">
                                 <Input
                                     type="text"
                                     label="Username"
@@ -1037,7 +1004,7 @@ export function Admin({ onBack }: AdminProps) {
                                 />
                             </div>
 
-                            <div className="animate-slide-up" style={{ animationDelay: '0.2s' }}>
+                            <div className="animate-slide-up">
                                 <Input
                                     type="password"
                                     label="Password"
@@ -1049,7 +1016,7 @@ export function Admin({ onBack }: AdminProps) {
                                 />
                             </div>
 
-                            <div className="animate-slide-up pt-2" style={{ animationDelay: '0.3s' }}>
+                            <div className="animate-slide-up pt-2">
                                 <Button
                                     type="submit"
                                     variant="filled"
@@ -1979,60 +1946,10 @@ export function Admin({ onBack }: AdminProps) {
                                         value={formData.description}
                                         onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                                         required
+                                        multiline
+                                        rows={5}
                                     />
-                                    {marketAdvice && (
-                                        <div className="relative overflow-hidden rounded-xl border border-[#ca9aff]/30 bg-[#ca9aff]/10 backdrop-blur-md p-5 shadow-lg animate-fade-in group">
-                                            {/* Decorative glow */}
-                                            <div className="absolute -right-6 -top-6 h-24 w-24 rounded-full bg-[#ca9aff]/20 blur-2xl transition-all duration-700 group-hover:bg-[#ca9aff]/30" />
 
-                                            <div className="relative z-10 mb-4 flex items-center justify-between">
-                                                <span className="flex items-center gap-2 text-base font-bold text-[var(--text-primary)]">
-                                                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[#ca9aff]">
-                                                        <path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z" />
-                                                    </svg>
-                                                    Market Insight
-                                                </span>
-                                                <span className="rounded-full border border-[#ca9aff]/30 bg-[#ca9aff]/10 px-3 py-1 text-xs font-medium text-[var(--text-secondary)]">
-                                                    {marketAdvice.source || 'AI Analysis'}
-                                                </span>
-                                            </div>
-
-                                            <div className="relative z-10 grid grid-cols-3 gap-3 text-center">
-                                                {/* Low Price */}
-                                                <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)]/50 p-3 shadow-sm transition-transform hover:scale-105">
-                                                    <div className="mb-1 text-xs font-medium text-[var(--text-muted)]">Low</div>
-                                                    <div className="font-semibold text-[var(--text-primary)]">
-                                                        RM{typeof marketAdvice.min_price === 'number' ? marketAdvice.min_price.toLocaleString() : marketAdvice.min_price}
-                                                    </div>
-                                                </div>
-
-                                                {/* Average Price (Highlighted) */}
-                                                <div className="rounded-lg border border-[#ca9aff]/50 bg-gradient-to-b from-[#ca9aff]/20 to-[var(--bg-secondary)]/50 p-3 shadow-md transform scale-105 ring-1 ring-[#ca9aff]/20">
-                                                    <div className="mb-1 text-xs font-bold text-[#ca9aff]">Average</div>
-                                                    <div className="text-lg font-bold text-[var(--text-primary)]">
-                                                        RM{typeof marketAdvice.market_average === 'number' ? marketAdvice.market_average.toLocaleString() : marketAdvice.market_average}
-                                                    </div>
-                                                </div>
-
-                                                {/* High Price */}
-                                                <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)]/50 p-3 shadow-sm transition-transform hover:scale-105">
-                                                    <div className="mb-1 text-xs font-medium text-[var(--text-muted)]">High</div>
-                                                    <div className="font-semibold text-[var(--text-primary)]">
-                                                        RM{typeof marketAdvice.max_price === 'number' ? marketAdvice.max_price.toLocaleString() : marketAdvice.max_price}
-                                                    </div>
-                                                </div>
-                                            </div>
-
-                                            <div className="relative z-10 mt-4 text-center">
-                                                <div className="inline-block rounded-lg border border-[#ca9aff]/20 bg-[#ca9aff]/5 px-4 py-2 backdrop-blur-sm">
-                                                    <span className="text-sm text-[var(--text-secondary)]">Suggested List: </span>
-                                                    <span className="ml-1 text-base font-bold text-[#ca9aff]">
-                                                        RM{typeof marketAdvice.suggested_listing === 'number' ? marketAdvice.suggested_listing.toLocaleString() : marketAdvice.suggested_listing}
-                                                    </span>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    )}
                                     <div className="grid grid-cols-2 gap-4">
                                         <Input
                                             label="Listed Price (RM)"

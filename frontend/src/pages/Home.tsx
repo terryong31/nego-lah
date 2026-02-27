@@ -4,6 +4,7 @@ import { ItemDetail } from './ItemDetail'
 import { Button } from '../components/Button'
 import { ConfirmationModal } from '../components/ConfirmationModal'
 import { useItems } from '../hooks/useItems'
+import { ThemeToggle, useTheme } from '../components/ThemeToggle'
 
 interface HomeProps {
     onChat: (itemId: string, itemName?: string) => void
@@ -43,6 +44,7 @@ const carouselItems = [
 
 export function Home({ onChat, onLogin, onOpenProfile, isAuthenticated, onLogout, userAvatar, userName, hasUnreadMessages }: HomeProps) {
     const { items, isLoading, error, fetchItems, getCheckoutUrl } = useItems()
+    const { theme, toggleTheme } = useTheme()
     const [searchExpanded, setSearchExpanded] = useState(false)
     const [searchQuery, setSearchQuery] = useState('')
     const [isScrolledToItems, setIsScrolledToItems] = useState(false)
@@ -337,35 +339,20 @@ export function Home({ onChat, onLogin, onOpenProfile, isAuthenticated, onLogout
                                         {/* Theme Toggle in Dropdown */}
                                         <button
                                             onClick={() => {
-                                                const switchTheme = () => {
-                                                    const root = document.documentElement
-                                                    const isDark = root.classList.contains('dark')
-                                                    if (isDark) {
-                                                        root.classList.remove('dark')
-                                                        root.classList.add('light')
-                                                        localStorage.setItem('theme', 'light')
-                                                    } else {
-                                                        root.classList.remove('light')
-                                                        root.classList.add('dark')
-                                                        localStorage.setItem('theme', 'dark')
-                                                    }
-                                                    setProfileMenuOpen(false)
-                                                }
-
                                                 if (document.startViewTransition) {
                                                     document.documentElement.classList.add('theme-transition')
-                                                    const transition = document.startViewTransition(switchTheme)
+                                                    const transition = document.startViewTransition(toggleTheme)
                                                     transition.finished.finally(() => {
                                                         document.documentElement.classList.remove('theme-transition')
                                                     })
                                                 } else {
-                                                    switchTheme()
+                                                    toggleTheme()
                                                 }
                                             }}
                                             className="w-full px-4 py-2 text-left text-sm text-[var(--text-primary)] hover:bg-gray-200 dark:hover:bg-white/10 transition-colors flex justify-between items-center cursor-pointer"
                                         >
                                             <span>Theme</span>
-                                            <span className="text-xs opacity-75">{localStorage.getItem('theme') === 'light' ? 'Light' : 'Dark'}</span>
+                                            <span className="text-xs opacity-75">{theme === 'light' ? 'Light' : 'Dark'}</span>
                                         </button>
 
                                         <a
@@ -391,58 +378,7 @@ export function Home({ onChat, onLogin, onOpenProfile, isAuthenticated, onLogout
                         ) : (
                             <>
                                 {/* Theme toggle for non-authenticated users */}
-                                <button
-                                    onClick={() => {
-                                        const root = document.documentElement
-                                        const isDark = root.classList.contains('dark')
-                                        const switchTheme = () => {
-                                            if (isDark) {
-                                                root.classList.remove('dark')
-                                                root.classList.add('light')
-                                                localStorage.setItem('theme', 'light')
-                                            } else {
-                                                root.classList.remove('light')
-                                                root.classList.add('dark')
-                                                localStorage.setItem('theme', 'dark')
-                                            }
-                                        }
-
-                                        if (document.startViewTransition) {
-                                            document.documentElement.classList.add('theme-transition')
-                                            const transition = document.startViewTransition(switchTheme)
-                                            transition.finished.finally(() => {
-                                                document.documentElement.classList.remove('theme-transition')
-                                            })
-                                        } else {
-                                            // Fallback with CSS animation
-                                            document.documentElement.classList.add('theme-transition-fallback')
-                                            switchTheme()
-                                            setTimeout(() => {
-                                                document.documentElement.classList.remove('theme-transition-fallback')
-                                            }, 500)
-                                        }
-                                    }}
-                                    className="p-2 text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
-                                    aria-label="Toggle theme"
-                                >
-                                    {document.documentElement.classList.contains('light') ? (
-                                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-                                        </svg>
-                                    ) : (
-                                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                            <circle cx="12" cy="12" r="5" />
-                                            <line x1="12" y1="1" x2="12" y2="3" />
-                                            <line x1="12" y1="21" x2="12" y2="23" />
-                                            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
-                                            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
-                                            <line x1="1" y1="12" x2="3" y2="12" />
-                                            <line x1="21" y1="12" x2="23" y2="12" />
-                                            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
-                                            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
-                                        </svg>
-                                    )}
-                                </button>
+                                <ThemeToggle className="text-[var(--text-secondary)] hover:text-[var(--text-primary)]" />
                                 <Button variant="primary" size="sm" onClick={onLogin}>
                                     Login
                                 </Button>
@@ -495,23 +431,9 @@ export function Home({ onChat, onLogin, onOpenProfile, isAuthenticated, onLogout
                         {/* Theme Toggle Row - Clickable div */}
                         <button
                             onClick={() => {
-                                const root = document.documentElement
-                                const isDark = root.classList.contains('dark')
-                                const switchTheme = () => {
-                                    if (isDark) {
-                                        root.classList.remove('dark')
-                                        root.classList.add('light')
-                                        localStorage.setItem('theme', 'light')
-                                    } else {
-                                        root.classList.remove('light')
-                                        root.classList.add('dark')
-                                        localStorage.setItem('theme', 'dark')
-                                    }
-                                }
-
                                 if (document.startViewTransition) {
                                     document.documentElement.classList.add('theme-transition')
-                                    const transition = document.startViewTransition(switchTheme)
+                                    const transition = document.startViewTransition(toggleTheme)
                                     transition.finished.finally(() => {
                                         document.documentElement.classList.remove('theme-transition')
                                         // Force re-render by closing and reopening menu state
@@ -521,7 +443,7 @@ export function Home({ onChat, onLogin, onOpenProfile, isAuthenticated, onLogout
                                 } else {
                                     // Fallback with CSS animation
                                     document.documentElement.classList.add('theme-transition-fallback')
-                                    switchTheme()
+                                    toggleTheme()
                                     setTimeout(() => {
                                         document.documentElement.classList.remove('theme-transition-fallback')
                                     }, 500)
@@ -534,7 +456,7 @@ export function Home({ onChat, onLogin, onOpenProfile, isAuthenticated, onLogout
                         >
                             <span className="text-base font-medium text-[var(--text-primary)]">Theme</span>
                             <span className="text-sm text-[var(--text-secondary)]">
-                                {localStorage.getItem('theme') === 'light' ? 'Light' : 'Dark'}
+                                {theme === 'light' ? 'Light' : 'Dark'}
                             </span>
                         </button>
 

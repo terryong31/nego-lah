@@ -346,7 +346,7 @@ async function handleDeleteAccount() {
         </h3>
       </template>
 
-      <div class="flex items-center justify-between">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div class="space-y-1">
           <h4 class="text-sm font-semibold text-highlighted">
             Delete Account
@@ -358,6 +358,7 @@ async function handleDeleteAccount() {
         <UButton
           color="error"
           variant="outline"
+          class="w-fit"
           @click="deleteModalOpen = true"
         >
           Delete Account

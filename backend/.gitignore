@@ -1,0 +1,14 @@
+# Backend-local secrets (distinct from the frontend's own .env)
+.env
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+ENV/
+
+# Local data
+data/

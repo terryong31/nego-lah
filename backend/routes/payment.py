@@ -1,35 +1,44 @@
-from fastapi import APIRouter, HTTPException, Request, Header, status
+from fastapi import APIRouter, HTTPException, Request, Header, status, Depends
 from schemas import CheckoutRequest
 from connector import admin_supabase
 from payment.pay import create_checkout_session
+from auth_middleware import verify_user_token, get_user_id_from_body_or_token
+from admin_session import verify_admin
 from logger import logger
 
-router = APIRouter(prefix="", tags=["Payment"])
+router = APIRouter(prefix="/payment", tags=["Payment"])
 
 
 @router.post("/checkout")
-def checkout(request: CheckoutRequest):
+def checkout(
+    request: CheckoutRequest,
+    token_user_id: str = Depends(verify_user_token),
+):
     """Create a Stripe checkout session for an item."""
     try:
+        # Require a valid (and non-banned) JWT. The buyer is always the
+        # authenticated user — never trust the user_id from the body.
+        user_id = get_user_id_from_body_or_token(request.user_id, token_user_id)
+
         item_id = request.item_id
-        
+
         # Get item from database
         response = admin_supabase.table('items').select('*').eq('id', item_id).execute()
-        
+
         if not response.data:
             raise HTTPException(status_code=404, detail="Item not found")
-        
+
         item = response.data[0]
-        
+
         # Convert price to cents
         price_cents = int(float(item['price']) * 100)
-        
+
         # Create Stripe checkout session
         checkout_url = create_checkout_session(
             item_name=item['name'],
             price_cents=price_cents,
             item_id=item_id,
-            user_id=request.user_id
+            user_id=user_id
         )
         
         return {"checkout_url": checkout_url}
@@ -45,8 +54,9 @@ def checkout(request: CheckoutRequest):
 
 
 @router.get("/active/{user_id}")
-def get_active_payments(user_id: str):
+def get_active_payments(user_id: str, token_user_id: str = Depends(verify_user_token)):
     """Get all active payment link URLs for a user."""
+    user_id = get_user_id_from_body_or_token(user_id, token_user_id)
     from payment.payment_state import get_active_payments_for_user
     try:
         urls = get_active_payments_for_user(user_id)
@@ -100,8 +110,8 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None))
 
 
 @router.get("/transactions")
-def get_transactions():
-    """Get all transactions (sales history)."""
+def get_transactions(admin: dict = Depends(verify_admin)):
+    """Get all transactions (sales history). Admin only."""
     from payment.payment_history import get_all_transactions, get_sales_summary
     
     return {
@@ -111,8 +121,8 @@ def get_transactions():
 
 
 @router.post("/refund/{item_id}")
-def refund_item(item_id: str, reason: str = None):
-    """Process a refund for an item."""
+def refund_item(item_id: str, reason: str = None, admin: dict = Depends(verify_admin)):
+    """Process a refund for an item. Admin only."""
     from payment.refunds import process_refund
     
     result = process_refund(item_id, reason)
@@ -124,11 +134,12 @@ def refund_item(item_id: str, reason: str = None):
 
 
 @router.get("/orders/user/{user_id}")
-def get_user_orders(user_id: str):
+def get_user_orders(user_id: str, token_user_id: str = Depends(verify_user_token)):
     """
     Get all orders for a specific user by their ID.
     Returns orders with item details.
     """
+    user_id = get_user_id_from_body_or_token(user_id, token_user_id)
     # Get orders for this user
     response = admin_supabase.table('orders').select('*').eq('buyer_id', user_id).order('created_at', desc=True).execute()
     
@@ -163,16 +174,25 @@ def get_user_orders(user_id: str):
 
 
 @router.post("/confirm-payment")
-def confirm_payment(item_id: str, user_id: str = None, session_id: str = None):
+def confirm_payment(
+    item_id: str,
+    user_id: str = None,
+    session_id: str = None,
+    token_user_id: str = Depends(verify_user_token)
+):
     """
     Manually confirm a payment and mark item as sold.
     This is a fallback when the Stripe webhook fails.
-    
+
     Called from the frontend after successful payment redirect.
+    Requires a valid JWT; the buyer can only confirm payments for themselves.
     """
     import stripe
     from env import STRIPE_API_KEY
-    
+
+    # Enforce the authenticated user; cannot confirm on behalf of another user
+    user_id = get_user_id_from_body_or_token(user_id, token_user_id)
+
     stripe.api_key = STRIPE_API_KEY
     
     logger.info(f"\n{'='*50}")
@@ -183,7 +203,7 @@ def confirm_payment(item_id: str, user_id: str = None, session_id: str = None):
     logger.info(f"{'='*50}")
     
     try:
-        # If we have a session_id, verify payment with Stripe
+        # If we have a session_id, verify with Stripe directly
         if session_id:
             try:
                 session = stripe.checkout.Session.retrieve(session_id)
@@ -201,7 +221,14 @@ def confirm_payment(item_id: str, user_id: str = None, session_id: str = None):
                     
                 logger.info(f"✅ Stripe session verified - payment_status: {session.payment_status}")
             except stripe.error.InvalidRequestError:
-                logger.warning(f"⚠️ Could not verify session {session_id}, proceeding anyway")
+                logger.error(f"❌ Could not verify session {session_id}")
+                raise HTTPException(status_code=400, detail="Invalid Stripe session")
+        else:
+            # No session_id — this is likely a PaymentLink redirect.
+            # The webhook should handle the actual fulfilment. Here we just
+            # verify that the item is already sold (webhook processed) or
+            # that a pending payment exists in Redis (payment was initiated).
+            logger.info("ℹ️ No session_id — PaymentLink flow, checking item status")
         
         if not item_id:
             raise HTTPException(status_code=400, detail="item_id is required")

@@ -5,13 +5,14 @@ from typing import List
 import json
 import uuid
 import hashlib
-from cache import cache_items_with_hash, get_cached_items_with_hash, invalidate_item_cache
+from cache import (
+    cache_items_with_hash,
+    get_cached_items_with_hash,
+    invalidate_item_cache,
+    redis_client,
+)
+from env import STORAGE_BUCKET
 from logger import logger
-import redis
-from env import REDIS_URL
-
-# Redis client for fingerprint caching
-_redis = redis.from_url(REDIS_URL, decode_responses=True)
 
 
 def compute_items_hash(count: int, max_created_at: str) -> str:
@@ -42,12 +43,12 @@ def should_validate_cache() -> bool:
     Returns True only if 30 seconds have passed since last validation.
     This prevents hitting Supabase on every single request.
     """
-    last_check = _redis.get("items:last_validation")
+    last_check = redis_client.get("items:last_validation")
     if last_check:
         return False  # Already validated recently, use cache
-    
+
     # Mark that we're validating now (expires in 30 seconds)
-    _redis.setex("items:last_validation", 30, "1")
+    redis_client.setex("items:last_validation", 30, "1")
     return True
 
     
@@ -92,6 +93,29 @@ def get_items(keyword: str = None) -> List[str]:
             return retrieve.data
         return []
 
+def get_featured_items(limit: int = 6) -> List[dict]:
+    """
+    Get the most-interacted listings to feature on the home page.
+
+    TODO: Once view/like tracking is in place, order by those metrics
+    (e.g. .order('views', desc=True) or a popularity score). For now we
+    fall back to the newest available listings as a sensible placeholder.
+    """
+    try:
+        retrieve = (
+            user_supabase.table('items')
+            .select('*')
+            .eq('status', 'available')
+            .order('created_at', desc=True)
+            .limit(limit)
+            .execute()
+        )
+        return retrieve.data or []
+    except Exception as e:
+        logger.error(f"Failed to fetch featured items: {e}")
+        return []
+
+
 async def upload_item(
     name: str, 
     description: str, 
@@ -121,12 +145,12 @@ async def upload_item(
             img_extension = img.filename.split(".")[-1] if img.filename else "dat"
             img_name =f"{i}.{img_extension}"
             file_content = await img.read()
-            admin_supabase.storage.from_(f"images").upload(
+            admin_supabase.storage.from_(STORAGE_BUCKET).upload(
                 file = file_content,
                 path = f"items/{random_uuid}/{img_name}",
                 file_options={"content-type": img.content_type or "application/octet-stream"}
             )
-            public_url_response = admin_supabase.storage.from_('images').get_public_url(path=f"items/{random_uuid}/{img_name}")
+            public_url_response = admin_supabase.storage.from_(STORAGE_BUCKET).get_public_url(path=f"items/{random_uuid}/{img_name}")
             urls[f'{img_name}'] = public_url_response
             
         item_data = {

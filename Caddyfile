@@ -1,13 +1,20 @@
-
 {
     email terryong30@gmail.com
 }
 
 negolah.my {
-    # Increase max body size for file uploads (100MB)
     request_body {
-        max_size 100MB
+        max_size 10MB
     }
-    
-    reverse_proxy frontend:80
+
+    # API traffic → FastAPI backend. handle_path strips the /api prefix, so the
+    # backend sees its unprefixed routes (e.g. /api/chat/stream → /chat/stream).
+    handle_path /api/* {
+        reverse_proxy backend:8000
+    }
+
+    # Everything else → Nuxt SSR server (Nitro node-server on :3000).
+    handle {
+        reverse_proxy frontend:3000
+    }
 }

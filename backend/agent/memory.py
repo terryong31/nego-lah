@@ -15,6 +15,8 @@ from typing import List, Dict
 from datetime import datetime
 import json
 
+from logger import logger
+
 
 class ConversationMemory:
     """Supabase-based conversation memory for storing chat history."""
@@ -114,6 +116,48 @@ class ConversationMemory:
             logger.info(f"[ConversationMemory] Error getting history: {e}")
             return []
     
+    def get_history_page(self, user_id: str, limit: int = 20, offset: int = 0) -> Dict:
+        """Get a page of conversation history, newest-anchored.
+
+        `offset` counts messages back from the most recent one; `limit` is the
+        page size. Returns messages in chronological order plus paging metadata
+        so the client can lazily load older messages.
+
+        Returns: {"messages": [...], "has_more": bool, "next_offset": int}
+        """
+        try:
+            result = self.supabase.table('conversations').select('messages').eq('user_id', user_id).execute()
+
+            if not result.data or len(result.data) == 0:
+                return {"messages": [], "has_more": False, "next_offset": offset}
+
+            all_msgs = result.data[0].get('messages', []) or []
+            total = len(all_msgs)
+
+            # Window the slice [start, end) ending `offset` from the tail.
+            end = max(0, total - offset)
+            start = max(0, end - limit)
+            page = all_msgs[start:end] if end > start else []
+
+            mapped = [
+                {
+                    "role": m.get("role"),
+                    "content": m.get("content"),
+                    "source": m.get("source", "ai"),
+                }
+                for m in page
+            ]
+
+            return {
+                "messages": mapped,
+                "has_more": start > 0,
+                "next_offset": offset + len(page),
+            }
+
+        except Exception as e:
+            logger.info(f"[ConversationMemory] Error getting history page: {e}")
+            return {"messages": [], "has_more": False, "next_offset": offset}
+
     def get_all_histories(self) -> Dict[str, List[Dict]]:
         """Get all conversation histories grouped by user_id."""
         try:

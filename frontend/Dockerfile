@@ -1,24 +1,33 @@
+# syntax=docker/dockerfile:1
 
-# Build Stage
-FROM node:22-alpine as build
-
+# ---- Build stage: install deps + build the Nuxt app with Bun ----
+FROM oven/bun:1 AS build
 WORKDIR /app
 
-COPY package*.json ./
-RUN --mount=type=cache,target=/root/.npm npm install
+# Install dependencies first so this layer is cached unless the manifest changes.
+COPY package.json bun.lock ./
+RUN bun install --frozen-lockfile
 
+# Build the app. The Nitro `node-server` preset emits a self-contained
+# server bundle into .output/ (run with `node .output/server/index.mjs`).
 COPY . .
-RUN npm run build
+RUN bun run build
 
-# Production Stage
-FROM nginx:alpine
+# ---- Runtime stage: just Node + the built server output ----
+FROM node:24-slim AS runtime
+WORKDIR /app
 
-# Copy built assets from build stage
-COPY --from=build /app/dist /usr/share/nginx/html
+ENV NODE_ENV=production \
+    HOST=0.0.0.0 \
+    PORT=3000
 
-# Copy nginx config
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# Only the build output is needed at runtime (no node_modules, no source).
+COPY --from=build /app/.output ./.output
 
-EXPOSE 80
+EXPOSE 3000
 
-CMD ["nginx", "-g", "daemon off;"]
+# Node 24 ships a global fetch, so we can health-check without curl/wget.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD node -e "fetch('http://localhost:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+
+CMD ["node", ".output/server/index.mjs"]

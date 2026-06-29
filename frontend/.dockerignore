@@ -1,0 +1,20 @@
+# Build artifacts (regenerated inside the image)
+node_modules
+.nuxt
+.output
+.data
+.nitro
+.cache
+dist
+
+# Secrets — injected at runtime via compose env_file, never baked into the image
+.env
+.env.*
+!.env.example
+
+# Misc
+.git
+*.log
+.DS_Store
+.idea
+.fleet

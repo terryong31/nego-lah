@@ -18,7 +18,7 @@ def create_checkout_link(item_id: str, agreed_price: float) -> str:
         Checkout URL or error message
     """
     import stripe
-    from env import STRIPE_API_KEY
+    from env import STRIPE_API_KEY, FRONTEND_URL
     from connector import user_supabase
     from payment.payment_state import (
         get_pending_payment, 
@@ -34,10 +34,10 @@ def create_checkout_link(item_id: str, agreed_price: float) -> str:
     
     stripe.api_key = STRIPE_API_KEY
     
-    # Get current user_id from conversation context
-    # This will be passed in via the agent's state
-    user_id = getattr(create_checkout_link, '_current_user_id', None)
-    context_item_id = getattr(create_checkout_link, '_current_item_id', None)
+    # Get current user_id from request-scoped context
+    from agent.context import get_user_id, get_item_id
+    user_id = get_user_id()
+    context_item_id = get_item_id()
     logger.info(f"👤 User ID: {user_id}")
     logger.info(f"📦 Context Item ID: {context_item_id}")
     
@@ -141,7 +141,7 @@ Please continue negotiating with the seller for a fair price."""
             after_completion={
                 "type": "redirect",
                 "redirect": {
-                    "url": f"https://negolah.my/?payment=success&item_id={item_id}"
+                    "url": f"{FRONTEND_URL}/checkout/success?payment=success&item_id={item_id}&session_id={{CHECKOUT_SESSION_ID}}"
                 }
             }
         )
@@ -190,9 +190,10 @@ def cancel_payment_link(item_id: str) -> str:
     logger.info(f"📦 Item ID: {item_id}")
     logger.info(f"{'='*50}")
     
-    # Get current user_id and item_id from conversation context
-    user_id = getattr(cancel_payment_link, '_current_user_id', None)
-    context_item_id = getattr(cancel_payment_link, '_current_item_id', None)
+    # Get current user_id and item_id from request-scoped context
+    from agent.context import get_user_id, get_item_id
+    user_id = get_user_id()
+    context_item_id = get_item_id()
     
     # Use context item_id if available, otherwise fallback to LLM provided
     target_item_id = context_item_id if context_item_id else item_id

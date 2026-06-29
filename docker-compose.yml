@@ -1,5 +1,3 @@
-
-
 services:
   caddy:
     image: caddy:2.7
@@ -22,13 +20,41 @@ services:
     restart: always
     expose:
       - "8000"
+    # backend/.env holds the backend's own secrets (Supabase, Stripe, Gemini…).
+    # Maintained on the server; gitignored, so CI never overwrites it.
     env_file:
-      - .env
+      - ./backend/.env
     environment:
       - PYTHONUNBUFFERED=1
       - REDIS_URL=redis://redis:6379/0
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  frontend:
+    build: ./frontend
+    container_name: nego-lah-frontend
+    restart: always
+    # Nuxt SSR (Nitro node-server) listens on 3000.
+    expose:
+      - "3000"
+    # frontend/.env holds SUPABASE_URL / SUPABASE_KEY for the Nuxt Supabase module.
+    env_file:
+      - ./frontend/.env
+    environment:
+      - NODE_ENV=production
+      # Public API base used by the browser; Caddy routes /api/* to the backend.
+      # Overrides the build-time default in nuxt.config.ts.
+      - NUXT_PUBLIC_API_BASE_URL=https://negolah.my/api
+    depends_on:
+      backend:
+        condition: service_started
 
   redis:
     image: redis:alpine
@@ -36,18 +62,15 @@ services:
     restart: always
     expose:
       - "6379"
-
-
-  frontend:
-    build: ./frontend
-    container_name: nego-lah-frontend
-    restart: always
-    expose:
-      - "80"
-    depends_on:
-      - backend
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
 
 volumes:
   caddy_data:
   caddy_config:
-
+  redis_data:

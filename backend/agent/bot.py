@@ -8,11 +8,12 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
+from langchain_core.messages import AIMessageChunk
 from env import GEMINI_API_KEY
 from logger import logger
 from .config import SELLER_PERSONA
 from .memory import ConversationMemory
-from .vector_store import VectorMemory
+from .context import set_context, get_user_id, get_item_id, current_item_id
 
 # Import Tools
 from .tools.negotiation import evaluate_offer, assess_discount_eligibility
@@ -20,11 +21,9 @@ from .tools.payment import web_search
 # Import Sub-Agents
 from .sub_agents.item_agent import item_agent
 from .sub_agents.stripe_agent import stripe_agent
-from .tools.payment import create_checkout_link, cancel_payment_link # Need to inject context into these
 from .tools.orders import check_user_orders
 
 conversation_memory = ConversationMemory()
-vector_memory = VectorMemory()
 
 _model = None
 _customer_agent = None
@@ -72,16 +71,16 @@ def call_stripe_agent(request: str) -> str:
         request: The specific action request (e.g. "Create link for item_id at price X", "Cancel link", "Shipping info is...")
     """
     # Check context
-    current_item_id = getattr(create_checkout_link, '_current_item_id', None)
-    current_user_id = getattr(create_checkout_link, '_current_user_id', None)
-    
+    ctx_item_id = get_item_id()
+    ctx_user_id = get_user_id()
+
     # 1. Fallback Resolution: If no item_id in context, try to find it from history using Item Agent
-    if not current_item_id or current_item_id in ['test-item-id', 'None']:
+    if not ctx_item_id or ctx_item_id in ['test-item-id', 'None']:
         logger.info(f"🕵️‍♂️ Missing context item_id. Attempting to resolve from history...")
-        
+
         # Get recent history
-        if current_user_id:
-            history = conversation_memory.get_history(current_user_id, limit=10)
+        if ctx_user_id:
+            history = conversation_memory.get_history(ctx_user_id, limit=10)
             history_text = "\n".join([f"{msg['role']}: {msg['content']}" for msg in history])
             
             # Ask Item Agent to identify the item
@@ -118,12 +117,8 @@ def call_stripe_agent(request: str) -> str:
             
             if resolved_id and resolved_id != 'NOT_FOUND' and len(resolved_id) > 10: # Basic UUID sanity check
                 logger.info(f"✅ Resolved missing item_id to: {resolved_id}")
-                current_item_id = resolved_id
-                
-                # Update context on tools
-                create_checkout_link._current_item_id = current_item_id
-                cancel_payment_link._current_item_id = current_item_id
-                evaluate_offer._current_item_id = current_item_id
+                # Update request-scoped context so downstream tools see the resolved id
+                current_item_id.set(resolved_id)
             else:
                 logger.info(f"❌ Could not resolve item_id from history.")
     
@@ -192,34 +187,43 @@ def get_item_details_for_context(item_id: str) -> dict:
     return None
 
 
-def chat(user_id: str, message: str, item_id: str = None, files: list = None) -> str:
+def _extract_text_from_content(content) -> str:
+    """Normalize LangChain message content (str or list of parts) to plain text."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for part in content:
+            if isinstance(part, str):
+                parts.append(part)
+            elif isinstance(part, dict) and 'text' in part:
+                parts.append(part['text'])
+        return ''.join(parts)
+    return str(content) if content is not None else ""
+
+
+def _build_messages(user_id: str, message: str, item_id: str = None, files: list = None) -> list:
     """
-    Chat with the negotiation agent.
-    
-    Args:
-        user_id: Unique identifier for the buyer
-        message: The buyer's message
-        item_id: Optional item ID being discussed
-        files: Optional list of files with {name, type, data (base64)}
-    
-    Returns:
-        Agent's response
+    Build the LangChain message list (history + the new human turn) for an agent call.
+
+    Reconstructs prior conversation, injects item context, and attaches item
+    images plus any user-uploaded files as multimodal content parts.
     """
     # Get conversation history
     history_data = conversation_memory.get_history(user_id, limit=50)
     messages = []
-    
+
     # Reconstruct history
     for msg in history_data:
         if msg["role"] == "human":
             messages.append(HumanMessage(content=msg["content"]))
         else:
             messages.append(AIMessage(content=msg["content"]))
-    
+
     # Build input message with item context
     input_message = message
     item_images = []
-    
+
     if item_id:
         item_details = get_item_details_for_context(item_id)
         if item_details:
@@ -229,7 +233,7 @@ Listed Price: RM{item_details.get('price', 'N/A')}
 
 Buyer: {message}"""
             input_message = context
-            
+
             # Extract item images
             try:
                 if item_details.get('image_path'):
@@ -241,10 +245,10 @@ Buyer: {message}"""
                 logger.info(f"Failed to parse item images: {e}")
         else:
             input_message = f"Buyer: {message}"
-    
+
     # Handle files (multimodal - user uploads + item images)
     content_parts = [{"type": "text", "text": input_message}]
-    
+
     # Add Item Images (if any)
     for img_url in item_images:
         content_parts.append({
@@ -268,52 +272,91 @@ Buyer: {message}"""
         messages.append(HumanMessage(content=content_parts))
     else:
         messages.append(HumanMessage(content=input_message))
-    
+
+    return messages
+
+
+def chat(user_id: str, message: str, item_id: str = None, files: list = None) -> str:
+    """
+    Chat with the negotiation agent (blocking; returns the full response).
+
+    Args:
+        user_id: Unique identifier for the buyer
+        message: The buyer's message
+        item_id: Optional item ID being discussed
+        files: Optional list of files with {name, type, data (base64)}
+
+    Returns:
+        Agent's response
+    """
+    messages = _build_messages(user_id, message, item_id, files)
+
     # Save user message
     conversation_memory.add_message(user_id, "human", message, item_id, source="human")
-    
+
     # --- CONTEXT INJECTION ---
-    # We inject context into the tools directly.
-    # Note: Since the sub-agents use the same tool definitions (imported from the same modules),
-    # setting attributes on the imported functions here should reflect in the sub-agents.
-    
-    # Inject into Negotiation Tools (Directly used by Customer Agent)
-    evaluate_offer._current_item_id = item_id
-    
-    # Inject into Payment Tools (Used by Stripe Agent)
-    create_checkout_link._current_user_id = user_id
-    create_checkout_link._current_item_id = item_id
-    cancel_payment_link._current_user_id = user_id
-    cancel_payment_link._current_user_id = user_id
-    cancel_payment_link._current_item_id = item_id
-    
-    # Inject into Order Tools
-    check_user_orders._current_user_id = user_id
-    
-    # Inject into Item Tools (Used by Item Agent - if they needed context, but they mostly take args)
-    # create_checkout_link is imported from .tools.payment, so we match the reference.
-    
+    # Set request-scoped context (ContextVars). All tools (and sub-agent tools)
+    # read user_id/item_id from agent.context, so this is isolated per request
+    # and safe under concurrency - no cross-request leakage.
+    set_context(user_id=user_id, item_id=item_id)
+
     # Invoke Customer Agent
     logger.info(f"🤖 Customer Agent processing message for user {user_id}...")
     result = _get_customer_agent().invoke({"messages": messages})
-    
+
     # Extract response
-    agent_response = result["messages"][-1].content
-    
-    # Handle list response
-    if isinstance(agent_response, list):
-        text_parts = []
-        for part in agent_response:
-            if isinstance(part, dict) and 'text' in part:
-                text_parts.append(part['text'])
-            elif isinstance(part, str):
-                text_parts.append(part)
-        agent_response = ''.join(text_parts) if text_parts else str(agent_response)
-    
+    agent_response = _extract_text_from_content(result["messages"][-1].content)
+
     # Save agent response
     conversation_memory.add_message(user_id, "ai", agent_response, item_id)
-    
+
     return agent_response
+
+
+def chat_stream(user_id: str, message: str, item_id: str = None, files: list = None):
+    """
+    Streaming variant of chat(). Yields text deltas as the agent produces them.
+
+    Uses LangGraph's token-level streaming (stream_mode="messages"). Only text
+    from the supervisor's own LLM turns is forwarded - tool-call decision chunks
+    (empty content) are skipped, and sub-agents run inside tool calls so their
+    tokens do not leak into this stream. The full response is persisted to memory
+    once streaming completes.
+
+    Args:
+        user_id: Unique identifier for the buyer
+        message: The buyer's message
+        item_id: Optional item ID being discussed
+        files: Optional list of files with {name, type, data (base64)}
+
+    Yields:
+        str: incremental text deltas of the agent's response
+    """
+    messages = _build_messages(user_id, message, item_id, files)
+
+    # Save user message
+    conversation_memory.add_message(user_id, "human", message, item_id, source="human")
+
+    # Request-scoped context for tools (see chat() for rationale).
+    set_context(user_id=user_id, item_id=item_id)
+
+    logger.info(f"🤖 Customer Agent streaming response for user {user_id}...")
+
+    collected = []
+    for chunk, _metadata in _get_customer_agent().stream(
+        {"messages": messages}, stream_mode="messages"
+    ):
+        # Forward only assistant text; skip tool messages and tool-call chunks.
+        if not isinstance(chunk, AIMessageChunk):
+            continue
+        text = _extract_text_from_content(chunk.content)
+        if text:
+            collected.append(text)
+            yield text
+
+    # Persist the assembled response once the stream is done.
+    agent_response = "".join(collected)
+    conversation_memory.add_message(user_id, "ai", agent_response, item_id)
 
 
 

@@ -23,7 +23,7 @@ def broadcast_to_chat(user_id: str, content: str, role: str = "ai", source: str 
         # Broadcast to chat channel (for real-time chat display)
         payload = {
             "messages": [{
-                "topic": f"realtime:chat:{user_id}",
+                "topic": f"chat:{user_id}",
                 "event": "broadcast",
                 "payload": {
                     "event": "new_message",
@@ -38,7 +38,7 @@ def broadcast_to_chat(user_id: str, content: str, role: str = "ai", source: str 
         requests.post(broadcast_url, json=payload, headers=headers, timeout=2)
         
         # Also broadcast to notifications channel
-        payload["messages"][0]["topic"] = f"realtime:notifications:{user_id}"
+        payload["messages"][0]["topic"] = f"notifications:{user_id}"
         requests.post(broadcast_url, json=payload, headers=headers, timeout=2)
         
         print(f"📡 Broadcasted message to user {user_id}")
@@ -61,6 +61,18 @@ def handle_checkout_completed(event) -> bool:
     
     # Get metadata (we set this when creating checkout)
     metadata = session.get('metadata', {})
+    
+    # If using PaymentLinks, metadata doesn't automatically propagate to the Session.
+    # We must retrieve it from the PaymentLink object itself.
+    payment_link_id = session.get('payment_link')
+    if payment_link_id and not metadata.get('item_id'):
+        try:
+            import stripe
+            plink = stripe.PaymentLink.retrieve(payment_link_id)
+            metadata = plink.metadata
+        except Exception as e:
+            print(f"⚠️ Error fetching PaymentLink metadata: {e}")
+
     item_id = metadata.get('item_id')
     user_id = metadata.get('user_id')
     item_name = metadata.get('item_name', 'Item')
@@ -134,11 +146,10 @@ def handle_checkout_completed(event) -> bool:
         order_id = order_result.data[0]['id'] if order_result.data else None
         print(f"✅ Order created: {order_id}")
         
-        # 3. Delete pending payment from Redis
         try:
             from payment.payment_state import delete_pending_payment
-            delete_pending_payment(user_id, item_id, cleanup_stripe=False)  # Don't cleanup Stripe - payment succeeded!
-            print(f"✅ Removed from pending payments")
+            delete_pending_payment(user_id, item_id, cleanup_stripe=True)  # Deactivate link so it can't be used again
+            print(f"✅ Removed from pending payments and deactivated link")
         except Exception as e:
             print(f"⚠️ Could not delete pending payment: {e}")
         

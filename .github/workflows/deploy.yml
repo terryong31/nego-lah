@@ -1,4 +1,3 @@
-
 name: Deploy to Lightsail
 
 on:
@@ -11,69 +10,65 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # --- Backend CI (FastAPI + pytest) ---
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.12'   # matches backend/Dockerfile (python:3.12-slim)
           cache: 'pip'
+          cache-dependency-path: backend/requirements.txt
 
       - name: Install Backend Dependencies
         run: |
           cd backend
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest pytest-asyncio httpx python-json-logger slowapi alembic
+          pip install pytest pytest-asyncio httpx
 
       - name: Run Backend Tests
         run: |
           cd backend
           pytest
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v3
+      # --- Frontend CI (Nuxt + Bun) ---
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          node-version: '22'
-          cache: 'npm'
-          cache-dependency-path: frontend/package-lock.json
+          bun-version: latest
 
       - name: Install Frontend Dependencies
         run: |
           cd frontend
-          npm install
+          bun install --frozen-lockfile
 
-      - name: Run Frontend Tests
+      - name: Lint & Typecheck Frontend
         run: |
           cd frontend
-          npm run test
-          
+          bun run lint
+          bun run typecheck
+
   deploy:
     needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Deploy to Server
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.HOST }}
-          username: ${{ secrets.USERNAME }}
-          key: ${{ secrets.SSH_KEY }}
-          script: |
-            cd ~/nego-lah
-            # Pull latest changes
-            # Note: We assume the user has set up git on the server or we can copy files via scp
-            # Since we are using rsync in the local workflow, for CI/CD we first need to get the files onto the server.
-            # However, simpler if the server repo is a clone. 
-            # Alternatively, we can use scp-action.
-            # Let's assume the user will push to git, and we want to deploy FROM git.
-            
-            # If directory exists and is a git repo, pull. Else clone?
-            # Actually easier: Since we transferred files manually initially, it's not a git repo linked to YOUR github probably.
-            # Best approach for this setup: use scp-action to copy files, then ssh to run docker.
-            echo "Deploying..."
-            
+      # Strip heavy/local-only dirs so the SCP transfer stays small.
+      # Deps and build output are regenerated on the server by `docker compose build`.
       - name: Clean up heavy directories before SCP
-        run: rm -rf frontend/node_modules backend/venv .git backend/__pycache__ frontend/dist
+        run: |
+          rm -rf \
+            .git \
+            dump.rdb \
+            frontend/node_modules \
+            frontend/.nuxt \
+            frontend/.output \
+            frontend/.data \
+            frontend/.nitro \
+            frontend/dist \
+            backend/.venv \
+            backend/__pycache__ \
+            backend/.pytest_cache
 
       - name: Copy files via SCP
         uses: appleboy/scp-action@v0.1.7
@@ -95,4 +90,4 @@ jobs:
             export DOCKER_BUILDKIT=1
             sudo DOCKER_BUILDKIT=1 docker compose build
             sudo docker compose up -d --remove-orphans
-            sudo docker image prune -f # Clean up dangling images
+            sudo docker image prune -f   # Clean up dangling images

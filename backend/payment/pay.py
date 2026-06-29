@@ -1,5 +1,5 @@
 import stripe
-from env import STRIPE_API_KEY
+from env import STRIPE_API_KEY, FRONTEND_URL
 
 stripe.api_key = STRIPE_API_KEY
 
@@ -34,8 +34,8 @@ def create_checkout_session(item_name: str, price_cents: int, item_id: str, user
             'quantity': 1,
         }],
         mode='payment',
-        success_url='https://negolah.my/?payment=success&session_id={CHECKOUT_SESSION_ID}',
-        cancel_url='https://negolah.my/?payment=cancelled',
+        success_url=f'{FRONTEND_URL}/checkout/success?payment=success&item_id={item_id}&session_id={{CHECKOUT_SESSION_ID}}',
+        cancel_url=f'{FRONTEND_URL}/checkout/cancel',
         metadata=metadata,
     )
     

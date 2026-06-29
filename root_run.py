@@ -54,7 +54,7 @@ def start_backend():
     print("Starting Backend server...")
     
     # Use the venv Python from the backend directory
-    venv_python = BACKEND_DIR / "venv" / "bin" / "python"
+    venv_python = BACKEND_DIR / ".venv" / "bin" / "python"
     if not venv_python.exists():
         print(f"Backend venv not found at {venv_python}")
         print("Please create it first: cd backend && python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt")
@@ -75,7 +75,7 @@ def start_frontend():
     """Start the frontend dev server"""
     print("Starting Frontend dev server...")
     proc = subprocess.Popen(
-        ["npm", "run", "dev", "--", "--host"],
+        ["bun", "dev", "--", "--host"],
         cwd=str(FRONTEND_DIR),
         stdout=sys.stdout,
         stderr=sys.stderr,
@@ -108,7 +108,7 @@ def main():
     print("=" * 50)
     print("   All services are running!")
     print("   Backend:  http://127.0.0.1:8000")
-    print("   Frontend: http://localhost:5173 (or check output above)")
+    print("   Frontend: http://localhost:3000 (or check output above)")
     print("   Press Ctrl+C to stop all services")
     print("=" * 50)
     print()

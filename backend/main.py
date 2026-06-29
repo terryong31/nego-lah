@@ -9,7 +9,7 @@ from slowapi.errors import RateLimitExceeded
 import json
 
 # Import routers
-from routes.auth import router as auth_router
+from routes.user import router as user_router
 from routes.items import router as items_router
 from routes.chat import router as chat_router
 from routes.payment import router as payment_router
@@ -48,10 +48,12 @@ else:
     # Default origins if not specified in environment
     origins = [
         "http://localhost",
-        "http://localhost:5173",
+        "http://localhost:3000",
+        "http://localhost:3001",
         "http://localhost:8000",
         "http://127.0.0.1",
-        "http://127.0.0.1:5173",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:3001",
         "http://127.0.0.1:8000",
         "https://negolah.my",
         "http://negolah.my",
@@ -67,7 +69,7 @@ app.add_middleware(
 )
 
 # Include routers
-app.include_router(auth_router)
+app.include_router(user_router)
 app.include_router(items_router)
 app.include_router(chat_router)
 app.include_router(payment_router)

@@ -1,3 +1,4 @@
+import fnmatch
 import json
 import time
 from typing import Dict, List, Optional
@@ -11,6 +12,7 @@ class _InMemoryRedis:
     def __init__(self):
         self._store: Dict[str, str] = {}
         self._hash_store: Dict[str, Dict[str, str]] = {}
+        self._zset_store: Dict[str, Dict[str, float]] = {}
         self._exp: Dict[str, float] = {}
 
     def _purge(self, key: str):
@@ -18,6 +20,7 @@ class _InMemoryRedis:
         if exp is not None and time.time() > exp:
             self._store.pop(key, None)
             self._hash_store.pop(key, None)
+            self._zset_store.pop(key, None)
             self._exp.pop(key, None)
 
     def setex(self, key: str, ttl: int, value: str):
@@ -31,6 +34,7 @@ class _InMemoryRedis:
     def delete(self, key: str):
         self._store.pop(key, None)
         self._hash_store.pop(key, None)
+        self._zset_store.pop(key, None)
         self._exp.pop(key, None)
 
     def hset(self, key: str, mapping: Dict[str, str]):
@@ -43,6 +47,28 @@ class _InMemoryRedis:
     def hgetall(self, key: str) -> Dict[str, str]:
         self._purge(key)
         return dict(self._hash_store.get(key, {}))
+
+    def keys(self, pattern: str = "*") -> List[str]:
+        for key in list(self._exp.keys()):
+            self._purge(key)
+        all_keys = set(self._store) | set(self._hash_store) | set(self._zset_store)
+        return [k for k in all_keys if fnmatch.fnmatch(k, pattern)]
+
+    def zadd(self, key: str, mapping: Dict[str, float]):
+        self._purge(key)
+        self._zset_store.setdefault(key, {}).update(mapping)
+
+    def zrangebyscore(self, key: str, min_score: float, max_score: float) -> List[str]:
+        self._purge(key)
+        members = self._zset_store.get(key, {})
+        ranked = sorted(members.items(), key=lambda kv: kv[1])
+        return [m for m, score in ranked if min_score <= score <= max_score]
+
+    def zrem(self, key: str, *members: str):
+        zset = self._zset_store.get(key)
+        if zset:
+            for member in members:
+                zset.pop(member, None)
 
     def pipeline(self):
         return _InMemoryPipeline(self)
@@ -95,31 +121,6 @@ redis_client = _create_redis_client()
 
 
 # ============================================
-# USER SESSIONS
-# ============================================
-
-def cache_session(user_id: str, token: str, ttl: int = 7200):
-    """Cache user session (2 hours default - auto logout after TTL)"""
-    redis_client.setex(f"session:{user_id}", ttl, token)
-    # Also cache reverse lookup for token validation
-    redis_client.setex(f"token:{token}", ttl, user_id)
-
-
-def get_session(user_id: str) -> Optional[str]:
-    """Get cached session token"""
-    return redis_client.get(f"session:{user_id}")
-
-
-def invalidate_session(user_id: str):
-    """Logout - remove session"""
-    # Get token first to remove reverse lookup
-    token = redis_client.get(f"session:{user_id}")
-    if token:
-        redis_client.delete(f"token:{token}")
-    redis_client.delete(f"session:{user_id}")
-
-
-# ============================================
 # TOKEN -> USER_ID CACHING (for auth middleware)
 # ============================================
 
@@ -136,6 +137,28 @@ def get_cached_user_by_token(token: str) -> Optional[str]:
 def invalidate_token(token: str):
     """Remove token from cache"""
     redis_client.delete(f"token:{token}")
+
+
+# ============================================
+# BAN STATUS CACHING (for auth middleware)
+# ============================================
+
+def cache_ban_status(user_id: str, banned: bool, ttl: int = 300):
+    """Cache a user's ban status (5 min default) to avoid a DB hit per request."""
+    redis_client.setex(f"banned:{user_id}", ttl, "1" if banned else "0")
+
+
+def get_cached_ban_status(user_id: str) -> Optional[bool]:
+    """Return cached ban status, or None if not cached."""
+    val = redis_client.get(f"banned:{user_id}")
+    if val is None:
+        return None
+    return val == "1"
+
+
+def invalidate_ban_status(user_id: str):
+    """Drop cached ban status so the next request re-reads from the DB."""
+    redis_client.delete(f"banned:{user_id}")
 
 
 # ============================================
@@ -162,17 +185,6 @@ def get_cached_items_with_hash() -> tuple[Optional[List[Dict]], Optional[str]]:
     return None, None
 
 
-def cache_items(items: List[Dict], ttl: int = 3600):
-    """Cache all items list (1 hour default - legacy function for compatibility)"""
-    redis_client.setex("items:all:legacy", ttl, json.dumps(items))
-
-
-def get_cached_items() -> Optional[List[Dict]]:
-    """Get cached items list (legacy - without hash validation)"""
-    data = redis_client.get("items:all:legacy")
-    return json.loads(data) if data else None
-
-
 def cache_item(item_id: str, item: Dict, ttl: int = 7200):
     """Cache single item (2 hours default - images use Supabase CDN caching)"""
     redis_client.setex(f"item:{item_id}", ttl, json.dumps(item))
@@ -189,31 +201,7 @@ def invalidate_item_cache(item_id: str = None):
     if item_id:
         redis_client.delete(f"item:{item_id}")
     redis_client.delete("items:all")
-    redis_client.delete("items:all:legacy")
     redis_client.delete("items:last_validation")  # Force re-validation on next request
-
-
-# ============================================
-# CHAT HISTORY CACHE
-# ============================================
-
-def cache_chat_history(user_id: str, history: List[Dict], ttl: int = 3600):
-    """Cache chat history (1 hour default)"""
-    redis_client.setex(f"chat:{user_id}", ttl, json.dumps(history))
-
-
-def get_cached_chat_history(user_id: str) -> Optional[List[Dict]]:
-    """Get cached chat history"""
-    data = redis_client.get(f"chat:{user_id}")
-    return json.loads(data) if data else None
-
-
-def append_chat_message(user_id: str, role: str, message: str):
-    """Add message to cached chat (also refreshes TTL)"""
-    history = get_cached_chat_history(user_id) or []
-    history.append({"role": role, "content": message})
-    # Keep last 20 messages to prevent bloat
-    cache_chat_history(user_id, history[-20:])
 
 
 # ============================================

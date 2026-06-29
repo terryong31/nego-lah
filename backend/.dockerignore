@@ -1,0 +1,17 @@
+# Virtualenv & Python caches (rebuilt inside the image)
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Secrets — injected at runtime via compose env_file, never baked into the image
+.env
+*.env
+!.env.example
+
+# Local data / misc
+data/
+.git
+*.log
+.DS_Store

@@ -11,8 +11,9 @@ def check_user_orders(query: str = "") -> str:
     Args:
         query: Optional specific question or filter.
     """
-    # Context injection pattern used in other tools
-    user_id = getattr(check_user_orders, '_current_user_id', None)
+    # Request-scoped context (set by bot.chat per request)
+    from agent.context import get_user_id
+    user_id = get_user_id()
     
     if not user_id:
         return "System Error: I cannot identify your user account at the moment."

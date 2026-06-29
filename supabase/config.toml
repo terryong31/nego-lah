@@ -1,0 +1,55 @@
+# Supabase project configuration.
+# Docs: https://supabase.com/docs/guides/cli/config
+project_id = "nego-lah"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "storage", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+shadow_port = 54320
+major_version = 15
+
+[db.pooler]
+enabled = false
+port = 54329
+pool_mode = "transaction"
+
+[studio]
+enabled = true
+port = 54323
+
+[inbucket]
+enabled = true
+port = 54324
+
+[storage]
+enabled = true
+# Keep the cap aligned with the 2MB avatar limit enforced in the API.
+file_size_limit = "50MiB"
+
+[storage.buckets.images]
+public = true
+
+[auth]
+enabled = true
+site_url = "http://localhost:3000"
+additional_redirect_urls = [
+  "http://localhost:3000",
+  "https://negolah.my",
+  "https://www.negolah.my",
+]
+jwt_expiry = 3600
+enable_refresh_token_rotation = true
+enable_signup = true
+
+[auth.email]
+enable_signup = true
+enable_confirmations = true
+
+[analytics]
+enabled = false

@@ -29,9 +29,9 @@ from env import (
     ADMIN_COOKIE_NAME,
     ADMIN_COOKIE_SECURE,
     ADMIN_COOKIE_SAMESITE,
+    ADMIN_COOKIE_PATH,
     ADMIN_SESSION_TTL,
     ADMIN_PREAUTH_TTL,
-    ADMIN_PREFIX,
 )
 from cache import redis_client, check_rate_limit
 from connector import admin_supabase
@@ -206,7 +206,7 @@ def _set_cookie(response: Response, sid: str) -> None:
         httponly=True,
         secure=ADMIN_COOKIE_SECURE,
         samesite=ADMIN_COOKIE_SAMESITE,
-        path=ADMIN_PREFIX,
+        path=ADMIN_COOKIE_PATH,
     )
 
 
@@ -214,7 +214,7 @@ def clear_session(request: Request, response: Response) -> None:
     sid = request.cookies.get(ADMIN_COOKIE_NAME)
     if sid:
         redis_client.delete(f"{_SESS_KEY}{sid}")
-    response.delete_cookie(key=ADMIN_COOKIE_NAME, path=ADMIN_PREFIX)
+    response.delete_cookie(key=ADMIN_COOKIE_NAME, path=ADMIN_COOKIE_PATH)
 
 
 # ---------------------------------------------------------------------------

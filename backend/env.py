@@ -46,6 +46,11 @@ ADMIN_COOKIE_SECURE = os.getenv("ADMIN_COOKIE_SECURE", "true").lower() == "true"
 # registrable domain; ports/subdomains are fine). Use "none" only if the admin UI
 # and API live on different domains (then ADMIN_COOKIE_SECURE must be true).
 ADMIN_COOKIE_SAMESITE = os.getenv("ADMIN_COOKIE_SAMESITE", "strict").lower()
+# Cookie Path. Keep "/" when the backend sits behind a reverse proxy that strips a
+# path prefix (e.g. Caddy strips /api before forwarding): the browser sees the full
+# /api/admin/... URL, so a cookie scoped to the backend's internal /admin path would
+# never be sent back. "/" sidesteps the mismatch.
+ADMIN_COOKIE_PATH = os.getenv("ADMIN_COOKIE_PATH", "/")
 ADMIN_SESSION_TTL = int(os.getenv("ADMIN_SESSION_TTL", "7200"))  # sliding session, seconds
 ADMIN_PREAUTH_TTL = int(os.getenv("ADMIN_PREAUTH_TTL", "300"))   # 2FA pre-auth handle, seconds
 

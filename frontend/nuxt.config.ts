@@ -36,6 +36,14 @@ export default defineNuxtConfig({
     }
   },
 
+  // @nuxt/icon serves its local collections from `localApiEndpoint`, which
+  // defaults to `/api/_nuxt_icon`. In production Caddy routes ALL `/api/*` to
+  // the FastAPI backend, which would hijack that route and 404 every icon.
+  // Move it off `/api` so it stays on the Nuxt server.
+  icon: {
+    localApiEndpoint: '/_nuxt_icon'
+  },
+
   supabase: {
     // SSR mode — session is handled server-side via cookies
     redirectOptions: {

@@ -15,6 +15,9 @@ services:
       - backend
 
   backend:
+    # Image is built & pushed by CI; the server pulls it (never builds locally).
+    # `build` is kept so `docker compose build` still works for local dev.
+    image: ghcr.io/terryong31/nego-lah-backend:latest
     build: ./backend
     container_name: nego-lah-backend
     restart: always
@@ -26,6 +29,7 @@ services:
       - ./backend/.env
     environment:
       - PYTHONUNBUFFERED=1
+      - ENV=production
       - REDIS_URL=redis://redis:6379/0
     depends_on:
       redis:
@@ -38,6 +42,8 @@ services:
       start_period: 20s
 
   frontend:
+    # Image is built & pushed by CI; the server pulls it (never builds locally).
+    image: ghcr.io/terryong31/nego-lah-frontend:latest
     build: ./frontend
     container_name: nego-lah-frontend
     restart: always
@@ -52,6 +58,12 @@ services:
       # Public API base used by the browser; Caddy routes /api/* to the backend.
       # Overrides the build-time default in nuxt.config.ts.
       - NUXT_PUBLIC_API_BASE_URL=https://negolah.my/api
+      # @nuxtjs/supabase reads runtimeConfig.public.supabase.{url,key}. The image
+      # is built without .env (secrets stay out of the image), so we inject these
+      # at runtime via Nuxt's NUXT_PUBLIC_* override. The publishable key is a
+      # browser-facing value, so this is not a secret.
+      - NUXT_PUBLIC_SUPABASE_URL=${SUPABASE_URL:-https://umtsegjkgpfefjvhyysh.supabase.co}
+      - NUXT_PUBLIC_SUPABASE_KEY=${SUPABASE_KEY:-sb_publishable_obtnwe54q7npFVPRcgoxZg_ICdZyo8w}
     depends_on:
       backend:
         condition: service_started

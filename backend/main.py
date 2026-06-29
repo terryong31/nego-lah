@@ -25,11 +25,20 @@ if sentry_dsn:
         profiles_sample_rate=1.0,
     )
 
+# In production we hide the interactive API docs (Swagger UI / ReDoc) and the
+# OpenAPI schema so the full API surface isn't publicly browsable. Set
+# ENV=production in the deployed environment; locally it defaults to dev so
+# /docs stays available.
+IS_PROD = os.environ.get("ENV", "development").lower() in ("production", "prod")
+
 app = FastAPI(
     title="Second-Hand Store API",
     description="Fully autonomous second-hand store with AI negotiation",
     version="1.0.0",
-    root_path="/api" if os.environ.get("VERCEL") else ""
+    root_path="/api" if os.environ.get("VERCEL") else "",
+    docs_url=None if IS_PROD else "/docs",
+    redoc_url=None if IS_PROD else "/redoc",
+    openapi_url=None if IS_PROD else "/openapi.json"
 )
 
 # Setup rate limiter

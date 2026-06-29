@@ -41,11 +41,25 @@ const loading = ref(false)
 async function onSubmit(payload: FormSubmitEvent<Schema>) {
   loading.value = true
   try {
-    const { error } = await supabase.auth.signUp({
+    const { data, error } = await supabase.auth.signUp({
       email: payload.data.email,
       password: payload.data.password
     })
     if (error) throw error
+
+    // Anti-enumeration: when the email already belongs to an account (e.g. one
+    // created via Google sign-in), Supabase returns success with NO new identity
+    // rather than an error. Detect that and point the user at their real login.
+    if (data.user && (data.user.identities?.length ?? 0) === 0) {
+      toast.add({
+        title: 'Email already registered',
+        description: 'This email already has an account. If you signed up with Google, use the Google button.',
+        color: 'warning'
+      })
+      router.push('/login')
+      return
+    }
+
     toast.add({ title: 'Registration successful', description: 'Please check your email to verify your account.', color: 'success' })
     router.push('/login')
   } catch (err) {

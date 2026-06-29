@@ -125,12 +125,7 @@ function scrollToBottom() {
 }
 
 // True while the agent is mid-stream but has only emitted [[STATUS:…]] markers
-// and no real reply text yet — i.e. it's still running tools. We render the
-// work-process shimmer *inside* the assistant bubble while this holds, rather
-// than via the Nuxt UI #indicator slot: forcing the slot during 'streaming'
-// makes UChatMessages append a second trailing <article>, and the theme's
-// last-of-type min-h-(--last-message-height) then lands on that phantom article,
-// pushing the shimmer lower and stretching it each time the status changes.
+// and no real reply text yet — i.e. it's still running tools.
 const aiWorking = computed(() => {
   if (status.value !== 'streaming') return false
   const last = messages.value[messages.value.length - 1]
@@ -138,12 +133,20 @@ const aiWorking = computed(() => {
   return getMessageText(last).trim().length === 0
 })
 
-// Is this the live assistant bubble that's still working (only status, no text)?
-function isWorkingMessage(message: UIMessageLike) {
-  return aiWorking.value
-    && message.role === 'assistant'
-    && message.id === messages.value[messages.value.length - 1]?.id
-}
+// What we actually hand to <UChatMessages>. While the agent is still working,
+// blank out the live assistant bubble's parts so UChatMessages keeps showing
+// its *own* thinking indicator (the #indicator slot) instead of an empty bubble.
+// This way the shimmer never moves between DOM nodes — the same indicator that
+// said "Thinking…" simply updates its text to each status — and there's no
+// second <article> for the theme's last-of-type min-height to stretch.
+const displayMessages = computed(() => {
+  if (!aiWorking.value) return messages.value
+  return messages.value.map((m, i) =>
+    i === messages.value.length - 1 && m.role === 'assistant'
+      ? { ...m, parts: [] }
+      : m
+  )
+})
 
 // The status we hand to <UChatMessages>. The Nuxt UI indicator shows whenever
 // status === 'submitted', so we force that while the seller is typing — the
@@ -361,11 +364,25 @@ type Block
     | { type: 'pay', label: string, url: string }
     | { type: 'pending' }
 
+// The assistant bubble the typewriter is (or is about to be) revealing. While
+// the stream is live this is ALWAYS the last assistant message, so the bubble
+// shows the progressively-typed text from its very first frame — otherwise the
+// full server response renders for one tick before `typeTick` assigns typingId,
+// which is the "fully rendered message flashes for a split second" glitch. Once
+// the stream ends we fall back to typingId so the reveal can finish naturally.
+const typingMessageId = computed(() => {
+  if (status.value === 'streaming' || status.value === 'submitted') {
+    const last = messages.value[messages.value.length - 1]
+    if (last?.role === 'assistant') return last.id
+  }
+  return typingId.value
+})
+
 // Carousell-style: each line break becomes its own block. While a reply is
 // being typed out, the active message shows its progressively-revealed text.
 // Markdown payment links render as a dedicated "pay" box instead of raw text.
 function messageBlocks(message: UIMessageLike): Block[] {
-  const text = message.id === typingId.value ? shownText.value : getMessageText(message)
+  const text = message.id === typingMessageId.value ? shownText.value : getMessageText(message)
   return text
     .split('\n')
     .map((l: string) => l.trim())
@@ -517,16 +534,25 @@ async function handleBuyNow() {
         </div>
 
         <UChatMessages
-          :messages="messages"
+          :messages="displayMessages"
           :status="effectiveStatus"
           should-auto-scroll
-          :auto-scroll="false"
+          auto-scroll
           :user="{ side: 'right', variant: 'naked', ui: { root: 'w-full', container: 'w-full', body: 'w-full', content: 'w-full' } }"
           :assistant="{ side: 'left', variant: 'naked', ui: { root: 'w-full', container: 'w-full', body: 'w-full', content: 'w-full' } }"
         >
-          <!-- Shimmer while waiting for the first token, or while the seller types -->
+          <!-- Work-process indicator: a single, fixed-height ChatTool row that
+               shimmers and just swaps its (truncated) label as the agent moves
+               from "Thinking…" to "Searching the market…" etc. Because the label
+               truncates on one line, changing status never reflows the height or
+               spawns a scrollbar, and it never hops between DOM nodes. -->
           <template #indicator>
-            <UChatShimmer :text="sellerTyping ? 'Seller is typing…' : aiStatusText" />
+            <UChatTool
+              :text="sellerTyping ? 'Seller is typing…' : aiStatusText"
+              :icon="sellerTyping ? 'i-lucide-store' : 'i-lucide-sparkles'"
+              loading
+              streaming
+            />
           </template>
 
           <!-- Carousell-style: each line break renders as its own bubble -->
@@ -543,13 +569,6 @@ async function handleBuyNow() {
               class="flex flex-col gap-1"
               :class="message.role === 'user' ? 'items-end' : 'items-start'"
             >
-              <!-- Agent still running tools: show the work-process shimmer in
-                   place of an empty bubble, updating as each status arrives -->
-              <UChatShimmer
-                v-if="isWorkingMessage(message)"
-                :text="aiStatusText"
-                class="px-3.5 py-2 text-sm"
-              />
               <template
                 v-for="(block, i) in messageBlocks(message)"
                 :key="i"

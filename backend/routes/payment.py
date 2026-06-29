@@ -22,8 +22,8 @@ def checkout(
 
         item_id = request.item_id
 
-        # Get item from database
-        response = admin_supabase.table('items').select('*').eq('id', item_id).execute()
+        # Get item from database (soft-deleted items can't be purchased).
+        response = admin_supabase.table('items').select('*').eq('id', item_id).is_('deleted_at', 'null').execute()
 
         if not response.data:
             raise HTTPException(status_code=404, detail="Item not found")

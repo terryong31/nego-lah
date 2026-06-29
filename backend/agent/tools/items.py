@@ -65,7 +65,7 @@ def search_items(search_term: str) -> str:
     query = f'%{search_term}%'
     logger.info(f"📝 SQL ILIKE query: name ILIKE '{query}'")
     
-    response = user_supabase.table('items').select('id, name, price, condition, status').ilike('name', query).limit(5).execute()
+    response = user_supabase.table('items').select('id, name, price, condition, status').is_('deleted_at', 'null').ilike('name', query).limit(5).execute()
     
     logger.info(f"📊 Query result: {len(response.data) if response.data else 0} items found")
     if response.data:
@@ -106,7 +106,7 @@ def list_all_items() -> str:
     logger.info(f"📋 LIST_ALL_ITEMS CALLED")
     logger.info(f"{'='*50}")
     
-    response = user_supabase.table('items').select('id, name, price, condition, status').eq('status', 'available').limit(10).execute()
+    response = user_supabase.table('items').select('id, name, price, condition, status').eq('status', 'available').is_('deleted_at', 'null').limit(10).execute()
     
     if response.data and len(response.data) > 0:
         results = []

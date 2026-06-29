@@ -26,12 +26,13 @@ def get_items_fingerprint():
     Get a lightweight fingerprint of items table.
     Queries only COUNT and MAX(created_at) - much cheaper than full table scan.
     """
-    # Query count
-    count_response = user_supabase.table('items').select('id', count='exact').execute()
+    # Query count (excluding soft-deleted items so the fingerprint matches the
+    # filtered storefront data we actually cache below).
+    count_response = user_supabase.table('items').select('id', count='exact').is_('deleted_at', 'null').execute()
     item_count = count_response.count or 0
-    
+
     # Query latest created_at
-    latest_response = user_supabase.table('items').select('created_at').order('created_at', desc=True).limit(1).execute()
+    latest_response = user_supabase.table('items').select('created_at').is_('deleted_at', 'null').order('created_at', desc=True).limit(1).execute()
     max_created_at = latest_response.data[0]['created_at'] if latest_response.data else ""
     
     return item_count, max_created_at
@@ -77,7 +78,7 @@ def get_items(keyword: str = None) -> List[str]:
         
         # Cache miss or stale - get full data from DB
         # Order by status (available first) then by created_at (newest first)
-        retrieve = user_supabase.table('items').select('*').order('status', desc=False).order('created_at', desc=True).execute()
+        retrieve = user_supabase.table('items').select('*').is_('deleted_at', 'null').order('status', desc=False).order('created_at', desc=True).execute()
         if retrieve.data:
             # Compute hash and cache with it
             count = len(retrieve.data)
@@ -88,7 +89,7 @@ def get_items(keyword: str = None) -> List[str]:
         return []
     else:
         # Keyword search - don't cache as results vary
-        retrieve = user_supabase.table('items').select('*').ilike('description', f'%{keyword}%').order('status', desc=False).order('created_at', desc=True).execute()
+        retrieve = user_supabase.table('items').select('*').is_('deleted_at', 'null').ilike('description', f'%{keyword}%').order('status', desc=False).order('created_at', desc=True).execute()
         if retrieve.data:
             return retrieve.data
         return []
@@ -106,6 +107,7 @@ def get_featured_items(limit: int = 6) -> List[dict]:
             user_supabase.table('items')
             .select('*')
             .eq('status', 'available')
+            .is_('deleted_at', 'null')
             .order('created_at', desc=True)
             .limit(limit)
             .execute()
@@ -179,17 +181,18 @@ async def upload_item(
         return False
 
 def delete_item(item_id: str) -> bool:
-    """Delete an item and all related data (orders, conversations)."""
+    """Soft-delete an item: hide it from the storefront without destroying history.
+
+    We deliberately do NOT hard-delete the row, nor touch the related orders /
+    conversations. Buyers who purchased this item keep it in their order history,
+    and the order view can still read the (now-hidden) item for its name/image.
+    Storefront and admin listings filter out rows where `deleted_at` is set.
+    """
     try:
-        # Delete related conversations first to satisfy Foreign Key constraint
-        admin_supabase.table('conversations').delete().eq("item_id", item_id).execute()
-        
-        # Delete related orders
-        admin_supabase.table('orders').delete().eq("item_id", item_id).execute()
-        
-        # Then delete the item
-        admin_supabase.table('items').delete().eq("id", item_id).execute()
-        invalidate_item_cache(item_id)  # Clear cache
+        admin_supabase.table('items').update(
+            {"deleted_at": datetime.now().isoformat()}
+        ).eq("id", item_id).execute()
+        invalidate_item_cache(item_id)  # Clear cache so it drops off the storefront
         return True
     except Exception as e:
         logger.error(f"Failed to delete item {item_id}: {e}")

@@ -68,7 +68,8 @@ async def get_item_by_id(item_id: str) -> dict:
     from connector import user_supabase
 
     try:
-        response = user_supabase.table('items').select('*').eq('id', item_id).execute()
+        # Soft-deleted items are hidden from the public storefront (treated as 404).
+        response = user_supabase.table('items').select('*').eq('id', item_id).is_('deleted_at', 'null').execute()
     except Exception:
         # e.g. malformed UUID ("undefined") — treat as not found, not a 500.
         raise HTTPException(

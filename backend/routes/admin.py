@@ -669,7 +669,7 @@ def admin_summary():
         logger.error(f"summary: list_users failed: {e}")
         user_count = 0
 
-    items = (admin_supabase.table('items').select('status').execute().data) or []
+    items = (admin_supabase.table('items').select('status').is_('deleted_at', 'null').execute().data) or []
     orders = (admin_supabase.table('orders').select('status, amount').execute().data) or []
     convos = (admin_supabase.table('conversations').select('id').execute().data) or []
 
@@ -699,9 +699,9 @@ def admin_summary():
 
 @protected.get("/items")
 def admin_list_items():
-    """List every item (including sold), newest first."""
+    """List every live item (including sold), newest first. Soft-deleted items are hidden."""
     from connector import admin_supabase
-    res = admin_supabase.table('items').select('*').order('created_at', desc=True).execute()
+    res = admin_supabase.table('items').select('*').is_('deleted_at', 'null').order('created_at', desc=True).execute()
     return res.data or []
 
 

@@ -25,13 +25,12 @@ class ImageAnalyzerService:
             google_api_key=GEMINI_API_KEY
         ) if GEMINI_API_KEY else None
     
-    async def analyze(self, base64_image: str, mime_type: str = "image/jpeg") -> dict:
+    async def analyze(self, images_data: list[dict]) -> dict:
         """
-        Analyze an image and return product details.
+        Analyze multiple images and return product details.
         
         Args:
-            base64_image: Base64 encoded image string
-            mime_type: MIME type of the image (default: image/jpeg)
+            images_data: list of dicts with 'base64_image' and 'mime_type'
         
         Returns:
             dict with 'name', 'description', 'condition'
@@ -41,7 +40,7 @@ class ImageAnalyzerService:
         
         prompt = """
 You are an expert e-commerce listing assistant for a Malaysian marketplace.
-Analyze this image and generate a compelling listing.
+Analyze these images and generate a compelling listing.
 
 Return a JSON object with EXACTLY these fields:
 {
@@ -57,19 +56,18 @@ Guidelines:
 - Default to 'Good' if condition is unclear
 - Write description as if listing on Carousell/Facebook Marketplace
 - Be specific about what you see
-- DO NOT make up features you can't verify from the image
+- DO NOT make up features you can't verify from the images
 """
         
         try:
-            msg = HumanMessage(
-                content=[
-                    {"type": "text", "text": prompt},
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:{mime_type};base64,{base64_image}"}
-                    }
-                ]
-            )
+            content = [{"type": "text", "text": prompt}]
+            for img in images_data:
+                content.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{img['mime_type']};base64,{img['base64_image']}"}
+                })
+                
+            msg = HumanMessage(content=content)
             
             response = self.model.invoke([msg])
             content = response.content

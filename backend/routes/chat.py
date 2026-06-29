@@ -201,6 +201,14 @@ async def chat_stream(request: Request):
             ):
                 if not delta:
                     continue
+                if isinstance(delta, dict):
+                    status = delta.get("status", "")
+                    if status:
+                        if not started:
+                            yield _sse({"type": "text-start", "id": text_id})
+                            started = True
+                        yield _sse({"type": "text-delta", "id": text_id, "delta": f"[[STATUS:{status}]]"})
+                    continue
                 collected.append(delta)
                 if not started:
                     yield _sse({"type": "text-start", "id": text_id})

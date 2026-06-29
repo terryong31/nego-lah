@@ -116,3 +116,4 @@ xxhash==3.6.0
 yarl==1.22.0
 zstandard==0.25.0
 sentry-sdk[fastapi]==2.19.2
+ddgs

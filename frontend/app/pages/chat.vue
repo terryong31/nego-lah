@@ -71,6 +71,14 @@ const { messages, status, stop, sendMessage } = useChat({
   })
 })
 
+const aiStatusText = ref('Thinking…')
+
+watch(status, (newStatus) => {
+  if (newStatus === 'submitted') {
+    aiStatusText.value = 'Thinking…'
+  }
+})
+
 function uid() {
   return globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2)
 }
@@ -114,6 +122,27 @@ function scrollToBottom() {
   nextTick(() => {
     if (scroller.value) scroller.value.scrollTop = scroller.value.scrollHeight
   })
+}
+
+// True while the agent is mid-stream but has only emitted [[STATUS:…]] markers
+// and no real reply text yet — i.e. it's still running tools. We render the
+// work-process shimmer *inside* the assistant bubble while this holds, rather
+// than via the Nuxt UI #indicator slot: forcing the slot during 'streaming'
+// makes UChatMessages append a second trailing <article>, and the theme's
+// last-of-type min-h-(--last-message-height) then lands on that phantom article,
+// pushing the shimmer lower and stretching it each time the status changes.
+const aiWorking = computed(() => {
+  if (status.value !== 'streaming') return false
+  const last = messages.value[messages.value.length - 1]
+  if (!last || last.role !== 'assistant') return false
+  return getMessageText(last).trim().length === 0
+})
+
+// Is this the live assistant bubble that's still working (only status, no text)?
+function isWorkingMessage(message: UIMessageLike) {
+  return aiWorking.value
+    && message.role === 'assistant'
+    && message.id === messages.value[messages.value.length - 1]?.id
 }
 
 // The status we hand to <UChatMessages>. The Nuxt UI indicator shows whenever
@@ -241,11 +270,35 @@ function onSubmit() {
 
 function getMessageText(message: UIMessageLike) {
   if (!message?.parts) return ''
-  return message.parts
+  const text = message.parts
     .filter(p => p.type === 'text')
     .map(p => p.text)
     .join('')
+
+  // Return the pure text without magic strings
+  return text.replace(/\[\[STATUS:.*?\]\]/g, '')
 }
+
+// Watch messages purely to extract status strings safely outside of render cycle
+watch(() => messages.value, (newMsgs) => {
+  if (newMsgs.length > 0) {
+    const lastMsg = newMsgs[newMsgs.length - 1]
+    if (lastMsg?.role === 'assistant' && lastMsg.parts) {
+      const rawText = lastMsg.parts
+        .filter(p => p.type === 'text')
+        .map(p => p.text)
+        .join('')
+
+      const statusMatches = rawText.match(/\[\[STATUS:(.*?)\]\]/g)
+      if (statusMatches && statusMatches.length > 0) {
+        const lastMatch = statusMatches[statusMatches.length - 1]
+        if (lastMatch) {
+          aiStatusText.value = lastMatch.replace('[[STATUS:', '').replace(']]', '')
+        }
+      }
+    }
+  }
+}, { deep: true })
 
 // System notices (e.g. the AI takeover toggle) come wrapped in dashes:
 // "--- Terry has joined the chat, the AI will retire for now ---". Strip them
@@ -473,7 +526,7 @@ async function handleBuyNow() {
         >
           <!-- Shimmer while waiting for the first token, or while the seller types -->
           <template #indicator>
-            <UChatShimmer :text="sellerTyping ? 'Seller is typing…' : 'Thinking…'" />
+            <UChatShimmer :text="sellerTyping ? 'Seller is typing…' : aiStatusText" />
           </template>
 
           <!-- Carousell-style: each line break renders as its own bubble -->
@@ -490,6 +543,13 @@ async function handleBuyNow() {
               class="flex flex-col gap-1"
               :class="message.role === 'user' ? 'items-end' : 'items-start'"
             >
+              <!-- Agent still running tools: show the work-process shimmer in
+                   place of an empty bubble, updating as each status arrives -->
+              <UChatShimmer
+                v-if="isWorkingMessage(message)"
+                :text="aiStatusText"
+                class="px-3.5 py-2 text-sm"
+              />
               <template
                 v-for="(block, i) in messageBlocks(message)"
                 :key="i"

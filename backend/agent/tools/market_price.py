@@ -66,7 +66,87 @@ class MarketPriceService:
         category: Optional[str] = None
     ) -> dict:
         """
-        Estimate price based on item characteristics.
+        Estimate price based on item characteristics using Gemini with Google Search Grounding.
+        """
+        try:
+            from langchain_google_genai import ChatGoogleGenerativeAI
+            from langchain_core.messages import HumanMessage
+            from env import GEMINI_API_KEY
+            import json
+            import re
+            
+            if not GEMINI_API_KEY:
+                raise ValueError("GEMINI_API_KEY not set")
+                
+            model = ChatGoogleGenerativeAI(
+                model="gemini-3-flash-preview",
+                temperature=0.1,
+                google_api_key=GEMINI_API_KEY
+            )
+            grounded_model = model.bind(tools=[{"google_search": {}}])
+            
+            prompt = f"""
+You are an expert market analyst for a Malaysian marketplace.
+Search the web for the current market price of: "{query}" in Malaysia.
+The item is in '{condition}' condition.
+
+Based on real, current listings and sales from the web search, determine the realistic market prices in MYR.
+Return ONLY a valid JSON object with the following fields:
+{{
+    "market_average": <float>,
+    "min_price": <float>,
+    "max_price": <float>,
+    "suggested_listing": <float>
+}}
+
+- Return ONLY the raw JSON without markdown formatting.
+- Values must be numbers (floats), do NOT include RM or currency symbols in the values.
+- If you absolutely cannot find data, make a very educated guess based on the item type.
+"""
+            msg = HumanMessage(content=prompt)
+            response = grounded_model.invoke([msg])
+            content = response.content
+            
+            if isinstance(content, list):
+                text_parts = []
+                for part in content:
+                    if isinstance(part, str):
+                        text_parts.append(part)
+                    elif isinstance(part, dict) and 'text' in part:
+                        text_parts.append(part['text'])
+                content = ''.join(text_parts)
+                
+            clean_content = content.replace('```json', '').replace('```', '').strip()
+            
+            # Sometimes Gemini returns text before or after the JSON. Try to extract just the JSON.
+            match = re.search(r'\{.*\}', clean_content, re.DOTALL)
+            if match:
+                clean_content = match.group(0)
+                
+            data = json.loads(clean_content)
+            
+            return {
+                "market_average": float(data.get("market_average", 0)),
+                "min_price": float(data.get("min_price", 0)),
+                "max_price": float(data.get("max_price", 0)),
+                "suggested_listing": float(data.get("suggested_listing", 0)),
+                "currency": "MYR",
+                "source": "Google Search (AI)",
+                "category_detected": category or "unknown",
+                "condition_used": condition,
+            }
+        except Exception as e:
+            logger.error(f"Failed to use Gemini Google Search Grounding: {e}. Falling back to basic estimation.")
+            return self._fallback_estimate_price(query, condition, category)
+            
+    def _fallback_estimate_price(
+        self, 
+        query: str, 
+        condition: str,
+        category: Optional[str] = None
+    ) -> dict:
+        """
+        Estimate price based on item characteristics (fallback method).
         """
         # Infer category from query if not provided
         if not category:
@@ -98,7 +178,7 @@ class MarketPriceService:
             "max_price": self._round_price(max_price),
             "suggested_listing": self._round_price(suggested),
             "currency": "MYR",
-            "source": "Estimation",
+            "source": "Estimation (Fallback)",
             "category_detected": category,
             "condition_used": condition,
         }

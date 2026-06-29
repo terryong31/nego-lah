@@ -276,8 +276,8 @@ def web_search(query: str) -> str:
     Returns:
         Summary of search results
     """
-    # Note: duckduckgo_search must be installed
-    from duckduckgo_search import DDGS
+    # Note: ddgs must be installed
+    from ddgs import DDGS
     
     logger.info(f"\n{'='*50}")
     logger.info(f"🌍 WEB_SEARCH CALLED")

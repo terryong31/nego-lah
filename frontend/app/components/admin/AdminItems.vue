@@ -16,6 +16,14 @@ interface Item {
   created_at: string
 }
 
+// Shape of the /analyze-image response used to auto-fill the form.
+interface AnalyzeResult {
+  name?: string
+  description?: string
+  condition?: string
+  market_data?: { suggested_listing?: number }
+}
+
 const { data: items, pending, refresh } = useAsyncData<Item[]>(
   'admin-items',
   () => call<Item[]>('/items'),
@@ -51,6 +59,68 @@ const form = reactive({
   min_price: undefined as number | undefined
 })
 const files = ref<File[]>([])
+const isAnalyzing = ref(false)
+const progress = ref(0)
+
+watch(files, async (newFiles) => {
+  if (isEditing.value || newFiles.length === 0 || isAnalyzing.value) return
+
+  isAnalyzing.value = true
+  progress.value = 0
+
+  const progressInterval = setInterval(() => {
+    if (progress.value < 90) {
+      progress.value += Math.max(1, Math.floor((90 - progress.value) / 10))
+    }
+  }, 300)
+
+  try {
+    const fd = new FormData()
+    for (const file of newFiles) {
+      fd.append('images', file)
+    }
+
+    const res = await call<AnalyzeResult>('/analyze-image', {
+      method: 'POST',
+      body: fd
+    })
+
+    progress.value = 100
+    clearInterval(progressInterval)
+    await new Promise(r => setTimeout(r, 400))
+
+    if (res) {
+      if (res.name && !form.name) form.name = res.name
+      if (res.description && !form.description) form.description = res.description
+
+      const conditionMap: Record<string, string> = {
+        'new': 'New',
+        'like new': 'Like New',
+        'good': 'Good',
+        'fair': 'Fair',
+        'poor': 'Poor'
+      }
+
+      if (res.condition) {
+        const c = res.condition.toLowerCase()
+        if (conditionMap[c]) form.condition = conditionMap[c]
+      }
+
+      if (res.market_data?.suggested_listing && !form.price) {
+        form.price = res.market_data.suggested_listing
+      }
+
+      toast.add({ title: 'Analysis complete', description: 'Item details have been auto-filled', color: 'success' })
+    }
+  } catch (err) {
+    clearInterval(progressInterval)
+    const e = err as { data?: { detail?: string }, message?: string }
+    toast.add({ title: 'Analysis failed', description: e.data?.detail || e.message, color: 'warning' })
+  } finally {
+    isAnalyzing.value = false
+    progress.value = 0
+  }
+})
 
 function resetForm() {
   form.name = ''
@@ -80,7 +150,7 @@ function openEdit(item: Item) {
 
 // New images are only required when creating; editing keeps existing images.
 const canSubmit = computed(() =>
-  !!form.name.trim() && form.price != null && (isEditing.value || files.value.length > 0)
+  !isAnalyzing.value && !!form.name.trim() && form.price != null && (isEditing.value || files.value.length > 0)
 )
 
 async function submitItem() {
@@ -261,63 +331,6 @@ const columns: TableColumn<Item>[] = [
       <template #body>
         <div class="space-y-4">
           <UFormField
-            label="Name"
-            required
-          >
-            <UInput
-              v-model="form.name"
-              placeholder="e.g. Fender Stratocaster"
-              class="w-full"
-            />
-          </UFormField>
-
-          <UFormField label="Description">
-            <UTextarea
-              v-model="form.description"
-              :rows="3"
-              placeholder="Condition notes, specs, what's included…"
-              class="w-full"
-            />
-          </UFormField>
-
-          <div class="grid grid-cols-2 gap-4">
-            <UFormField label="Condition">
-              <USelect
-                v-model="form.condition"
-                :items="conditions"
-                class="w-full"
-              />
-            </UFormField>
-            <UFormField
-              label="Price (RM)"
-              required
-            >
-              <UInput
-                v-model.number="form.price"
-                type="number"
-                min="0"
-                step="0.01"
-                placeholder="0.00"
-                class="w-full"
-              />
-            </UFormField>
-          </div>
-
-          <UFormField
-            label="Minimum price (RM)"
-            hint="AI won't go below this"
-          >
-            <UInput
-              v-model.number="form.min_price"
-              type="number"
-              min="0"
-              step="0.01"
-              placeholder="optional"
-              class="w-full"
-            />
-          </UFormField>
-
-          <UFormField
             v-if="!isEditing"
             label="Images"
             required
@@ -333,8 +346,98 @@ const columns: TableColumn<Item>[] = [
               class="w-full min-h-32"
             />
           </UFormField>
+
+          <div
+            v-if="isAnalyzing"
+            class="space-y-6 py-4"
+          >
+            <div class="space-y-2">
+              <div class="flex justify-between text-sm font-medium text-highlighted">
+                <span>Analyzing item & checking market price...</span>
+                <span>{{ progress }}%</span>
+              </div>
+              <UProgress :value="progress" />
+            </div>
+
+            <div class="space-y-4">
+              <div class="space-y-2">
+                <USkeleton class="h-4 w-16" /><USkeleton class="h-9 w-full" />
+              </div>
+              <div class="space-y-2">
+                <USkeleton class="h-4 w-24" /><USkeleton class="h-20 w-full" />
+              </div>
+              <div class="grid grid-cols-2 gap-4">
+                <div class="space-y-2">
+                  <USkeleton class="h-4 w-16" /><USkeleton class="h-9 w-full" />
+                </div>
+                <div class="space-y-2">
+                  <USkeleton class="h-4 w-16" /><USkeleton class="h-9 w-full" />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <template v-else>
+            <UFormField
+              label="Name"
+              required
+            >
+              <UInput
+                v-model="form.name"
+                placeholder="e.g. Fender Stratocaster"
+                class="w-full"
+              />
+            </UFormField>
+
+            <UFormField label="Description">
+              <UTextarea
+                v-model="form.description"
+                :rows="3"
+                placeholder="Condition notes, specs, what's included…"
+                class="w-full"
+              />
+            </UFormField>
+
+            <div class="grid grid-cols-2 gap-4">
+              <UFormField label="Condition">
+                <USelect
+                  v-model="form.condition"
+                  :items="conditions"
+                  class="w-full"
+                />
+              </UFormField>
+              <UFormField
+                label="Price (RM)"
+                required
+              >
+                <UInput
+                  v-model.number="form.price"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="0.00"
+                  class="w-full"
+                />
+              </UFormField>
+            </div>
+
+            <UFormField
+              label="Minimum price (RM)"
+              hint="AI won't go below this"
+            >
+              <UInput
+                v-model.number="form.min_price"
+                type="number"
+                min="0"
+                step="0.01"
+                placeholder="Optional"
+                class="w-full"
+              />
+            </UFormField>
+          </template>
+
           <p
-            v-else
+            v-if="isEditing"
             class="text-xs text-muted"
           >
             Image editing isn't supported here — existing images are kept.

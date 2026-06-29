@@ -349,6 +349,29 @@ def chat_stream(user_id: str, message: str, item_id: str = None, files: list = N
         # Forward only assistant text; skip tool messages and tool-call chunks.
         if not isinstance(chunk, AIMessageChunk):
             continue
+            
+        # Detect tool calls for real-time status updates
+        if getattr(chunk, 'tool_call_chunks', None):
+            for tc in chunk.tool_call_chunks:
+                # The tool name usually arrives in the very first chunk of the tool call stream
+                if tc.get("name"):
+                    tool_name = tc["name"]
+                    status_text = "Thinking..."
+                    if tool_name == "call_item_agent":
+                        status_text = "Understanding the item..."
+                    elif tool_name == "call_stripe_agent":
+                        status_text = "Generating payment link..."
+                    elif tool_name == "check_user_orders":
+                        status_text = "Checking your orders..."
+                    elif tool_name == "evaluate_offer":
+                        status_text = "Evaluating your offer..."
+                    elif tool_name == "web_search":
+                        status_text = "Searching the market..."
+                    elif tool_name == "assess_discount_eligibility":
+                        status_text = "Checking discounts..."
+                        
+                    yield {"status": status_text}
+                    
         text = _extract_text_from_content(chunk.content)
         if text:
             collected.append(text)

@@ -587,25 +587,28 @@ def delete_order(order_id: str, admin: dict = Depends(verify_admin)):
 
 @protected.post("/analyze-image")
 async def analyze_item_image(
-    image: Annotated[UploadFile, File()]
+    images: list[UploadFile] = File(...)
 ):
     """
-    Analyze an uploaded image to generate item details (Name, Description, Condition).
-    Uses custom Image Analyzer service (Gemini Vision - NO APIFY).
+    Analyze uploaded images to generate item details (Name, Description, Condition).
+    Uses custom Image Analyzer service (Gemini Vision).
     """
     import base64
     from agent.tools.image_analyzer import image_analyzer
     from agent.tools.market_price import market_service
     
     try:
-        # Read image
-        contents = await image.read()
-        base64_image = base64.b64encode(contents).decode('utf-8')
-        image_type = image.content_type or "image/jpeg"
-        
+        images_data = []
+        for img in images:
+            contents = await img.read()
+            images_data.append({
+                "base64_image": base64.b64encode(contents).decode('utf-8'),
+                "mime_type": img.content_type or "image/jpeg"
+            })
+            
         # --- Custom Image Analyzer (Gemini Vision) ---
-        logger.info("Analyzing image with custom Image Analyzer...")
-        data = await image_analyzer.analyze(base64_image, image_type)
+        logger.info(f"Analyzing {len(images_data)} image(s) with custom Image Analyzer...")
+        data = await image_analyzer.analyze(images_data)
         logger.info(f"Image analysis result: {data}")
         
         # --- Market Valuation ---

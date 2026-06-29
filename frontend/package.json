@@ -15,6 +15,7 @@
     "@iconify-json/lucide": "^1.2.114",
     "@iconify-json/simple-icons": "^1.2.86",
     "@nuxt/ui": "^4.9.0",
+    "@nuxtjs/mdc": "^0.22.0",
     "@nuxtjs/supabase": "^2.0.9",
     "ai": "^7.0.4",
     "nuxt": "^4.4.8",

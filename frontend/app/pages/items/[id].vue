@@ -152,7 +152,7 @@ async function handleBuyNow() {
       <!-- Right side: title+price top, compact description, buttons pinned bottom -->
       <div class="flex flex-col h-full py-2 min-h-0">
         <!-- Title + price -->
-        <div class="shrink-0 space-y-1">
+        <div class="shrink-0 space-y-3">
           <h1 class="text-3xl font-extrabold text-highlighted tracking-tight">
             {{ item.name }}
           </h1>
@@ -162,21 +162,21 @@ async function handleBuyNow() {
         </div>
 
         <!-- Compact description: reduced height, scrolls internally only if long -->
-        <div class="mt-4 space-y-2">
-          <h3 class="font-semibold text-highlighted">
+        <div class="mt-3 space-y-2 flex-1 min-h-0 flex flex-col">
+          <h3 class="font-semibold text-highlighted shrink-0">
             Product Description
           </h3>
-          <div class="flex items-center gap-2">
+          <div class="flex items-center gap-2 shrink-0">
             <span class="text-sm text-muted">Condition:</span>
             <span class="text-sm font-semibold capitalize">{{ item.condition }}</span>
           </div>
-          <p class="text-muted text-sm leading-relaxed whitespace-pre-line max-h-36 overflow-y-auto pr-1">
-            {{ item.description }}
-          </p>
+          <div class="text-muted text-sm leading-relaxed flex-1 min-h-0 overflow-y-auto pr-2 pb-4 prose prose-sm dark:prose-invert max-w-none">
+            <MDC :value="item.description" />
+          </div>
         </div>
 
         <!-- Pinned bottom: sold alert + action buttons -->
-        <div class="mt-auto space-y-4">
+        <div class="mt-auto shrink-0 space-y-4 pt-4 border-t border-default/50">
           <UAlert
             v-if="item.status === 'sold'"
             color="neutral"

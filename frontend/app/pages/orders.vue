@@ -124,7 +124,7 @@ function formatDate(dateStr: string) {
             variant="subtle"
             class="capitalize"
           >
-            {{ row.original.status }}
+            {{ row.original.status?.replace(/_/g, ' ') }}
           </UBadge>
         </template>
 

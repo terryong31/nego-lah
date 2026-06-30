@@ -26,4 +26,7 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD curl -fsS http://localhost:8000/health || exit 1
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Multiple workers for real parallelism across cores. Override the count with
+# the WEB_CONCURRENCY env var (e.g. set it to ~2x vCPUs). Shell form so the env
+# var is expanded at runtime.
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port 8000 --workers ${WEB_CONCURRENCY:-4}"]

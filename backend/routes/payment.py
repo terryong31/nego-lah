@@ -30,6 +30,12 @@ def checkout(
 
         item = response.data[0]
 
+        # Don't open a checkout for an item that's already gone. Mirrors the
+        # guard in the AI agent's create_checkout_link; the atomic claim at the
+        # webhook is still the final authority if two buyers race past here.
+        if item.get('status') != 'available':
+            raise HTTPException(status_code=409, detail="Item is no longer available")
+
         # Convert price to cents
         price_cents = int(float(item['price']) * 100)
 
@@ -93,19 +99,20 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None))
     
     event_type = event['type']
     logger.info(f"✅ Event verified: {event_type}")
-    
+
     # Handle different event types
-    if event_type == 'checkout.session.completed':
-        logger.info("📦 Processing checkout.session.completed")
+    if event_type in ('checkout.session.completed', 'payment_link.completed'):
+        logger.info(f"📦 Processing {event_type}")
         result = handle_checkout_completed(event)
         logger.info(f"📦 Result: {result}")
-    elif event_type == 'payment_link.completed':
-        logger.info("📦 Processing payment_link.completed - treating as checkout")
-        result = handle_checkout_completed(event)
-        logger.info(f"📦 Result: {result}")
+
+        # If fulfilment hit a transient error, return 5xx so Stripe retries.
+        # "duplicate" / "race_lost" are terminal successes — ack with 200.
+        if result.get("status") == "error" and result.get("retry", True):
+            raise HTTPException(status_code=503, detail="Fulfilment failed, retry")
     else:
         logger.info(f"ℹ️ Ignoring event type: {event_type}")
-    
+
     return {"status": "success"}
 
 
@@ -175,163 +182,86 @@ def get_user_orders(user_id: str, token_user_id: str = Depends(verify_user_token
 
 @router.post("/confirm-payment")
 def confirm_payment(
-    item_id: str,
+    item_id: str = None,
     user_id: str = None,
     session_id: str = None,
     token_user_id: str = Depends(verify_user_token)
 ):
     """
-    Manually confirm a payment and mark item as sold.
-    This is a fallback when the Stripe webhook fails.
-
-    Called from the frontend after successful payment redirect.
-    Requires a valid JWT; the buyer can only confirm payments for themselves.
+    Frontend fallback after the success redirect, in case the Stripe webhook is
+    delayed. This NEVER marks an item sold on trust — it requires a Stripe
+    Checkout Session id that Stripe itself confirms as 'paid'. The actual
+    fulfilment is delegated to the same idempotent, race-safe path the webhook
+    uses, so calling this is always safe (duplicate calls are no-ops).
     """
     import stripe
     from env import STRIPE_API_KEY
+    from payment.fulfillment import fulfill_purchase
 
-    # Enforce the authenticated user; cannot confirm on behalf of another user
+    # Enforce the authenticated user; cannot confirm on behalf of another user.
     user_id = get_user_id_from_body_or_token(user_id, token_user_id)
 
     stripe.api_key = STRIPE_API_KEY
-    
-    logger.info(f"\n{'='*50}")
-    logger.info(f"📦 MANUAL PAYMENT CONFIRMATION")
-    logger.info(f"Item ID: {item_id}")
-    logger.info(f"User ID: {user_id}")
-    logger.info(f"Session ID: {session_id}")
-    logger.info(f"{'='*50}")
-    
-    try:
-        # If we have a session_id, verify with Stripe directly
-        if session_id:
-            try:
-                session = stripe.checkout.Session.retrieve(session_id)
-                if session.payment_status != 'paid':
-                    logger.error(f"❌ Payment not completed: {session.payment_status}")
-                    raise HTTPException(status_code=400, detail="Payment not completed")
-                
-                # Get user_id from session metadata if not provided
-                if not user_id:
-                    user_id = session.metadata.get('user_id')
-                
-                # Get item_id from session metadata if not provided
-                if not item_id:
-                    item_id = session.metadata.get('item_id')
-                    
-                logger.info(f"✅ Stripe session verified - payment_status: {session.payment_status}")
-            except stripe.error.InvalidRequestError:
-                logger.error(f"❌ Could not verify session {session_id}")
-                raise HTTPException(status_code=400, detail="Invalid Stripe session")
-        else:
-            # No session_id — this is likely a PaymentLink redirect.
-            # The webhook should handle the actual fulfilment. Here we just
-            # verify that the item is already sold (webhook processed) or
-            # that a pending payment exists in Redis (payment was initiated).
-            logger.info("ℹ️ No session_id — PaymentLink flow, checking item status")
-        
+
+    logger.info(f"📦 CONFIRM-PAYMENT item={item_id} user={user_id} session={session_id}")
+
+    # Without a verifiable Stripe session we cannot prove payment. Do NOT write
+    # anything — just report whether the webhook has already marked it sold so
+    # the frontend can show the right state. (Closes the free-item exploit.)
+    if not session_id:
         if not item_id:
             raise HTTPException(status_code=400, detail="item_id is required")
-        
-        # Check if item exists
-        item_response = admin_supabase.table('items').select('*').eq('id', item_id).execute()
-        if not item_response.data:
-            raise HTTPException(status_code=404, detail="Item not found")
-        
-        item = item_response.data[0]
-        
-        # Check if already sold
-        if item.get('status') == 'sold':
-            logger.info(f"ℹ️ Item already marked as sold")
-            # Invalidate cache just in case it's stale (this fixes the "sold but shows available" bug)
-            try:
-                from cache import invalidate_item_cache
-                invalidate_item_cache(item_id)
-                logger.info(f"✅ Cache forced invalidation for already-sold item {item_id}")
-            except Exception as e:
-                logger.warning(f"⚠️ Could not invalidate cache: {e}")
-                
-            return {"status": "already_sold", "message": "Item was already marked as sold"}
-        
-        # Mark item as sold
-        admin_supabase.table('items').update({
-            'status': 'sold',
-            'buyer_id': user_id
-        }).eq('id', item_id).execute()
-        logger.info(f"✅ Item marked as sold")
-        
-        # Invalidate cache so the status change shows up immediately
-        from cache import invalidate_item_cache
-        invalidate_item_cache(item_id)
-        logger.info(f"✅ Cache invalidated for item {item_id}")
-        
-        # Get the actual amount paid - priority order:
-        # 1. agreed_price from Redis (set during AI negotiation)
-        # 2. amount_total from Stripe session (if available)
-        # 3. Fallback to original item price
-        amount_paid = None
-        
-        # Check Redis for negotiated price first
-        if user_id:
-            try:
-                from payment.payment_state import get_pending_payment
-                pending = get_pending_payment(user_id, item_id)
-                if pending and pending.get('agreed_price'):
-                    amount_paid = float(pending['agreed_price'])
-                    logger.info(f"✅ Using negotiated price from Redis: RM{amount_paid}")
-            except Exception as e:
-                logger.warning(f"⚠️ Could not check pending payment: {e}")
-        
-        # Try Stripe session amount if no Redis price
-        if amount_paid is None and session_id:
-            try:
-                # Try to get the actual amount from the session we already retrieved
-                amount_paid = session.amount_total / 100  # Convert from cents
-                logger.info(f"✅ Using Stripe session amount: RM{amount_paid}")
-            except:
-                logger.warning(f"⚠️ Could not get amount from session")
-        
-        # Final fallback to item price
-        if amount_paid is None:
-            amount_paid = item.get('price', 0)
-            logger.info(f"⚠️ Using original item price as fallback: RM{amount_paid}")
-        
-        # Create order record
-        order_data = {
-            'item_id': item_id,
-            'item_name': item.get('name', 'Unknown'),
-            'buyer_id': user_id,
-            'amount': amount_paid,
-            'status': 'pending_info'
-        }
-        
-        if session_id:
-            order_data['stripe_payment_id'] = session_id
-            
-        order_result = admin_supabase.table('orders').insert(order_data).execute()
-        order_id = order_result.data[0]['id'] if order_result.data else None
-        logger.info(f"✅ Order created: {order_id}")
-        
-        # Also record in transactions table
-        try:
-            admin_supabase.table('transactions').insert({
-                'item_id': item_id,
-                'amount': item.get('price', 0),
-                'status': 'completed',
-                'stripe_payment_id': session_id
-            }).execute()
-            logger.info(f"✅ Transaction recorded")
-        except Exception as e:
-            logger.error(f"⚠️ Could not record transaction: {e}")
-        
-        return {
-            "status": "success",
-            "message": "Payment confirmed and item marked as sold",
-            "order_id": order_id
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"❌ Error confirming payment: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        item_response = admin_supabase.table('items').select('status').eq('id', item_id).execute()
+        if item_response.data and item_response.data[0].get('status') == 'sold':
+            return {"status": "already_sold", "message": "Item already marked as sold"}
+        # Webhook hasn't landed yet — tell the client to keep waiting.
+        return {"status": "pending", "message": "Awaiting payment confirmation"}
+
+    # Verify the session with Stripe — this is the proof of payment.
+    try:
+        session = stripe.checkout.Session.retrieve(session_id)
+    except stripe.error.InvalidRequestError:
+        logger.error(f"❌ Could not verify session {session_id}")
+        raise HTTPException(status_code=400, detail="Invalid Stripe session")
+
+    if session.payment_status != 'paid':
+        logger.error(f"❌ Session not paid: {session.payment_status}")
+        raise HTTPException(status_code=400, detail="Payment not completed")
+
+    metadata = session.metadata or {}
+    # Trust Stripe's metadata for item/user, falling back to the request.
+    item_id = metadata.get('item_id') or item_id
+    session_user_id = metadata.get('user_id')
+
+    # The authenticated caller must match the buyer recorded on the session.
+    if session_user_id and session_user_id != user_id:
+        logger.error("❌ Session buyer does not match authenticated user")
+        raise HTTPException(status_code=403, detail="Session does not belong to this user")
+    user_id = session_user_id or user_id
+
+    if not item_id:
+        raise HTTPException(status_code=400, detail="item_id is required")
+
+    payment_intent = session.payment_intent
+    amount = (session.amount_total or 0) / 100
+    item_name = (metadata.get('item_name')) or 'Item'
+
+    result = fulfill_purchase(
+        item_id=item_id,
+        user_id=user_id,
+        payment_intent=payment_intent,
+        amount=amount,
+        item_name=item_name,
+        buyer_email=(session.get('customer_details') or {}).get('email'),
+    )
+
+    status_map = {
+        "fulfilled": ("success", "Payment confirmed and item marked as sold"),
+        "duplicate": ("already_sold", "Item already marked as sold"),
+        "race_lost": ("refunded", "Item was sold to someone else; you have been refunded"),
+    }
+    if result["status"] in status_map:
+        code, msg = status_map[result["status"]]
+        return {"status": code, "message": msg, "order_id": result.get("order_id")}
+
+    raise HTTPException(status_code=500, detail="Could not confirm payment")

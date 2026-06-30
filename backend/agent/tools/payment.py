@@ -74,6 +74,13 @@ def create_checkout_link(item_id: str, agreed_price: float) -> str:
     item = response.data[0]
     item_name = item.get('name', 'Item')
     logger.info(f"✅ Item found: {item_name}")
+
+    # Don't generate a checkout link for an item that's already gone. This is a
+    # cheap first guard; the webhook still enforces an atomic claim at payment
+    # time in case two buyers race past this check simultaneously.
+    if item.get('status') != 'available':
+        logger.info(f"❌ Item not available (status={item.get('status')})")
+        return "Sorry, this item is no longer available - it may have just been sold. Let me know if you'd like to see something else!"
     
     # ========================================
     # CRITICAL: SERVER-SIDE PRICE VALIDATION

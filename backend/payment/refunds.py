@@ -46,17 +46,30 @@ def process_refund(item_id: str, reason: str = None) -> Dict:
             payment_intent=payment_id,
             reason=reason or "requested_by_customer"
         )
-        
-        # Mark item as available again
+
+        # Mark item available again and clear the buyer so it can be re-sold.
         admin_supabase.table('items').update({
-            'status': 'available'
+            'status': 'available',
+            'buyer_id': None
         }).eq('id', item_id).execute()
-        
-        # Update transaction status
+
+        # Invalidate cache so the relisted item shows up immediately.
+        try:
+            from cache import invalidate_item_cache
+            invalidate_item_cache(item_id)
+        except Exception as e:
+            print(f"⚠️ Could not invalidate cache: {e}")
+
+        # Update the order tied to this exact payment so buyer order history is
+        # accurate (the legacy transactions row is updated for completeness too).
+        admin_supabase.table('orders').update({
+            'status': 'refunded'
+        }).eq('stripe_payment_id', payment_id).execute()
+
         admin_supabase.table('transactions').update({
             'status': 'refunded'
         }).eq('item_id', item_id).execute()
-        
+
         print(f"✅ Refund processed for item {item_id}. Refund ID: {refund.id}")
         
         return {

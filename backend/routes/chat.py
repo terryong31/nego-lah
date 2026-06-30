@@ -3,52 +3,16 @@ from fastapi.responses import StreamingResponse
 from cache import check_rate_limit, check_ai_token_limit, track_ai_tokens
 from connector import admin_supabase
 from auth_middleware import verify_user_token, get_user_id_from_body_or_token
-import asyncio
-import threading
 import json
 import base64
 from logger import logger
 
 router = APIRouter(prefix="", tags=["Chat"])
 
-# Sentinel marking the end of a bridged stream.
-_STREAM_DONE = object()
-
 
 def _sse(obj: dict) -> str:
     """Serialize a dict as a single Server-Sent Event line."""
     return f"data: {json.dumps(obj)}\n\n"
-
-
-async def _aiter_in_thread(make_sync_gen):
-    """
-    Run a BLOCKING sync generator in a dedicated worker thread and yield its
-    items asynchronously, so the LLM's blocking network I/O never stalls the
-    single event loop (which also serves the admin console and every other
-    request). The whole generator runs in ONE thread, so the agent's
-    request-scoped ContextVars (user/item) stay consistent across tool calls.
-    """
-    loop = asyncio.get_running_loop()
-    queue: asyncio.Queue = asyncio.Queue()
-
-    def worker():
-        try:
-            for item in make_sync_gen():
-                loop.call_soon_threadsafe(queue.put_nowait, item)
-        except Exception as exc:  # surface agent errors to the async side
-            loop.call_soon_threadsafe(queue.put_nowait, exc)
-        finally:
-            loop.call_soon_threadsafe(queue.put_nowait, _STREAM_DONE)
-
-    threading.Thread(target=worker, name="chat-stream", daemon=True).start()
-
-    while True:
-        item = await queue.get()
-        if item is _STREAM_DONE:
-            break
-        if isinstance(item, Exception):
-            raise item
-        yield item
 
 
 @router.get("/chat/history/{user_id}")
@@ -229,15 +193,15 @@ async def chat_stream(request: Request):
         collected = []
         started = False
         try:
-            # Run the blocking agent stream off the event loop so concurrent
-            # chats (and the admin console) aren't serialized behind it.
-            stream = _aiter_in_thread(lambda: chat_stream(
+            # chat_stream is a native async generator (LangGraph .astream), so the
+            # LLM's network I/O yields control and never blocks the event loop —
+            # concurrent chats and the admin console stay responsive.
+            async for delta in chat_stream(
                 user_id=user_id,
                 message=message or "Please analyze these files.",
                 item_id=item_id,
                 files=file_data if file_data else None,
-            ))
-            async for delta in stream:
+            ):
                 if not delta:
                     continue
                 if isinstance(delta, dict):

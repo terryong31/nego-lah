@@ -1,6 +1,8 @@
 import sys
 sys.path.append('..')
 
+import asyncio
+
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_core.tools import tool
@@ -45,7 +47,7 @@ def _get_model():
 # --- Sub-Agent Wrapper Tools ---
 
 @tool
-def call_item_agent(query: str) -> str:
+async def call_item_agent(query: str) -> str:
     """
     Call the Inventory/Item Agent to search for items, get details, or check availability.
     Use this for ANY question regarding "what do you have", "search for X", or "details of item Y".
@@ -55,11 +57,11 @@ def call_item_agent(query: str) -> str:
         query: The user's question or search request regarding items
     """
     logger.info(f"📞 Calling Item Agent with: {query}")
-    response = item_agent.invoke({"messages": [HumanMessage(content=query)]})
+    response = await item_agent.ainvoke({"messages": [HumanMessage(content=query)]})
     return response['messages'][-1].content
 
 @tool
-def call_stripe_agent(request: str) -> str:
+async def call_stripe_agent(request: str) -> str:
     """
     Call the Payment/Stripe Agent to create checkout links, cancel payments, or handle shipping info.
     Use this ONLY when:
@@ -98,7 +100,7 @@ def call_stripe_agent(request: str) -> str:
             5. If not found in database, return 'NOT_FOUND'.
             """
             
-            resolution_response = item_agent.invoke({"messages": [HumanMessage(content=resolution_query)]})
+            resolution_response = await item_agent.ainvoke({"messages": [HumanMessage(content=resolution_query)]})
             resolution_content = resolution_response['messages'][-1].content
             if isinstance(resolution_content, list):
                 # Join text parts if it's a list (e.g. from Gemini)
@@ -122,7 +124,7 @@ def call_stripe_agent(request: str) -> str:
             else:
                 logger.info(f"❌ Could not resolve item_id from history.")
     
-    response = stripe_agent.invoke({"messages": [HumanMessage(content=request)]})
+    response = await stripe_agent.ainvoke({"messages": [HumanMessage(content=request)]})
     return response['messages'][-1].content
 
 
@@ -276,9 +278,9 @@ Buyer: {message}"""
     return messages
 
 
-def chat(user_id: str, message: str, item_id: str = None, files: list = None) -> str:
+async def chat(user_id: str, message: str, item_id: str = None, files: list = None) -> str:
     """
-    Chat with the negotiation agent (blocking; returns the full response).
+    Chat with the negotiation agent (awaitable; returns the full response).
 
     Args:
         user_id: Unique identifier for the buyer
@@ -289,33 +291,38 @@ def chat(user_id: str, message: str, item_id: str = None, files: list = None) ->
     Returns:
         Agent's response
     """
-    messages = _build_messages(user_id, message, item_id, files)
+    # Sync Redis/Supabase I/O is offloaded so it never blocks the event loop.
+    messages = await asyncio.to_thread(_build_messages, user_id, message, item_id, files)
 
     # Save user message
-    conversation_memory.add_message(user_id, "human", message, item_id, source="human")
+    await asyncio.to_thread(
+        conversation_memory.add_message, user_id, "human", message, item_id, source="human"
+    )
 
     # --- CONTEXT INJECTION ---
-    # Set request-scoped context (ContextVars). All tools (and sub-agent tools)
-    # read user_id/item_id from agent.context, so this is isolated per request
-    # and safe under concurrency - no cross-request leakage.
+    # Set request-scoped context (ContextVars) in THIS task so the agent run and
+    # its tools see it. Async tasks inherit a copy of the current context, so this
+    # is isolated per request and safe under concurrency.
     set_context(user_id=user_id, item_id=item_id)
 
-    # Invoke Customer Agent
+    # Invoke Customer Agent (async — frees the loop while the LLM works).
     logger.info(f"🤖 Customer Agent processing message for user {user_id}...")
-    result = _get_customer_agent().invoke({"messages": messages})
+    result = await _get_customer_agent().ainvoke({"messages": messages})
 
     # Extract response
     agent_response = _extract_text_from_content(result["messages"][-1].content)
 
     # Save agent response
-    conversation_memory.add_message(user_id, "ai", agent_response, item_id)
+    await asyncio.to_thread(conversation_memory.add_message, user_id, "ai", agent_response, item_id)
 
     return agent_response
 
 
-def chat_stream(user_id: str, message: str, item_id: str = None, files: list = None):
+async def chat_stream(user_id: str, message: str, item_id: str = None, files: list = None):
     """
-    Streaming variant of chat(). Yields text deltas as the agent produces them.
+    Streaming variant of chat(). Async generator yielding text deltas as the
+    agent produces them, using LangGraph's native async streaming (.astream) so
+    the LLM's network I/O never blocks the event loop.
 
     Uses LangGraph's token-level streaming (stream_mode="messages"). Only text
     from the supervisor's own LLM turns is forwarded - tool-call decision chunks
@@ -332,18 +339,22 @@ def chat_stream(user_id: str, message: str, item_id: str = None, files: list = N
     Yields:
         str: incremental text deltas of the agent's response
     """
-    messages = _build_messages(user_id, message, item_id, files)
+    # Offload sync Redis/Supabase setup so it doesn't block the loop.
+    messages = await asyncio.to_thread(_build_messages, user_id, message, item_id, files)
 
     # Save user message
-    conversation_memory.add_message(user_id, "human", message, item_id, source="human")
+    await asyncio.to_thread(
+        conversation_memory.add_message, user_id, "human", message, item_id, source="human"
+    )
 
-    # Request-scoped context for tools (see chat() for rationale).
+    # Request-scoped context for tools (see chat() for rationale). Set in THIS
+    # task so the agent run + tools inherit it.
     set_context(user_id=user_id, item_id=item_id)
 
     logger.info(f"🤖 Customer Agent streaming response for user {user_id}...")
 
     collected = []
-    for chunk, _metadata in _get_customer_agent().stream(
+    async for chunk, _metadata in _get_customer_agent().astream(
         {"messages": messages}, stream_mode="messages"
     ):
         # Forward only assistant text; skip tool messages and tool-call chunks.
@@ -379,7 +390,7 @@ def chat_stream(user_id: str, message: str, item_id: str = None, files: list = N
 
     # Persist the assembled response once the stream is done.
     agent_response = "".join(collected)
-    conversation_memory.add_message(user_id, "ai", agent_response, item_id)
+    await asyncio.to_thread(conversation_memory.add_message, user_id, "ai", agent_response, item_id)
 
 
 

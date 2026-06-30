@@ -6,7 +6,24 @@ const toast = useToast()
 
 const confirming = ref(true)
 const success = ref(false)
+const refunded = ref(false)
 const errorMessage = ref('')
+
+// Map a backend outcome to the right UI state. `refunded` = this buyer lost a
+// race (someone paid for the 1-of-1 item first) and was auto-refunded.
+function applyOutcome(status?: string) {
+  if (status === 'refunded') {
+    refunded.value = true
+    toast.add({
+      title: 'Item no longer available',
+      description: 'Someone bought it just before your payment. You have been fully refunded.',
+      color: 'warning'
+    })
+  } else {
+    success.value = true
+    toast.add({ title: 'Payment confirmed!', description: 'Your order has been recorded successfully.', color: 'success' })
+  }
+}
 
 onMounted(async () => {
   const itemId = route.query.item_id as string
@@ -19,30 +36,25 @@ onMounted(async () => {
   }
 
   // --- Strategy ---
-  // 1. If we have a session_id (checkout.Session flow), verify with Stripe via backend.
-  // 2. If we don't (PaymentLink flow), poll the item status — the webhook should
-  //    have already marked it as sold. If not yet, retry a few times.
-  // 3. As a final fallback, call confirm-payment (which will verify via Stripe API).
+  // 1. With a session_id, the backend verifies with Stripe and returns a
+  //    definitive outcome ('success' | 'already_sold' | 'refunded').
+  // 2. Without one (rare fallback), poll THIS user's orders for the item — the
+  //    order status (refunded vs not) tells us if they won or lost the race.
+  //    Checking the item's own status is not enough: for the loser it shows
+  //    'sold' (to the winner), which would look like success.
 
   if (sessionId) {
-    // Standard checkout session flow — backend verifies with Stripe
     try {
-      await call('/payment/confirm-payment', {
+      const res = await call<{ status?: string }>('/payment/confirm-payment', {
         method: 'POST',
-        query: {
-          item_id: itemId,
-          user_id: user.value?.id,
-          session_id: sessionId
-        }
+        query: { item_id: itemId, user_id: user.value?.id, session_id: sessionId }
       })
-      success.value = true
-      toast.add({ title: 'Payment confirmed!', description: 'Your order has been recorded successfully.', color: 'success' })
+      applyOutcome(res?.status)
     } catch (err) {
       const e = err as { data?: { detail?: string, status?: string }, message?: string }
-      // If already sold, treat as success (webhook got there first)
+      // Webhook got there first and returned an already-sold success.
       if (e?.data?.detail?.includes?.('already_sold') || e?.data?.status === 'already_sold') {
-        success.value = true
-        toast.add({ title: 'Payment confirmed!', description: 'Your order has been recorded.', color: 'success' })
+        applyOutcome('already_sold')
       } else {
         errorMessage.value = e?.data?.detail || e?.message || 'Payment confirmation failed.'
         toast.add({ title: 'Confirmation failed', description: errorMessage.value, color: 'error' })
@@ -51,39 +63,39 @@ onMounted(async () => {
       confirming.value = false
     }
   } else {
-    // PaymentLink flow — no session_id available.
-    // Poll the item to check if the webhook already marked it as sold.
-    let sold = false
+    // PaymentLink fallback with no session_id: poll this user's orders.
+    let outcome: string | null = null
     for (let attempt = 0; attempt < 6; attempt++) {
       try {
-        const item = await call<{ status?: string }>(`/items/${itemId}`)
-        if (item?.status === 'sold') {
-          sold = true
+        const data = await call<{ orders?: Array<{ item_id?: string, status?: string }> }>(
+          `/payment/orders/user/${user.value?.id}`
+        )
+        const order = data?.orders?.find(o => o.item_id === itemId)
+        if (order) {
+          outcome = order.status === 'refunded' ? 'refunded' : 'success'
           break
         }
       } catch {
-        // Item fetch failed, keep trying
+        // keep trying
       }
-      // Wait 2 seconds between polls (webhook may take a moment)
       await new Promise(r => setTimeout(r, 2000))
     }
 
-    if (sold) {
-      success.value = true
-      toast.add({ title: 'Payment confirmed!', description: 'Your order has been recorded successfully.', color: 'success' })
+    if (outcome) {
+      applyOutcome(outcome)
     } else {
-      // Last resort: try the confirm-payment endpoint without session_id
-      // This will only work if the backend can verify via other means
+      // Last resort: ask the backend (it can confirm if the webhook landed).
       try {
-        await call('/payment/confirm-payment', {
+        const res = await call<{ status?: string }>('/payment/confirm-payment', {
           method: 'POST',
-          query: {
-            item_id: itemId,
-            user_id: user.value?.id
-          }
+          query: { item_id: itemId, user_id: user.value?.id }
         })
-        success.value = true
-        toast.add({ title: 'Payment confirmed!', description: 'Your order has been recorded.', color: 'success' })
+        if (res?.status === 'already_sold' || res?.status === 'success') {
+          applyOutcome(res?.status)
+        } else {
+          errorMessage.value = 'We could not confirm your payment yet. If you were charged, it will be recorded shortly — check My Orders, or contact support with your Stripe receipt.'
+          toast.add({ title: 'Verification pending', description: 'Could not confirm payment automatically.', color: 'warning' })
+        }
       } catch {
         errorMessage.value = 'We could not verify your payment automatically. If you were charged, please contact support with your Stripe receipt.'
         toast.add({ title: 'Verification pending', description: 'Could not confirm payment automatically.', color: 'warning' })
@@ -137,6 +149,38 @@ onMounted(async () => {
           <UButton
             label="Back to Storefront"
             to="/"
+            variant="outline"
+            class="flex-1 justify-center"
+          />
+        </div>
+      </div>
+
+      <div
+        v-else-if="refunded"
+        class="space-y-4 flex flex-col items-center"
+      >
+        <UIcon
+          name="i-lucide-rotate-ccw"
+          class="size-16 text-warning"
+        />
+        <h2 class="text-2xl font-black text-highlighted">
+          Item No Longer Available
+        </h2>
+        <p class="text-sm text-muted">
+          Someone completed payment for this one-of-a-kind item moments before you.
+          Your payment has been <span class="font-semibold">fully refunded</span> —
+          it may take a few days to appear on your statement.
+        </p>
+        <div class="pt-4 flex gap-4 w-full">
+          <UButton
+            label="Browse Other Items"
+            to="/"
+            color="primary"
+            class="flex-1 justify-center"
+          />
+          <UButton
+            label="View My Orders"
+            to="/orders"
             variant="outline"
             class="flex-1 justify-center"
           />

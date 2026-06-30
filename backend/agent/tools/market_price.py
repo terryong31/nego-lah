@@ -79,7 +79,7 @@ class MarketPriceService:
                 raise ValueError("GEMINI_API_KEY not set")
                 
             model = ChatGoogleGenerativeAI(
-                model="gemini-3-flash-preview",
+                model="gemini-3.5-flash",
                 temperature=0.1,
                 google_api_key=GEMINI_API_KEY
             )

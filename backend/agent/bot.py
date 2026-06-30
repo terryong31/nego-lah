@@ -4,10 +4,7 @@ sys.path.append('..')
 import asyncio
 
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
-from langchain_core.tools import tool
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
 from langchain_core.messages import AIMessageChunk
@@ -38,7 +35,7 @@ def _get_model():
     if not GEMINI_API_KEY:
         raise RuntimeError("Missing GEMINI_API_KEY")
     _model = ChatGoogleGenerativeAI(
-        model="gemini-3-flash-preview",
+        model="gemini-3.5-flash",
         temperature=0.7,
         google_api_key=GEMINI_API_KEY,
     )

@@ -274,12 +274,16 @@ def collect_shipping_info(order_id: str, recipient_name: str, phone: str, addres
 @tool
 def web_search(query: str) -> str:
     """
-    Search the web for information using DuckDuckGo.
-    Use this to find item prices, specs, or verify information.
-    
+    Look up the MARKET VALUE / specs of an item you are selling, to justify a price.
+
+    Use ONLY for product pricing/spec research about an item in the store (e.g.
+    "used Casio VX-4 pocket computer price"). This is NOT a general search engine:
+    never use it for coding, general knowledge, homework, or any request unrelated
+    to valuing an item for sale. For off-topic requests, refuse instead of searching.
+
     Args:
-        query: Search query
-    
+        query: A product/pricing research query about an item in the store
+
     Returns:
         Summary of search results
     """

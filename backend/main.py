@@ -47,15 +47,28 @@ async def _payment_cleanup_loop():
     overlapping runs (e.g. multiple replicas) are harmless.
     """
     from payment.payment_state import cleanup_expired_payments
+    from cache import redis_client
+
+    def _claim_cleanup_slot() -> bool:
+        # With multiple workers each runs this loop. A short Redis lock ensures
+        # only ONE worker actually runs cleanup per cycle. If there's no shared
+        # Redis (single process / in-memory), just run.
+        try:
+            return bool(redis_client.set(
+                "payment:cleanup:lock", "1", nx=True, ex=CLEANUP_INTERVAL_SECONDS
+            ))
+        except Exception:
+            return True
 
     # Small initial delay so startup isn't competing with first requests.
     await asyncio.sleep(30)
     while True:
         try:
-            # Run the blocking Redis/Stripe work off the event loop.
-            cleaned = await asyncio.to_thread(cleanup_expired_payments)
-            if cleaned:
-                logger.info(f"🧹 Payment cleanup released {cleaned} abandoned link(s)")
+            if _claim_cleanup_slot():
+                # Run the blocking Redis/Stripe work off the event loop.
+                cleaned = await asyncio.to_thread(cleanup_expired_payments)
+                if cleaned:
+                    logger.info(f"🧹 Payment cleanup released {cleaned} abandoned link(s)")
         except Exception as e:
             logger.error(f"❌ Payment cleanup loop error: {e}")
         await asyncio.sleep(CLEANUP_INTERVAL_SECONDS)

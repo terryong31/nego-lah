@@ -16,7 +16,7 @@ const toast = useToast()
 
 const id = computed(() => route.params.id as string)
 
-const { data: item, pending, error } = useAsyncData(
+const { data: item, pending, error, refresh } = useAsyncData(
   `item-detail-${id.value}`,
   () => call<Item>(`/items/${id.value}`)
 )
@@ -59,7 +59,16 @@ async function handleBuyNow() {
       throw new Error('No checkout URL returned')
     }
   } catch (err) {
-    toast.add({ title: 'Checkout failed', description: err instanceof Error ? err.message : 'Unable to start transaction', color: 'error' })
+    // 409 = the item was sold/reserved between page load and checkout. Refresh
+    // so the button flips to the "sold" state, and tell the user plainly.
+    const status = (err as { statusCode?: number, status?: number })?.statusCode
+      ?? (err as { status?: number })?.status
+    if (status === 409) {
+      toast.add({ title: 'No longer available', description: 'Sorry, this item has just been sold.', color: 'warning' })
+      await refresh()
+    } else {
+      toast.add({ title: 'Checkout failed', description: err instanceof Error ? err.message : 'Unable to start transaction', color: 'error' })
+    }
   } finally {
     buyLoading.value = false
   }

@@ -1,5 +1,7 @@
 from fastapi import FastAPI, Request
 import os
+import asyncio
+import contextlib
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -7,6 +9,8 @@ from slowapi.errors import RateLimitExceeded
 
 # Import configuration
 import json
+
+from logger import logger
 
 # Import routers
 from routes.user import router as user_router
@@ -31,6 +35,50 @@ if sentry_dsn:
 # /docs stays available.
 IS_PROD = os.environ.get("ENV", "development").lower() in ("production", "prod")
 
+# How often the abandoned-payment cleanup runs (seconds). Default hourly.
+CLEANUP_INTERVAL_SECONDS = int(os.environ.get("CLEANUP_INTERVAL_SECONDS", "3600"))
+
+
+async def _payment_cleanup_loop():
+    """
+    Periodically release abandoned payment links: deactivate the Stripe link +
+    archive the product once its 3-day TTL has passed. Runs in-process so no
+    external cron is required. cleanup_expired_payments() is idempotent, so
+    overlapping runs (e.g. multiple replicas) are harmless.
+    """
+    from payment.payment_state import cleanup_expired_payments
+
+    # Small initial delay so startup isn't competing with first requests.
+    await asyncio.sleep(30)
+    while True:
+        try:
+            # Run the blocking Redis/Stripe work off the event loop.
+            cleaned = await asyncio.to_thread(cleanup_expired_payments)
+            if cleaned:
+                logger.info(f"🧹 Payment cleanup released {cleaned} abandoned link(s)")
+        except Exception as e:
+            logger.error(f"❌ Payment cleanup loop error: {e}")
+        await asyncio.sleep(CLEANUP_INTERVAL_SECONDS)
+
+
+@contextlib.asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # Serverless (Vercel) can't keep a background loop alive across invocations;
+    # only start the worker on a long-running server. Opt out with
+    # DISABLE_PAYMENT_CLEANUP=1 if you run cleanup via an external scheduler.
+    task = None
+    if not os.environ.get("VERCEL") and os.environ.get("DISABLE_PAYMENT_CLEANUP") != "1":
+        task = asyncio.create_task(_payment_cleanup_loop())
+        logger.info("🧹 Payment cleanup worker started")
+    try:
+        yield
+    finally:
+        if task:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+
 app = FastAPI(
     title="Second-Hand Store API",
     description="Fully autonomous second-hand store with AI negotiation",
@@ -38,7 +86,8 @@ app = FastAPI(
     root_path="/api" if os.environ.get("VERCEL") else "",
     docs_url=None if IS_PROD else "/docs",
     redoc_url=None if IS_PROD else "/redoc",
-    openapi_url=None if IS_PROD else "/openapi.json"
+    openapi_url=None if IS_PROD else "/openapi.json",
+    lifespan=lifespan,
 )
 
 # Setup rate limiter

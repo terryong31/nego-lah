@@ -3,6 +3,9 @@ name: Deploy to Lightsail
 on:
   push:
     branches: [ main ]
+    paths-ignore:
+      - 'README.md'
+      - 'docs/**'
 
 # Images are published to GitHub Container Registry (GHCR) under the repo owner.
 env:

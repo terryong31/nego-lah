@@ -31,7 +31,11 @@ def find_user_by_email(email: str):
 
 
 def main():
-    email = sys.argv[1] if len(sys.argv) > 1 else "terryong30@gmail.com"
+    if len(sys.argv) != 2:
+        print(__doc__)
+        sys.exit(2)
+
+    email = sys.argv[1]
     user = find_user_by_email(email)
     if not user:
         print(f"No user found for {email}")

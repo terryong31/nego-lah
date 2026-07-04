@@ -8,7 +8,7 @@ from ..tools.items import get_item_info, search_items, list_all_items
 
 # Initialize the model
 model = ChatGoogleGenerativeAI(
-    model="gemini-3-flash-preview",
+    model="gemini-3.5-flash",
     temperature=0.3, # Low temperature for factual retrieval
     google_api_key=GEMINI_API_KEY
 )

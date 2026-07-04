@@ -20,7 +20,7 @@ class ImageAnalyzerService:
     
     def __init__(self):
         self.model = ChatGoogleGenerativeAI(
-            model="gemini-3-flash-preview",
+            model="gemini-3.5-flash",
             temperature=0.3,
             google_api_key=GEMINI_API_KEY
         ) if GEMINI_API_KEY else None

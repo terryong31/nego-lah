@@ -93,9 +93,9 @@ const lastUpdated = 'June 2026'
         <p>
           Questions about this policy? Reach out to
           <ULink
-            to="mailto:hello@negolah.my"
+            to="mailto:support@negolah.my"
             class="text-primary"
-          >hello@negolah.my</ULink>.
+          >support@negolah.my</ULink>.
         </p>
       </section>
     </div>

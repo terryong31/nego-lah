@@ -17,6 +17,7 @@
     "@nuxt/ui": "^4.9.0",
     "@nuxtjs/mdc": "^0.22.0",
     "@nuxtjs/supabase": "^2.0.9",
+    "@sentry/nuxt": "^10.63.0",
     "ai": "^7.0.4",
     "nuxt": "^4.4.8",
     "tailwindcss": "^4.3.1",

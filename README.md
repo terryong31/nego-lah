@@ -19,12 +19,62 @@ A second-hand marketplace where prices aren't fixed — buyers negotiate with an
 
 ## Architecture
 
+### System Overview
+
+```mermaid
+graph TD
+    Client([Browser Client])
+
+    subgraph CICD["CI/CD"]
+        GHA["GitHub Actions\n(test, build, push)"]
+        GHCR[("GHCR\nimage registry")]
+        GHA -->|push image| GHCR
+    end
+
+    subgraph Lightsail["AWS Lightsail instance"]
+        Caddy["Caddy\n(TLS termination + reverse proxy)"]
+        Frontend["Frontend container\nNuxt 4 SSR (Nitro :3000)"]
+        Backend["Backend container\nFastAPI (:8000)\nLangGraph agent + payment-cleanup loop"]
+        Redis[("Redis\nsessions / rate-limit / cache")]
+
+        Caddy -->|"/api/*"| Backend
+        Caddy -->|"everything else"| Frontend
+        Backend --> Redis
+    end
+
+    Supabase[("Supabase\nPostgres + Auth + Storage")]
+    Gemini["Gemini API"]
+    Stripe["Stripe"]
+    Resend["Resend\n(inbound + outbound email)"]
+    Sentry["Sentry\n(errors, logs, profiling)"]
+
+    Client -->|HTTPS| Caddy
+    Frontend -->|client SDK| Supabase
+    Backend -->|Postgres/Auth/Storage| Supabase
+    Backend --> Gemini
+    Backend --> Stripe
+    Backend <-->|webhook + forward| Resend
+    Backend --> Sentry
+
+    GHCR -.->|"docker compose pull"| Lightsail
+
+    classDef infra fill:#d1e7dd,stroke:#0f5132,color:#000
+    classDef store fill:#cfe2ff,stroke:#084298,color:#000
+    classDef external fill:#fff3cd,stroke:#856404,color:#000
+
+    class Caddy,Frontend,Backend infra
+    class Redis,Supabase,GHCR store
+    class Gemini,Stripe,Resend,Sentry,GHA external
+```
+
+### Agent Architecture
+
 The agent side is a supervisor (Customer Agent) delegating to two specialized sub-agents:
 
 ```mermaid
 graph TD
     User([User]) --> |chat| CustomerAgent["Customer Agent (Supervisor)"]
-    
+  
     subgraph Customer Agent Tools
         ItemAgent["Item Agent"]
         StripeAgent["Stripe Agent"]
@@ -50,7 +100,7 @@ graph TD
     ItemAgent -->|get_item_info| GetItemInfo
     ItemAgent -->|search_items| SearchItems
     ItemAgent -->|list_all_items| ListItems
-    
+  
     subgraph Stripe Agent Tools
         CreateLink["create_checkout_link"]
         CancelPayment["cancel_payment"]
@@ -63,7 +113,7 @@ graph TD
 
     classDef agent fill:#d1e7dd,stroke:#0f5132,color:#000
     classDef tool fill:#fff3cd,stroke:#856404,color:#000
-    
+  
     class CustomerAgent,ItemAgent,StripeAgent agent
     class EvalOffer,Discount,WebSearch,Orders,GetItemInfo,SearchItems,ListItems,CreateLink,CancelPayment,ShippingInfo tool
 ```
@@ -140,4 +190,4 @@ All rights reserved — see [LICENSE](LICENSE). The source is here to read, not 
 
 ---
 
-[Terry Ong](https://github.com/terryong31) · © 2026
+[Terry Ong](https://github.com/terryong31) © 2026

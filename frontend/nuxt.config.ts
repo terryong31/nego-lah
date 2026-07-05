@@ -4,7 +4,8 @@ export default defineNuxtConfig({
     '@nuxt/eslint',
     '@nuxt/ui',
     '@nuxtjs/supabase',
-    '@nuxtjs/mdc'
+    '@nuxtjs/mdc',
+    '@sentry/nuxt/module'
   ],
 
   devtools: {
@@ -15,7 +16,10 @@ export default defineNuxtConfig({
 
   runtimeConfig: {
     public: {
-      apiBaseUrl: process.env.API_BASE_URL || 'http://localhost:8000'
+      apiBaseUrl: process.env.API_BASE_URL || 'http://localhost:8000',
+      // Not secret (it's shipped to every browser anyway) — safe to leave empty
+      // by default. Set NUXT_PUBLIC_SENTRY_DSN to enable.
+      sentryDsn: ''
     }
   },
 
@@ -24,6 +28,14 @@ export default defineNuxtConfig({
   routeRules: {
     '/_console/**': { ssr: false },
     '/_console': { ssr: false }
+  },
+
+  // Nuxt disables client source maps by default. "hidden" generates them (so
+  // Sentry can upload readable stack traces) without adding a `sourceMappingURL`
+  // comment to the shipped JS — the .map files are then deleted post-upload
+  // (see the `sentry.sourcemaps` option below) so they're never served publicly.
+  sourcemap: {
+    client: 'hidden'
   },
 
   compatibilityDate: '2025-01-15',
@@ -43,6 +55,27 @@ export default defineNuxtConfig({
   // Move it off `/api` so it stays on the Nuxt server.
   icon: {
     localApiEndpoint: '/_nuxt_icon'
+  },
+
+  // The production image runs `node .output/server/index.mjs` directly (no
+  // `--import` flag available), so server-side Sentry needs the top-level-import
+  // auto-injection mode to instrument Nitro.
+  //
+  // org/project/authToken are read from SENTRY_ORG / SENTRY_PROJECT /
+  // SENTRY_AUTH_TOKEN, set only at Docker build time (see frontend/Dockerfile
+  // and .github/workflows/deploy.yml) — never present in the runtime container.
+  // Source map upload is skipped automatically whenever authToken is unset
+  // (e.g. local dev builds), so nothing breaks without it.
+  sentry: {
+    autoInjectServerSentry: 'top-level-import',
+    org: process.env.SENTRY_ORG,
+    project: process.env.SENTRY_PROJECT,
+    authToken: process.env.SENTRY_AUTH_TOKEN,
+    // Maps are uploaded to Sentry, then deleted locally so the shipped image
+    // never carries readable, unminified source.
+    sourcemaps: {
+      filesToDeleteAfterUpload: ['.output/**/*.map']
+    }
   },
 
   supabase: {

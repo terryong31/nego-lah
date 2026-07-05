@@ -64,6 +64,9 @@ services:
       # browser-facing value, so this is not a secret.
       - NUXT_PUBLIC_SUPABASE_URL=${SUPABASE_URL:-https://umtsegjkgpfefjvhyysh.supabase.co}
       - NUXT_PUBLIC_SUPABASE_KEY=${SUPABASE_KEY:-sb_publishable_obtnwe54q7npFVPRcgoxZg_ICdZyo8w}
+      # Sentry DSN is not secret (it's shipped to every browser regardless), so
+      # it's safe to default here the same way the Supabase publishable key is.
+      - NUXT_PUBLIC_SENTRY_DSN=${SENTRY_DSN:-https://3c5f62060fc1a9ef26ef72b6be0ba4b1@o4511643096907776.ingest.us.sentry.io/4511683720970240}
     depends_on:
       backend:
         condition: service_started

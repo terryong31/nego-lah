@@ -11,7 +11,17 @@ RUN bun install --frozen-lockfile
 # Build the app. The Nitro `node-server` preset emits a self-contained
 # server bundle into .output/ (run with `node .output/server/index.mjs`).
 COPY . .
-RUN bun run build
+
+# Sentry source map upload (build-time only, see nuxt.config.ts `sentry` key).
+# org/project aren't secret; the auth token is passed as a BuildKit secret
+# (not a regular ARG/ENV) so it never ends up in an image layer or build cache.
+ARG SENTRY_ORG
+ARG SENTRY_PROJECT
+ENV SENTRY_ORG=$SENTRY_ORG \
+    SENTRY_PROJECT=$SENTRY_PROJECT
+
+RUN --mount=type=secret,id=sentry_auth_token,env=SENTRY_AUTH_TOKEN \
+    bun run build
 
 # ---- Runtime stage: just Node + the built server output ----
 FROM node:24-slim AS runtime

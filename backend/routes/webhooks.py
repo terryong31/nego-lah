@@ -1,3 +1,7 @@
+import base64
+import email as email_lib
+from email import policy as email_policy
+
 import httpx
 from fastapi import APIRouter, HTTPException, Request
 from svix.webhooks import Webhook, WebhookVerificationError
@@ -19,8 +23,9 @@ async def resend_webhook(request: Request):
     """
     Handle Resend inbound-email webhooks (event: email.received).
 
-    negolah.my has no real mailbox yet, so every received email is simply
-    forwarded to RESEND_FORWARD_TO via Resend's send API.
+    negolah.my has no real mailbox yet, so every received email — including
+    inline images and real file attachments — is forwarded to RESEND_FORWARD_TO
+    via Resend's send API.
     """
     payload = await request.body()
     headers = {
@@ -55,8 +60,11 @@ async def resend_webhook(request: Request):
         logger.info(f"ℹ️ Ignoring inbound email — recipient(s) not forwarded: {recipients}")
         return {"status": "ignored"}
 
-    recipient = allowed_recipients[0]
-    logger.info(f"📧 Inbound email received — to={recipient} from={sender} subject={subject!r}")
+    # A single email can be addressed to more than one allowlisted alias at
+    # once (e.g. support@ + admin@ + contact@ all in "to"). Tag all of them
+    # rather than just the first — one forwarded copy still goes out either way.
+    recipient_tag = ", ".join(allowed_recipients)
+    logger.info(f"📧 Inbound email received — to={recipient_tag} from={sender} subject={subject!r}")
 
     try:
         async with httpx.AsyncClient() as client:
@@ -64,26 +72,63 @@ async def resend_webhook(request: Request):
 
             # The webhook payload only carries metadata (from/to/subject/etc.) —
             # the actual body has to be fetched separately by email_id.
+            # html_format=data_uri inlines any embedded images as base64 data:
+            # URIs directly in the html; otherwise they're left as cid: references
+            # that only resolve against the original message's own attachments,
+            # which we don't carry over — Gmail would show a broken image icon.
             fetch_resp = await client.get(
                 f"https://api.resend.com/emails/receiving/{email_id}",
                 headers=auth_headers,
+                params={"html_format": "data_uri"},
                 timeout=10,
             )
             fetch_resp.raise_for_status()
             email_content = fetch_resp.json()
 
+            # Real (non-inline) attachments aren't in this payload at all — only
+            # their metadata is. To get the actual file bytes we have to download
+            # the whole original message and pull the attachment parts out of it.
+            outbound_attachments = []
+            real_attachments = [
+                a for a in (email_content.get("attachments") or [])
+                if a.get("content_disposition") != "inline"
+            ]
+            download_url = (email_content.get("raw") or {}).get("download_url")
+            if real_attachments and download_url:
+                raw_resp = await client.get(download_url, timeout=30)
+                raw_resp.raise_for_status()
+                msg = email_lib.message_from_bytes(raw_resp.content, policy=email_policy.default)
+                for part in msg.iter_attachments():
+                    # Inline images are already embedded in the html above — skip
+                    # them here so they aren't sent twice.
+                    if part.get_content_disposition() == "inline":
+                        continue
+                    content = part.get_payload(decode=True)
+                    if not content:
+                        continue
+                    outbound_attachments.append({
+                        "filename": part.get_filename() or "attachment",
+                        "content": base64.b64encode(content).decode(),
+                        "content_type": part.get_content_type(),
+                    })
+                logger.info(f"📎 Forwarding {len(outbound_attachments)} attachment(s)")
+
+            send_payload = {
+                "from": RESEND_FORWARD_FROM,
+                "to": RESEND_FORWARD_TO,
+                "reply_to": sender,
+                "subject": f"[{recipient_tag}] {subject}",
+                "html": email_content.get("html") or f"<pre>{email_content.get('text', '')}</pre>",
+                "text": email_content.get("text"),
+            }
+            if outbound_attachments:
+                send_payload["attachments"] = outbound_attachments
+
             response = await client.post(
                 "https://api.resend.com/emails",
                 headers=auth_headers,
-                json={
-                    "from": RESEND_FORWARD_FROM,
-                    "to": RESEND_FORWARD_TO,
-                    "reply_to": sender,
-                    "subject": f"[{recipient}] {subject}",
-                    "html": email_content.get("html") or f"<pre>{email_content.get('text', '')}</pre>",
-                    "text": email_content.get("text"),
-                },
-                timeout=10,
+                json=send_payload,
+                timeout=30,
             )
             response.raise_for_status()
     except httpx.HTTPError as e:

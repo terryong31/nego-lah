@@ -21,20 +21,31 @@ from routes.admin import router as admin_router
 from routes.webhooks import router as webhooks_router
 import sentry_sdk
 
-# Initialize Sentry for error tracking
-sentry_dsn = os.environ.get("SENTRY_DSN")
-if sentry_dsn:
-    sentry_sdk.init(
-        dsn=sentry_dsn,
-        traces_sample_rate=1.0,
-        profiles_sample_rate=1.0,
-    )
-
 # In production we hide the interactive API docs (Swagger UI / ReDoc) and the
 # OpenAPI schema so the full API surface isn't publicly browsable. Set
 # ENV=production in the deployed environment; locally it defaults to dev so
 # /docs stays available.
 IS_PROD = os.environ.get("ENV", "development").lower() in ("production", "prod")
+
+# Initialize Sentry for error tracking. environment lets prod vs local errors
+# be filtered/alerted on separately in the Sentry dashboard.
+sentry_dsn = os.environ.get("SENTRY_DSN")
+if sentry_dsn:
+    sentry_sdk.init(
+        dsn=sentry_dsn,
+        environment="production" if IS_PROD else "development",
+        # Sends request headers/cookies and the client IP with every event
+        # (Sentry's default header scrubbing is off with this enabled).
+        send_default_pii=True,
+        # Forwards application logs (see logger.py) to Sentry as a
+        # separate, searchable stream in addition to error events.
+        enable_logs=True,
+        traces_sample_rate=1.0,
+        # Continuous profiling (replaces the old profiles_sample_rate):
+        # profile for the lifetime of every trace.
+        profile_session_sample_rate=1.0,
+        profile_lifecycle="trace",
+    )
 
 # How often the abandoned-payment cleanup runs (seconds). Default hourly.
 CLEANUP_INTERVAL_SECONDS = int(os.environ.get("CLEANUP_INTERVAL_SECONDS", "3600"))

@@ -45,6 +45,7 @@ async def resend_webhook(request: Request):
     data = event.get("data", {})
     sender = data.get("from", "")
     subject = data.get("subject", "(no subject)")
+    email_id = data.get("email_id")
     # "to" is a list — inbound receiving is domain-wide, so this is the only
     # place we learn whether the mail was sent to contact@, support@, etc.
     recipients = data.get("to") or []
@@ -59,22 +60,34 @@ async def resend_webhook(request: Request):
 
     try:
         async with httpx.AsyncClient() as client:
+            auth_headers = {"Authorization": f"Bearer {RESEND_API_KEY}"}
+
+            # The webhook payload only carries metadata (from/to/subject/etc.) —
+            # the actual body has to be fetched separately by email_id.
+            fetch_resp = await client.get(
+                f"https://api.resend.com/emails/receiving/{email_id}",
+                headers=auth_headers,
+                timeout=10,
+            )
+            fetch_resp.raise_for_status()
+            email_content = fetch_resp.json()
+
             response = await client.post(
                 "https://api.resend.com/emails",
-                headers={"Authorization": f"Bearer {RESEND_API_KEY}"},
+                headers=auth_headers,
                 json={
                     "from": RESEND_FORWARD_FROM,
                     "to": RESEND_FORWARD_TO,
                     "reply_to": sender,
                     "subject": f"[{recipient}] {subject}",
-                    "html": data.get("html") or f"<pre>{data.get('text', '')}</pre>",
-                    "text": data.get("text"),
+                    "html": email_content.get("html") or f"<pre>{email_content.get('text', '')}</pre>",
+                    "text": email_content.get("text"),
                 },
                 timeout=10,
             )
             response.raise_for_status()
     except httpx.HTTPError as e:
-        logger.error(f"❌ Failed to forward inbound email: {e}")
+        logger.error(f"❌ Failed to fetch/forward inbound email: {e}")
         raise HTTPException(status_code=503, detail="Forwarding failed, retry")
 
     return {"status": "success"}

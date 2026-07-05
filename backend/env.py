@@ -30,6 +30,22 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 STRIPE_API_KEY = os.getenv("STRIPE_API_KEY")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
 
+RESEND_API_KEY = os.getenv("RESEND_API_KEY")
+RESEND_WEBHOOK_SECRET = os.getenv("RESEND_WEBHOOK_SECRET")
+# Inbound mail (e.g. support@negolah.my) has no real mailbox yet — forward it
+# to a real inbox instead of standing up a full mail server.
+RESEND_FORWARD_TO = os.getenv("RESEND_FORWARD_TO")
+RESEND_FORWARD_FROM = os.getenv("RESEND_FORWARD_FROM")
+# Only these recipient addresses get forwarded. Inbound receiving is domain-wide
+# (any address @negolah.my hits the webhook), so this allowlist keeps bounces/
+# auto-replies to RESEND_FORWARD_FROM (and anything else unexpected) from being
+# forwarded — which would otherwise risk a mail loop.
+RESEND_ALLOWED_RECIPIENTS = {
+    addr.strip().lower()
+    for addr in os.getenv("RESEND_ALLOWED_RECIPIENTS", "").split(",")
+    if addr.strip()
+}
+
 # Public URL of the frontend, used for Stripe redirect URLs etc.
 # Defaults to the local dev server; set FRONTEND_URL=https://negolah.my in
 # staging/production. Trailing slash is stripped so we can build paths safely.

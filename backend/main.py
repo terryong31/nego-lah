@@ -18,6 +18,7 @@ from routes.items import router as items_router
 from routes.chat import router as chat_router
 from routes.payment import router as payment_router
 from routes.admin import router as admin_router
+from routes.webhooks import router as webhooks_router
 import sentry_sdk
 
 # Initialize Sentry for error tracking
@@ -145,6 +146,7 @@ app.include_router(items_router)
 app.include_router(chat_router)
 app.include_router(payment_router)
 app.include_router(admin_router)
+app.include_router(webhooks_router)
 
 
 @app.get("/")

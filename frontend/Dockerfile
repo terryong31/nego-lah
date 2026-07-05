@@ -4,6 +4,14 @@
 FROM oven/bun:1 AS build
 WORKDIR /app
 
+# The base image ships with no CA bundle at all, so any HTTPS call made by a
+# native binary (e.g. sentry-cli, invoked below for source map upload) fails
+# TLS verification ("unable to get local issuer certificate"). Bun/Node's own
+# fetch calls are unaffected (they bundle their own root store), which is why
+# this only ever broke sentry-cli, not the rest of the build.
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install dependencies first so this layer is cached unless the manifest changes.
 COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile

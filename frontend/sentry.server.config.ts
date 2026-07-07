@@ -3,9 +3,13 @@ import { useRuntimeConfig } from '#imports'
 
 const config = useRuntimeConfig()
 
-if (config.public.sentryDsn) {
+// When autoInjectServerSentry is 'top-level-import', this file may be evaluated
+// before Nuxt applies its .env overrides to useRuntimeConfig().
+const dsn = process.env.NUXT_PUBLIC_SENTRY_DSN || config.public.sentryDsn
+
+if (dsn) {
   Sentry.init({
-    dsn: config.public.sentryDsn,
+    dsn: dsn,
     environment: process.env.NODE_ENV === 'production' ? 'production' : 'development',
     // Mirrors the backend's Sentry config (see backend/main.py).
     sendDefaultPii: true,

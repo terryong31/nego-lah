@@ -19,6 +19,7 @@ fallback) funnel through `fulfill_purchase`. It is designed to be:
 
 import requests
 import stripe
+import sentry_sdk
 
 from connector import admin_supabase
 from env import STRIPE_API_KEY, SUPABASE_URL, USER_SUPABASE_KEY
@@ -217,7 +218,13 @@ def fulfill_purchase(
 
     # Guard: the order on file must belong to the same buyer as this payment.
     if order_buyer and order_buyer != user_id:
-        logger.error(f"❌ Order/buyer mismatch for {payment_intent}: {order_buyer} != {user_id}")
+        msg = f"❌ Order/buyer mismatch for {payment_intent}: {order_buyer} != {user_id}"
+        logger.error(msg)
+        sentry_sdk.capture_message(
+            msg, 
+            level="fatal", 
+            tags={"alert": "buyer_mismatch", "payment_intent": payment_intent}
+        )
         return {"status": "error", "error": "buyer_mismatch"}
 
     # --- Step 2: claim the ITEM atomically --------------------------------
@@ -254,7 +261,13 @@ def fulfill_purchase(
         # order refunded — leave it for retry so we never report a refund that
         # didn't happen. Returning "error" makes the webhook caller signal Stripe
         # to redeliver; the Stripe idempotency key prevents a double refund.
-        logger.error(f"🚨 Auto-refund FAILED for {payment_intent} — order {order_id} left for retry")
+        msg = f"🚨 Auto-refund FAILED for {payment_intent} — order {order_id} left for retry"
+        logger.error(msg)
+        sentry_sdk.capture_message(
+            msg, 
+            level="fatal", 
+            tags={"alert": "refund_failed", "payment_intent": payment_intent, "order_id": order_id}
+        )
         return {"status": "error", "error": "refund_failed", "order_id": order_id}
 
     try:

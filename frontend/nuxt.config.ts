@@ -18,8 +18,8 @@ export default defineNuxtConfig({
     public: {
       apiBaseUrl: process.env.API_BASE_URL || 'http://localhost:8000',
       // Not secret (it's shipped to every browser anyway) — safe to leave empty
-      // by default. Set NUXT_PUBLIC_SENTRY_DSN to enable.
-      sentryDsn: ''
+      // by default. Set NUXT_PUBLIC_SENTRY_DSN (or SENTRY_DSN at build time) to enable.
+      sentryDsn: process.env.SENTRY_DSN || ''
     }
   },
 

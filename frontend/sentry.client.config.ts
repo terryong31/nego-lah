@@ -11,11 +11,15 @@ if (config.public.sentryDsn) {
     sendDefaultPii: true,
     enableLogs: true,
     tracesSampleRate: 1.0,
-    integrations: [Sentry.replayIntegration()],
-    // Replay recordings are far heavier than error/trace events, so sample
-    // ordinary sessions lightly but always capture the ones that hit an error
-    // (Sentry's own recommended defaults).
-    replaysSessionSampleRate: 0.1,
+    integrations: [
+      Sentry.replayIntegration({
+        maskAllText: false, // Turn off masking so you can actually see the replay content
+        blockAllMedia: false
+      })
+    ],
+    // Bumped to 1.0 for testing so EVERY session is recorded. 
+    // You can lower this back to 0.1 once you verify replays are showing.
+    replaysSessionSampleRate: 1.0,
     replaysOnErrorSampleRate: 1.0
   })
 }

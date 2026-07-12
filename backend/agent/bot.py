@@ -1,26 +1,29 @@
 import sys
+
 sys.path.append('..')
 
 import asyncio
 
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
 from langchain_core.tools import tool
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.prebuilt import create_react_agent
-from langchain_core.messages import AIMessageChunk
+
 from env import GEMINI_API_KEY
 from logger import logger
-from .config import SELLER_PERSONA
-from .memory import ConversationMemory
-from .context import set_context, get_user_id, get_item_id, current_item_id
 
-# Import Tools
-from .tools.negotiation import evaluate_offer, assess_discount_eligibility
-from .tools.payment import web_search
+from .config import SELLER_PERSONA
+from .context import current_item_id, get_item_id, get_user_id, set_context
+from .memory import ConversationMemory
+
 # Import Sub-Agents
 from .sub_agents.item_agent import item_agent
 from .sub_agents.stripe_agent import stripe_agent
+
+# Import Tools
+from .tools.negotiation import assess_discount_eligibility, evaluate_offer
 from .tools.orders import check_user_orders
+from .tools.payment import web_search
 
 conversation_memory = ConversationMemory()
 
@@ -49,7 +52,7 @@ async def call_item_agent(query: str) -> str:
     Call the Inventory/Item Agent to search for items, get details, or check availability.
     Use this for ANY question regarding "what do you have", "search for X", or "details of item Y".
     The Item Agent has direct access to the database.
-    
+
     Args:
         query: The user's question or search request regarding items
     """
@@ -65,7 +68,7 @@ async def call_stripe_agent(request: str) -> str:
     1. A price has been AGREED upon and the user wants to pay.
     2. The user wants to cancel a payment.
     3. The user is providing shipping information.
-    
+
     Args:
         request: The specific action request (e.g. "Create link for item_id at price X", "Cancel link", "Shipping info is...")
     """
@@ -75,20 +78,20 @@ async def call_stripe_agent(request: str) -> str:
 
     # 1. Fallback Resolution: If no item_id in context, try to find it from history using Item Agent
     if not ctx_item_id or ctx_item_id in ['test-item-id', 'None']:
-        logger.info(f"🕵️‍♂️ Missing context item_id. Attempting to resolve from history...")
+        logger.info("🕵️‍♂️ Missing context item_id. Attempting to resolve from history...")
 
         # Get recent history
         if ctx_user_id:
             history = conversation_memory.get_history(ctx_user_id, limit=10)
             history_text = "\n".join([f"{msg['role']}: {msg['content']}" for msg in history])
-            
+
             # Ask Item Agent to identify the item
             resolution_query = f"""
             Based on this conversation history, identify the exact UUID of the item the user wants to buy.
-            
+
             HISTORY:
             {history_text}
-            
+
             INSTRUCTIONS:
             1. Identify the item name mentioned in the history.
             2. Use your 'search_items' tool to find this item in the database.
@@ -96,7 +99,7 @@ async def call_stripe_agent(request: str) -> str:
             4. If multiple items match, choose the one with the closest name.
             5. If not found in database, return 'NOT_FOUND'.
             """
-            
+
             resolution_response = await item_agent.ainvoke({"messages": [HumanMessage(content=resolution_query)]})
             resolution_content = resolution_response['messages'][-1].content
             if isinstance(resolution_content, list):
@@ -110,17 +113,17 @@ async def call_stripe_agent(request: str) -> str:
                 resolved_id = "".join(text_parts).strip()
             else:
                 resolved_id = str(resolution_content).strip()
-            
+
             # Clean up response (remove markdown code blocks if any)
             resolved_id = resolved_id.replace('```', '').strip()
-            
+
             if resolved_id and resolved_id != 'NOT_FOUND' and len(resolved_id) > 10: # Basic UUID sanity check
                 logger.info(f"✅ Resolved missing item_id to: {resolved_id}")
                 # Update request-scoped context so downstream tools see the resolved id
                 current_item_id.set(resolved_id)
             else:
-                logger.info(f"❌ Could not resolve item_id from history.")
-    
+                logger.info("❌ Could not resolve item_id from history.")
+
     response = await stripe_agent.ainvoke({"messages": [HumanMessage(content=request)]})
     return response['messages'][-1].content
 
@@ -132,7 +135,7 @@ async def call_stripe_agent(request: str) -> str:
 customer_tools = [
     call_item_agent,
     call_stripe_agent,
-    evaluate_offer, 
+    evaluate_offer,
     assess_discount_eligibility,
     web_search,
     check_user_orders
@@ -166,7 +169,7 @@ def _get_customer_agent():
     global _customer_agent
     if _customer_agent is not None:
         return _customer_agent
-    
+
     agent_graph = create_react_agent(_get_model(), customer_tools, prompt=CUSTOMER_AGENT_PROMPT)
     # Allow the main agent up to 15 steps to do complex negotiation/tool chaining
     _customer_agent = agent_graph.with_config({"recursion_limit": 15})
@@ -176,13 +179,13 @@ def _get_customer_agent():
 def get_item_details_for_context(item_id: str) -> dict:
     """Helper to get item details for building context message."""
     from connector import user_supabase
-    
+
     try:
         response = user_supabase.table('items').select('name, description, price, condition, image_path').eq('id', item_id).execute()
         if response.data and len(response.data) > 0:
             return response.data[0]
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"get_item_details_for_context failed for {item_id}: {e}")
     return None
 
 
@@ -357,7 +360,7 @@ async def chat_stream(user_id: str, message: str, item_id: str = None, files: li
         # Forward only assistant text; skip tool messages and tool-call chunks.
         if not isinstance(chunk, AIMessageChunk):
             continue
-            
+
         # Detect tool calls for real-time status updates
         if getattr(chunk, 'tool_call_chunks', None):
             for tc in chunk.tool_call_chunks:
@@ -377,9 +380,9 @@ async def chat_stream(user_id: str, message: str, item_id: str = None, files: li
                         status_text = "Searching the market..."
                     elif tool_name == "assess_discount_eligibility":
                         status_text = "Checking discounts..."
-                        
+
                     yield {"status": status_text}
-                    
+
         text = _extract_text_from_content(chunk.content)
         if text:
             collected.append(text)

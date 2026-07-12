@@ -1,25 +1,26 @@
-from fastapi import FastAPI, Request
-import os
 import asyncio
 import contextlib
-from fastapi.middleware.cors import CORSMiddleware
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
-from slowapi.errors import RateLimitExceeded
 
 # Import configuration
 import json
+import os
 
+import sentry_sdk
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+
+from limiter import limiter
 from logger import logger
+from routes.admin import router as admin_router
+from routes.chat import router as chat_router
+from routes.items import router as items_router
+from routes.payment import router as payment_router
 
 # Import routers
 from routes.user import router as user_router
-from routes.items import router as items_router
-from routes.chat import router as chat_router
-from routes.payment import router as payment_router
-from routes.admin import router as admin_router
 from routes.webhooks import router as webhooks_router
-import sentry_sdk
 
 # In production we hide the interactive API docs (Swagger UI / ReDoc) and the
 # OpenAPI schema so the full API surface isn't publicly browsable. Set
@@ -58,8 +59,8 @@ async def _payment_cleanup_loop():
     external cron is required. cleanup_expired_payments() is idempotent, so
     overlapping runs (e.g. multiple replicas) are harmless.
     """
-    from payment.payment_state import cleanup_expired_payments
     from cache import redis_client
+    from payment.payment_state import cleanup_expired_payments
 
     def _claim_cleanup_slot() -> bool:
         # With multiple workers each runs this loop. A short Redis lock ensures
@@ -116,7 +117,6 @@ app = FastAPI(
 )
 
 # Setup rate limiter
-from limiter import limiter
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 

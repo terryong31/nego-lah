@@ -1,10 +1,12 @@
+import base64
+import json
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from cache import check_rate_limit, check_ai_token_limit, track_ai_tokens
+
+from auth_middleware import get_user_id_from_body_or_token, verify_user_token
+from cache import check_ai_token_limit, check_rate_limit, track_ai_tokens
 from connector import admin_supabase
-from auth_middleware import verify_user_token, get_user_id_from_body_or_token
-import json
-import base64
 from logger import logger
 
 router = APIRouter(prefix="", tags=["Chat"])
@@ -37,7 +39,7 @@ async def get_chat_history(
         return conversation_memory.get_history_page(user_id, limit=limit, offset=offset)
     except Exception as e:
         logger.error(f"Error getting chat history: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.delete("/chat/history/{user_id}")
@@ -55,7 +57,7 @@ async def clear_chat_history(
         return {"message": "Chat history cleared"}
     except Exception as e:
         logger.error(f"Error clearing chat history: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/chat/settings/{user_id}")
@@ -140,8 +142,8 @@ async def chat_stream(request: Request):
             settings = admin_supabase.table('chat_settings').select('ai_enabled').eq('user_id', user_id).execute()
             if settings.data and len(settings.data) > 0:
                 ai_enabled = settings.data[0].get('ai_enabled', True)
-        except Exception:
-            pass  # Default to AI enabled if check fails
+        except Exception as e:
+            logger.debug(f"Could not check ai_enabled for {user_id}, defaulting to enabled: {e}")
 
         if not ai_enabled:
             # Save user message to memory but don't respond with AI.

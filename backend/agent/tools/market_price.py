@@ -7,9 +7,8 @@ based on item category and condition.
 """
 
 import statistics
-from typing import Optional, List
-from logger import logger
 
+from logger import logger
 
 # Condition multipliers (higher = better condition = higher price)
 CONDITION_MULTIPLIERS = {
@@ -39,52 +38,54 @@ class MarketPriceService:
     Provides market price valuations for items using intelligent estimation
     based on item category and condition.
     """
-    
+
     def get_market_valuation(
-        self, 
-        query: str, 
+        self,
+        query: str,
         condition: str = "good",
-        category: Optional[str] = None,
+        category: str | None = None,
     ) -> dict:
         """
         Get market valuation for an item.
-        
+
         Args:
             query: Item name/search query
             condition: Item condition (new, like new, good, fair)
             category: Item category (optional, will be inferred from query)
-        
+
         Returns:
             dict with market_average, min_price, max_price, suggested_listing, currency
         """
         return self._estimate_price(query, condition, category)
-    
+
     def _estimate_price(
-        self, 
-        query: str, 
+        self,
+        query: str,
         condition: str,
-        category: Optional[str] = None
+        category: str | None = None
     ) -> dict:
         """
         Estimate price based on item characteristics using Gemini with Google Search Grounding.
         """
         try:
-            from langchain_google_genai import ChatGoogleGenerativeAI
-            from langchain_core.messages import HumanMessage
-            from env import GEMINI_API_KEY
             import json
             import re
-            
+
+            from langchain_core.messages import HumanMessage
+            from langchain_google_genai import ChatGoogleGenerativeAI
+
+            from env import GEMINI_API_KEY
+
             if not GEMINI_API_KEY:
                 raise ValueError("GEMINI_API_KEY not set")
-                
+
             model = ChatGoogleGenerativeAI(
                 model="gemini-3.5-flash",
                 temperature=0.1,
                 google_api_key=GEMINI_API_KEY
             )
             grounded_model = model.bind(tools=[{"google_search": {}}])
-            
+
             prompt = f"""
 You are an expert market analyst for a Malaysian marketplace.
 Search the web for the current market price of: "{query}" in Malaysia.
@@ -106,7 +107,7 @@ Return ONLY a valid JSON object with the following fields:
             msg = HumanMessage(content=prompt)
             response = grounded_model.invoke([msg])
             content = response.content
-            
+
             if isinstance(content, list):
                 text_parts = []
                 for part in content:
@@ -115,16 +116,16 @@ Return ONLY a valid JSON object with the following fields:
                     elif isinstance(part, dict) and 'text' in part:
                         text_parts.append(part['text'])
                 content = ''.join(text_parts)
-                
+
             clean_content = content.replace('```json', '').replace('```', '').strip()
-            
+
             # Sometimes Gemini returns text before or after the JSON. Try to extract just the JSON.
             match = re.search(r'\{.*\}', clean_content, re.DOTALL)
             if match:
                 clean_content = match.group(0)
-                
+
             data = json.loads(clean_content)
-            
+
             return {
                 "market_average": float(data.get("market_average", 0)),
                 "min_price": float(data.get("min_price", 0)),
@@ -138,12 +139,12 @@ Return ONLY a valid JSON object with the following fields:
         except Exception as e:
             logger.error(f"Failed to use Gemini Google Search Grounding: {e}. Falling back to basic estimation.")
             return self._fallback_estimate_price(query, condition, category)
-            
+
     def _fallback_estimate_price(
-        self, 
-        query: str, 
+        self,
+        query: str,
         condition: str,
-        category: Optional[str] = None
+        category: str | None = None
     ) -> dict:
         """
         Estimate price based on item characteristics (fallback method).
@@ -151,27 +152,27 @@ Return ONLY a valid JSON object with the following fields:
         # Infer category from query if not provided
         if not category:
             category = self._infer_category(query)
-        
+
         category = category.lower() if category else "other"
         condition = condition.lower() if condition else "good"
-        
+
         # Get base prices for category
         base = CATEGORY_BASE_PRICES.get(category, CATEGORY_BASE_PRICES["other"])
-        
+
         # Apply condition multiplier
         multiplier = CONDITION_MULTIPLIERS.get(condition, 0.70)
-        
+
         # Add some variance based on query hash (for consistency)
         query_hash = sum(ord(c) for c in query.lower()) % 100
         variance = 0.8 + (query_hash / 100) * 0.4  # 0.8 to 1.2
-        
+
         avg_price = base["avg"] * multiplier * variance
         min_price = base["min"] * multiplier * variance
         max_price = base["max"] * multiplier * variance
-        
+
         # Suggested listing price (slightly below average for quick sale)
         suggested = avg_price * 0.92
-        
+
         return {
             "market_average": self._round_price(avg_price),
             "min_price": self._round_price(min_price),
@@ -182,82 +183,82 @@ Return ONLY a valid JSON object with the following fields:
             "category_detected": category,
             "condition_used": condition,
         }
-    
+
     def _infer_category(self, query: str) -> str:
         """Infer category from query keywords."""
         query_lower = query.lower()
-        
+
         electronics_keywords = [
             "phone", "laptop", "computer", "pc", "iphone", "samsung", "macbook",
             "tablet", "ipad", "camera", "headphone", "speaker", "tv", "monitor",
             "keyboard", "mouse", "gpu", "processor", "earbuds", "airpods", "watch"
         ]
-        
+
         fashion_keywords = [
             "shirt", "pants", "dress", "shoes", "bag", "wallet", "jacket",
             "jeans", "sneakers", "nike", "adidas", "gucci", "louis", "chanel"
         ]
-        
+
         sports_keywords = [
             "bicycle", "bike", "bmx", "gym", "dumbbell", "tennis", "badminton",
             "football", "soccer", "basketball", "golf", "yoga", "running"
         ]
-        
+
         home_keywords = [
             "sofa", "table", "chair", "bed", "lamp", "kitchen", "furniture",
             "shelf", "cabinet", "mattress", "pillow", "curtain"
         ]
-        
+
         vehicles_keywords = [
             "car", "motorcycle", "motor", "bike", "scooter", "vespa", "honda",
             "toyota", "bmw", "mercedes"
         ]
-        
+
         for kw in electronics_keywords:
             if kw in query_lower:
                 return "electronics"
-        
+
         for kw in fashion_keywords:
             if kw in query_lower:
                 return "fashion"
-        
+
         for kw in sports_keywords:
             if kw in query_lower:
                 return "sports"
-                
+
         for kw in home_keywords:
             if kw in query_lower:
                 return "home"
-        
+
         for kw in vehicles_keywords:
             if kw in query_lower:
                 return "vehicles"
-        
+
         return "other"
-    
+
     def _analyze_scraped_prices(self, items: list, condition: str) -> dict:
         """
         Analyze scraped price data.
-        
+
         Args:
             items: List of scraped items with 'price' field
             condition: Item condition for adjustment
-        
+
         Returns:
             Market valuation dict
         """
         prices = [item.get("price", 0) for item in items if item.get("price")]
-        
+
         if not prices:
             return self._estimate_price("", condition)
-        
+
         avg_price = statistics.mean(prices)
         min_price = min(prices)
         max_price = max(prices)
-        
+
         # Apply condition multiplier
         multiplier = CONDITION_MULTIPLIERS.get(condition.lower(), 0.70)
-        
+
         return {
             "market_average": self._round_price(avg_price * multiplier),
             "min_price": self._round_price(min_price * multiplier),
@@ -267,7 +268,7 @@ Return ONLY a valid JSON object with the following fields:
             "source": "Scraped Data",
             "sample_size": len(prices),
         }
-    
+
     def _round_price(self, price: float) -> float:
         """Round price Malaysian style (psychological pricing)."""
         if price < 10:

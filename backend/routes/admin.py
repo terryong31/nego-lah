@@ -1,27 +1,29 @@
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Request, Response, Depends
-from typing import Annotated, List, Optional
-from logger import logger
-from env import ADMIN_PREFIX, STORAGE_BUCKET
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
+
 from admin_session import (
-    verify_admin,
-    password_then_send_otp,
-    verify_otp_and_open_session,
     clear_session,
-    enforce_login_rate_limit,
     client_ip,
+    enforce_login_rate_limit,
+    password_then_send_otp,
+    verify_admin,
+    verify_otp_and_open_session,
     write_audit,
 )
+from env import ADMIN_PREFIX, STORAGE_BUCKET
+from logger import logger
 from schemas import (
-    AdminLoginRequest,
     Admin2FARequest,
-    BanRequest,
-    AIToggleRequest,
+    AdminLoginRequest,
     AdminMessageRequest,
-    UserProfileUpdateRequest,
-    UpdateItemSchema,
+    AIToggleRequest,
+    BanRequest,
+    MarketValuationRequest,
     OrderStatusUpdate,
     OrderUpdate,
-    MarketValuationRequest,
+    UpdateItemSchema,
+    UserProfileUpdateRequest,
 )
 
 # Public auth router (NOT gated by verify_admin — that's what these establish).
@@ -77,20 +79,21 @@ def admin_session(admin: dict = Depends(verify_admin)):
 @protected.get("/users")
 def get_all_users():
     """Get all users with their profiles and chat settings."""
-    from connector import admin_supabase
     from fastapi import HTTPException
-    
+
+    from connector import admin_supabase
+
     try:
         # Get all users from auth
         users_response = admin_supabase.auth.admin.list_users()
-        
+
         # Get profiles and chat settings
         profiles = admin_supabase.table('user_profiles').select('*').execute()
         settings = admin_supabase.table('chat_settings').select('*').execute()
-        
+
         profiles_map = {p['id']: p for p in (profiles.data or [])}
         settings_map = {s['user_id']: s for s in (settings.data or [])}
-        
+
         users = []
         for user in users_response:
             user_id = user.id
@@ -118,11 +121,11 @@ def get_all_users():
                 "admin_intervening": setting.get('admin_intervening', False),
                 "created_at": user.created_at
             })
-        
+
         return users
     except Exception as e:
         logger.error(f"Error in get_all_users: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @protected.put("/users/{user_id}/profile")
@@ -153,11 +156,11 @@ async def upload_user_avatar(
     admin: dict = Depends(verify_admin),
 ):
     """Upload a user avatar."""
-    from connector import admin_supabase
-    from fastapi import UploadFile, File
     import base64
     import uuid
-    
+
+    from connector import admin_supabase
+
     contents = await avatar.read()
 
     # Try to use storage first
@@ -173,7 +176,7 @@ async def upload_user_avatar(
             {"content-type": avatar.content_type}
         )
         public_url = admin_supabase.storage.from_(STORAGE_BUCKET).get_public_url(file_path)
-        
+
         # Update profile with URL
         admin_supabase.table('user_profiles').upsert({
             'id': user_id,
@@ -188,7 +191,7 @@ async def upload_user_avatar(
         # Fallback to base64 data URL if storage fails
         base64_image = base64.b64encode(contents).decode('utf-8')
         data_url = f"data:{avatar.content_type};base64,{base64_image}"
-        
+
         admin_supabase.table('user_profiles').upsert({
             'id': user_id,
             'avatar_url': data_url,
@@ -202,8 +205,8 @@ async def upload_user_avatar(
 @protected.put("/users/{user_id}/ban")
 def ban_user(user_id: str, request: BanRequest, admin: dict = Depends(verify_admin)):
     """Ban or unban a user."""
-    from connector import admin_supabase
     from admin_session import _is_admin_user
+    from connector import admin_supabase
 
     # Guard against locking out admins. Banning applies at the Supabase auth
     # level, which would block the admin dashboard login too, so an admin must
@@ -251,9 +254,9 @@ def ban_user(user_id: str, request: BanRequest, admin: dict = Depends(verify_adm
 @protected.put("/users/{user_id}/ai")
 def toggle_user_ai(user_id: str, request: AIToggleRequest, admin: dict = Depends(verify_admin)):
     """Enable or disable AI for a specific user."""
-    from connector import admin_supabase
     from agent.memory import conversation_memory
-    
+    from connector import admin_supabase
+
     # Upsert chat settings
     admin_supabase.table('chat_settings').upsert({
         'user_id': user_id,
@@ -261,26 +264,27 @@ def toggle_user_ai(user_id: str, request: AIToggleRequest, admin: dict = Depends
         'admin_intervening': not request.ai_enabled,  # If AI disabled, admin is intervening
         'updated_at': 'now()'
     }).execute()
-    
+
     # Add system message to notify user
     if request.ai_enabled:
         system_msg = "--- Terry has retired from the chat and the AI will take over now ---"
     else:
         system_msg = "--- Terry has joined the chat, the AI will retire for now ---"
-    
+
     conversation_memory.add_message(user_id, "system", system_msg, source="system")
-    
+
     # Broadcast the system message in real-time via Supabase channel
     try:
         import requests
-        from env import SUPABASE_URL, SUPABASE_KEY
-        
+
+        from env import ADMIN_SUPABASE_KEY, SUPABASE_URL
+
         # Use Supabase REST API to broadcast via realtime channel
         # Format: POST /realtime/v1/api/broadcast with messages array
         broadcast_url = f"{SUPABASE_URL}/realtime/v1/api/broadcast"
         headers = {
-            "apikey": SUPABASE_KEY,
-            "Authorization": f"Bearer {SUPABASE_KEY}",
+            "apikey": ADMIN_SUPABASE_KEY,
+            "Authorization": f"Bearer {ADMIN_SUPABASE_KEY}",
             "Content-Type": "application/json"
         }
         # Supabase broadcast API expects messages array with channel, event, payload
@@ -329,7 +333,7 @@ def admin_delete_user(user_id: str, admin: dict = Depends(verify_admin)):
         admin_supabase.auth.admin.delete_user(user_id)
     except Exception as e:
         logger.error(f"Error deleting auth user {user_id}: {e}")
-        raise HTTPException(status_code=500, detail="Failed to delete user")
+        raise HTTPException(status_code=500, detail="Failed to delete user") from e
 
     write_audit(admin.get("user_id"), admin.get("email"), "user.delete", user_id, admin.get("ip"))
     return {"message": "User deleted successfully"}
@@ -400,7 +404,7 @@ def get_all_chats():
 def get_user_chat(user_id: str, limit: int = 10, offset: int = 0):
     """Get a specific user's conversation history."""
     from agent.memory import conversation_memory
-    
+
     history = conversation_memory.get_history(user_id, limit=limit, offset=offset)
     return {"user_id": user_id, "messages": history}
 
@@ -443,15 +447,15 @@ def cleanup_expired_stripe_links():
 def get_all_orders():
     """Get all orders for admin view with summary stats."""
     from connector import admin_supabase
-    
+
     result = admin_supabase.table('orders').select('*').order('created_at', desc=True).execute()
     orders_data = result.data or []
-    
+
     # Enrich with buyer info
     try:
         users_response = admin_supabase.auth.admin.list_users()
         users_map = {u.id: u.email for u in users_response}
-        
+
         # Build map of names from auth metadata first
         names_map = {}
         for u in users_response:
@@ -466,7 +470,7 @@ def get_all_orders():
         for p in (profiles.data or []):
             if p.get('display_name'):
                 names_map[p['id']] = p['display_name']
-        
+
         for order in orders_data:
             buyer_id = order.get('buyer_id')
             if buyer_id:
@@ -476,11 +480,11 @@ def get_all_orders():
                 order['buyer_name'] = names_map.get(buyer_id, email_name)
     except Exception as e:
         logger.error(f"Error enriching orders with user data: {e}")
-    
+
     # Calculate stats
     total_orders = len(orders_data)
     total_sales = sum((order.get('amount') or 0) for order in orders_data)
-    
+
     return {
         "orders": orders_data,
         "stats": {
@@ -494,7 +498,7 @@ def get_all_orders():
 def get_order(order_id: str):
     """Get a specific order by ID."""
     from connector import admin_supabase
-    
+
     result = admin_supabase.table('orders').select('*').eq('id', order_id).execute()
     if result.data:
         return result.data[0]
@@ -524,7 +528,7 @@ def update_order_status(order_id: str, request: OrderStatusUpdate, admin: dict =
 def update_order(order_id: str, request: OrderUpdate, admin: dict = Depends(verify_admin)):
     """Update order details."""
     from connector import admin_supabase
-    
+
     # Build update dict with only provided fields
     update_data = {}
     if request.item_name is not None:
@@ -536,28 +540,28 @@ def update_order(order_id: str, request: OrderUpdate, admin: dict = Depends(veri
         if request.status not in valid_statuses:
             raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {valid_statuses}")
         update_data['status'] = request.status
-    
+
     # Handle address - support both frontend 'address' and backend 'shipping_address'
     addr = request.address or request.shipping_address
     if addr is not None:
         update_data['address'] = addr
-    
+
     # Handle phone - support both frontend 'phone' and backend 'shipping_phone'
     ph = request.phone or request.shipping_phone
     if ph is not None:
         update_data['phone'] = ph
-    
+
     # Handle recipient name - support both frontend 'recipient_name' and backend 'shipping_name'
     name = request.recipient_name or request.shipping_name
     if name is not None:
         update_data['recipient_name'] = name
-    
+
     if request.notes is not None:
         update_data['notes'] = request.notes
-    
+
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields to update")
-    
+
     result = admin_supabase.table('orders').update(update_data).eq('id', order_id).execute()
 
     if result.data:
@@ -594,9 +598,10 @@ async def analyze_item_image(
     Uses custom Image Analyzer service (Gemini Vision).
     """
     import base64
+
     from agent.tools.image_analyzer import image_analyzer
     from agent.tools.market_price import market_service
-    
+
     try:
         images_data = []
         for img in images:
@@ -605,17 +610,17 @@ async def analyze_item_image(
                 "base64_image": base64.b64encode(contents).decode('utf-8'),
                 "mime_type": img.content_type or "image/jpeg"
             })
-            
+
         # --- Custom Image Analyzer (Gemini Vision) ---
         logger.info(f"Analyzing {len(images_data)} image(s) with custom Image Analyzer...")
         data = await image_analyzer.analyze(images_data)
         logger.info(f"Image analysis result: {data}")
-        
+
         # --- Market Valuation ---
         try:
             logger.info(f"Fetching market data for: {data.get('name')}")
             market_data = market_service.get_market_valuation(
-                query=data.get('name', ''), 
+                query=data.get('name', ''),
                 condition=data.get('condition', 'good'),
                 category=data.get('category')
             )
@@ -623,12 +628,12 @@ async def analyze_item_image(
         except Exception as market_error:
             logger.error(f"Market valuation failed: {market_error}")
             data['market_data'] = None
-        
+
         return data
 
     except Exception as e:
         logger.error(f"Error analyzing image: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to analyze image: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to analyze image: {str(e)}") from e
 
 
 # =====================
@@ -642,18 +647,18 @@ def get_market_valuation(request: MarketValuationRequest):
     Uses custom Market Valuator (NO APIFY - implement your own scraper!).
     """
     from agent.tools.market_price import market_service
-    
+
     try:
         logger.info(f"Fetching market data for: {request.query} ({request.condition})")
         market_data = market_service.get_market_valuation(
-            query=request.query, 
+            query=request.query,
             condition=request.condition,
             category=request.category
         )
         return market_data
     except Exception as e:
         logger.error(f"Market valuation failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 # =====================
@@ -714,8 +719,8 @@ async def admin_create_item(
     description: Annotated[str, Form()],
     condition: Annotated[str, Form()],
     price: Annotated[float, Form()],
-    images: Annotated[List[UploadFile], File()],
-    min_price: Annotated[Optional[float], Form()] = None,
+    images: Annotated[list[UploadFile], File()],
+    min_price: Annotated[float | None, Form()] = None,
     admin: dict = Depends(verify_admin),
 ):
     """Create a new listing with one or more images."""

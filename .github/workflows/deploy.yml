@@ -13,52 +13,72 @@ env:
   FRONTEND_IMAGE: ghcr.io/terryong31/nego-lah-frontend
 
 jobs:
-  test:
+  # Backend and frontend test suites run as two independent jobs so they
+  # execute in parallel on separate runners (previously one sequential job).
+  # build-and-push waits for BOTH via `needs`.
+  backend-test:
+    name: Backend tests (ruff + pytest)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      # --- Backend CI (FastAPI + pytest) ---
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'   # matches backend/Dockerfile (python:3.12-slim)
           cache: 'pip'
-          cache-dependency-path: backend/requirements.txt
+          # Bust the cache when either the runtime or the dev/test pin set changes.
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
 
-      - name: Install Backend Dependencies
+      - name: Install backend dependencies
         run: |
           cd backend
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pytest pytest-asyncio httpx
+          pip install -r requirements-dev.txt
 
-      - name: Run Backend Tests
+      - name: Ruff (lint + bandit-equivalent security rules)
+        run: |
+          cd backend
+          ruff check .
+
+      - name: Pytest (with coverage)
         run: |
           cd backend
           pytest
 
-      # --- Frontend CI (Nuxt + Bun) ---
+  frontend-test:
+    name: Frontend tests (lint + typecheck + vitest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
 
-      - name: Install Frontend Dependencies
+      - name: Install frontend dependencies
         run: |
           cd frontend
           bun install --frozen-lockfile
 
-      - name: Lint & Typecheck Frontend
+      - name: Lint & Typecheck
         run: |
           cd frontend
           bun run lint
           bun run typecheck
 
+      - name: Unit tests (Vitest)
+        run: |
+          cd frontend
+          bun run test
+
   # Build the images on GitHub's runners (plenty of RAM) and push to GHCR, so
   # the 2 GB Lightsail box never has to build (it used to OOM/take ~16 min).
   build-and-push:
-    needs: test
+    needs: [backend-test, frontend-test]
     runs-on: ubuntu-latest
     permissions:
       contents: read

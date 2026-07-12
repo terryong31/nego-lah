@@ -1,6 +1,5 @@
-from pydantic import BaseModel
-from typing import Optional, List
 
+from pydantic import BaseModel
 
 # ============================================
 # ITEMS
@@ -11,22 +10,22 @@ class CreateItemSchema(BaseModel):
     description: str
     condition: str
     images: str
-    price: Optional[float] = None
-    min_price: Optional[float] = None
+    price: float | None = None
+    min_price: float | None = None
 
 
 class UpdateItemSchema(BaseModel):
     """All fields optional - only provided fields are updated."""
-    name: Optional[str] = None
-    description: Optional[str] = None
-    condition: Optional[str] = None
-    images: Optional[str] = None
-    price: Optional[float] = None
-    min_price: Optional[float] = None
+    name: str | None = None
+    description: str | None = None
+    condition: str | None = None
+    images: str | None = None
+    price: float | None = None
+    min_price: float | None = None
 
 
 class ImageReorderRequest(BaseModel):
-    ordered_urls: List[str]
+    ordered_urls: list[str]
 
 
 # ============================================
@@ -36,7 +35,7 @@ class ImageReorderRequest(BaseModel):
 class ChatRequest(BaseModel):
     user_id: str  # Unique identifier for the buyer
     message: str  # The buyer's message
-    item_id: Optional[str] = None  # Optional item ID being discussed
+    item_id: str | None = None  # Optional item ID being discussed
 
 
 # ============================================
@@ -45,7 +44,7 @@ class ChatRequest(BaseModel):
 
 class CheckoutRequest(BaseModel):
     item_id: str  # Only need the item ID to look up price in database
-    user_id: Optional[str] = None  # User ID of the buyer (for webhook tracking)
+    user_id: str | None = None  # User ID of the buyer (for webhook tracking)
 
 
 # ============================================
@@ -88,8 +87,8 @@ class AdminMessageRequest(BaseModel):
 
 
 class UserProfileUpdateRequest(BaseModel):
-    display_name: Optional[str] = None
-    avatar_url: Optional[str] = None
+    display_name: str | None = None
+    avatar_url: str | None = None
 
 
 class OrderStatusUpdate(BaseModel):
@@ -97,21 +96,21 @@ class OrderStatusUpdate(BaseModel):
 
 
 class OrderUpdate(BaseModel):
-    item_name: Optional[str] = None
-    amount: Optional[float] = None
-    status: Optional[str] = None
+    item_name: str | None = None
+    amount: float | None = None
+    status: str | None = None
     # Backend field names (original)
-    shipping_address: Optional[str] = None
-    shipping_phone: Optional[str] = None
-    shipping_name: Optional[str] = None
+    shipping_address: str | None = None
+    shipping_phone: str | None = None
+    shipping_name: str | None = None
     # Frontend field names (aliases)
-    address: Optional[str] = None
-    phone: Optional[str] = None
-    recipient_name: Optional[str] = None
-    notes: Optional[str] = None
+    address: str | None = None
+    phone: str | None = None
+    recipient_name: str | None = None
+    notes: str | None = None
 
 
 class MarketValuationRequest(BaseModel):
     query: str
     condition: str = "good"
-    category: Optional[str] = None
+    category: str | None = None

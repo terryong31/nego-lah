@@ -1,10 +1,11 @@
-from fastapi import APIRouter, HTTPException, Request, Header, status, Depends
-from schemas import CheckoutRequest
-from connector import admin_supabase
-from payment.pay import create_checkout_session
-from auth_middleware import verify_user_token, get_user_id_from_body_or_token
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+
 from admin_session import verify_admin
+from auth_middleware import get_user_id_from_body_or_token, verify_user_token
+from connector import admin_supabase
 from logger import logger
+from payment.pay import create_checkout_session
+from schemas import CheckoutRequest
 
 router = APIRouter(prefix="/payment", tags=["Payment"])
 
@@ -36,8 +37,9 @@ def checkout(
         if item.get('status') != 'available':
             raise HTTPException(status_code=409, detail="Item is no longer available")
 
-        # Convert price to cents
-        price_cents = int(float(item['price']) * 100)
+        # Convert price to cents. Round rather than truncate: float(19.99)*100 is
+        # 1998.9999999... and int() would floor it to 1998, undercharging by a sen.
+        price_cents = round(float(item['price']) * 100)
 
         # Create Stripe checkout session
         checkout_url = create_checkout_session(
@@ -46,9 +48,9 @@ def checkout(
             item_id=item_id,
             user_id=user_id
         )
-        
+
         return {"checkout_url": checkout_url}
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -56,7 +58,7 @@ def checkout(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Checkout failed: {str(e)}"
-        )
+        ) from e
 
 
 @router.get("/active/{user_id}")
@@ -72,31 +74,31 @@ def get_active_payments(user_id: str, token_user_id: str = Depends(verify_user_t
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch active payments: {str(e)}"
-        )
+        ) from e
 
 
 @router.post("/webhook/stripe")
 async def stripe_webhook(request: Request, stripe_signature: str = Header(None)):
     """
     Handle Stripe webhooks.
-    
+
     When a payment is completed:
     1. Marks the item as 'sold'
     2. Records the transaction
     """
-    from payment.webhooks import verify_webhook, handle_checkout_completed
-    
+    from payment.webhooks import handle_checkout_completed, verify_webhook
+
     payload = await request.body()
-    logger.info(f"\n🔔 WEBHOOK RECEIVED")
+    logger.info("\n🔔 WEBHOOK RECEIVED")
     logger.info(f"Stripe-Signature header present: {stripe_signature is not None}")
     logger.info(f"Payload size: {len(payload)} bytes")
-    
+
     event = verify_webhook(payload, stripe_signature)
-    
+
     if not event:
         logger.error("❌ Webhook signature verification FAILED")
         raise HTTPException(status_code=400, detail="Invalid webhook signature")
-    
+
     event_type = event['type']
     logger.info(f"✅ Event verified: {event_type}")
 
@@ -120,7 +122,7 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None))
 def get_transactions(admin: dict = Depends(verify_admin)):
     """Get all transactions (sales history). Admin only."""
     from payment.payment_history import get_all_transactions, get_sales_summary
-    
+
     return {
         "transactions": get_all_transactions(),
         "summary": get_sales_summary()
@@ -131,9 +133,9 @@ def get_transactions(admin: dict = Depends(verify_admin)):
 def refund_item(item_id: str, reason: str = None, admin: dict = Depends(verify_admin)):
     """Process a refund for an item. Admin only."""
     from payment.refunds import process_refund
-    
+
     result = process_refund(item_id, reason)
-    
+
     if result["success"]:
         return result
     else:
@@ -149,19 +151,19 @@ def get_user_orders(user_id: str, token_user_id: str = Depends(verify_user_token
     user_id = get_user_id_from_body_or_token(user_id, token_user_id)
     # Get orders for this user
     response = admin_supabase.table('orders').select('*').eq('buyer_id', user_id).order('created_at', desc=True).execute()
-    
+
     if not response.data:
         # Fallback: Check transactions table by email (if needed, but prefer orders)
         # For now, just return empty to encourage migration to orders table
         return {"orders": []}
-    
+
     orders = []
     for order in response.data:
         item_id = order.get('item_id')
         item_response = admin_supabase.table('items').select('name, description, image_path, condition').eq('id', item_id).execute()
-        
+
         item_data = item_response.data[0] if item_response.data else {}
-        
+
         orders.append({
             "id": order.get('id'),
             "item_id": item_id,
@@ -173,7 +175,7 @@ def get_user_orders(user_id: str, token_user_id: str = Depends(verify_user_token
             "created_at": order.get('created_at'),
             "stripe_payment_id": order.get('stripe_payment_id')
         })
-    
+
     return {"orders": orders}
 
 
@@ -195,6 +197,7 @@ def confirm_payment(
     uses, so calling this is always safe (duplicate calls are no-ops).
     """
     import stripe
+
     from env import STRIPE_API_KEY
     from payment.fulfillment import fulfill_purchase
 
@@ -222,7 +225,7 @@ def confirm_payment(
         session = stripe.checkout.Session.retrieve(session_id)
     except stripe.error.InvalidRequestError:
         logger.error(f"❌ Could not verify session {session_id}")
-        raise HTTPException(status_code=400, detail="Invalid Stripe session")
+        raise HTTPException(status_code=400, detail="Invalid Stripe session") from None
 
     if session.payment_status != 'paid':
         logger.error(f"❌ Session not paid: {session.payment_status}")

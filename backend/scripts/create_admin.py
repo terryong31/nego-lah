@@ -21,15 +21,18 @@ import sys
 # Allow `python scripts/create_admin.py ...` as well as `-m scripts.create_admin`.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from connector import admin_supabase
 from admin_session import grant_admin
+from connector import admin_supabase
 
 
 def _find_user(email: str):
     email = email.strip().lower()
     page = 1
     while True:
-        users = admin_supabase.auth.admin.list_users(page=page, per_page=200)
+        resp = admin_supabase.auth.admin.list_users(page=page, per_page=200)
+        # Newer SDKs may wrap the page in an envelope object instead of returning
+        # a bare list; accept both so pagination doesn't silently break.
+        users = resp if isinstance(resp, list) else getattr(resp, "users", resp)
         if not users:
             return None
         for u in users:

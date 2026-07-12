@@ -1,10 +1,9 @@
-from langchain_core.messages import SystemMessage
-from langgraph.prebuilt import create_react_agent
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.prebuilt import create_react_agent
-from langchain_google_genai import ChatGoogleGenerativeAI
+
 from env import GEMINI_API_KEY
-from ..tools.items import get_item_info, search_items, list_all_items
+
+from ..tools.items import get_item_info, list_all_items, search_items
 
 # Initialize the model
 model = ChatGoogleGenerativeAI(
@@ -31,8 +30,8 @@ RULES:
 """
 
 item_agent_graph = create_react_agent(
-    model, 
-    tools=[get_item_info, search_items, list_all_items], 
+    model,
+    tools=[get_item_info, search_items, list_all_items],
     prompt=ITEM_AGENT_PROMPT
 )
 

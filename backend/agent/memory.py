@@ -11,19 +11,18 @@ Table structure (conversations):
 - updated_at: timestamp
 """
 
-from typing import List, Dict
-from datetime import datetime
 import json
+from datetime import datetime
 
 from logger import logger
 
 
 class ConversationMemory:
     """Supabase-based conversation memory for storing chat history."""
-    
+
     def __init__(self):
         self._supabase = None
-    
+
     @property
     def supabase(self):
         """Lazy load Supabase client."""
@@ -31,17 +30,17 @@ class ConversationMemory:
             from connector import admin_supabase
             self._supabase = admin_supabase
         return self._supabase
-    
+
     def add_message(
-        self, 
-        user_id: str, 
-        role: str, 
-        message: str, 
-        item_id: str = None, 
+        self,
+        user_id: str,
+        role: str,
+        message: str,
+        item_id: str = None,
         source: str = 'ai'
     ):
         """Save a message to conversation history in Supabase.
-        
+
         Args:
             user_id: User identifier
             role: 'human', 'ai', 'system', 'admin'
@@ -52,11 +51,11 @@ class ConversationMemory:
         # Convert list to string if needed
         if isinstance(message, list):
             message = json.dumps(message)
-        
+
         try:
             # Get existing conversation
             result = self.supabase.table('conversations').select('id, messages').eq('user_id', user_id).execute()
-            
+
             new_msg = {
                 "role": role,
                 "content": message,
@@ -64,13 +63,13 @@ class ConversationMemory:
                 "item_id": item_id,
                 "timestamp": datetime.now().isoformat()
             }
-            
+
             if result.data and len(result.data) > 0:
                 # Append to existing messages
                 existing = result.data[0]
                 messages = existing.get('messages', []) or []
                 messages.append(new_msg)
-                
+
                 self.supabase.table('conversations').update({
                     'messages': messages,
                     'updated_at': 'now()'
@@ -82,26 +81,26 @@ class ConversationMemory:
                     'item_id': item_id,
                     'messages': [new_msg]
                 }).execute()
-                
+
         except Exception as e:
             logger.info(f"[ConversationMemory] Error saving message: {e}")
-    
-    def get_history(self, user_id: str, limit: int = 50, offset: int = 0) -> List[Dict]:
+
+    def get_history(self, user_id: str, limit: int = 50, offset: int = 0) -> list[dict]:
         """Get conversation history for a user from Supabase."""
         try:
             result = self.supabase.table('conversations').select('messages').eq('user_id', user_id).execute()
-            
+
             if not result.data or len(result.data) == 0:
                 return []
-            
+
             messages = result.data[0].get('messages', []) or []
-            
+
             # Apply pagination (offset from end, return in chronological order)
             if offset > 0:
                 messages = messages[:-offset] if offset < len(messages) else []
             if limit:
                 messages = messages[-limit:] if len(messages) > limit else messages
-            
+
             # Return in format expected by agent
             return [
                 {
@@ -111,12 +110,12 @@ class ConversationMemory:
                 }
                 for m in messages
             ]
-            
+
         except Exception as e:
             logger.info(f"[ConversationMemory] Error getting history: {e}")
             return []
-    
-    def get_history_page(self, user_id: str, limit: int = 20, offset: int = 0) -> Dict:
+
+    def get_history_page(self, user_id: str, limit: int = 20, offset: int = 0) -> dict:
         """Get a page of conversation history, newest-anchored.
 
         `offset` counts messages back from the most recent one; `limit` is the
@@ -158,16 +157,16 @@ class ConversationMemory:
             logger.info(f"[ConversationMemory] Error getting history page: {e}")
             return {"messages": [], "has_more": False, "next_offset": offset}
 
-    def get_all_histories(self) -> Dict[str, List[Dict]]:
+    def get_all_histories(self) -> dict[str, list[dict]]:
         """Get all conversation histories grouped by user_id."""
         try:
             result = self.supabase.table('conversations').select('user_id, messages').execute()
-            
+
             all_histories = {}
             for row in result.data or []:
                 user_id = row.get('user_id')
                 messages = row.get('messages', []) or []
-                
+
                 all_histories[user_id] = [
                     {
                         "role": m.get("role"),
@@ -176,20 +175,20 @@ class ConversationMemory:
                     }
                     for m in messages[-50:]  # Last 50 messages
                 ]
-            
+
             return all_histories
-            
+
         except Exception as e:
             logger.info(f"[ConversationMemory] Error getting all histories: {e}")
             return {}
-    
+
     def clear_history(self, user_id: str):
         """Clear conversation history for a user."""
         try:
             self.supabase.table('conversations').delete().eq('user_id', user_id).execute()
         except Exception as e:
             logger.info(f"[ConversationMemory] Error clearing history: {e}")
-    
+
     def broadcast_message(self, user_id: str, role: str, message: str, source: str):
         """Broadcast is handled by Supabase Realtime automatically."""
         pass  # Frontend subscribes to DB changes via Supabase Realtime

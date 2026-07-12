@@ -89,6 +89,8 @@ const emailSchema = z.object({
 })
 type EmailSchema = z.output<typeof emailSchema>
 const emailLoading = ref(false)
+// UForm validates against `state`; without it the form never emits `submit`.
+const emailState = reactive<{ email: string | undefined }>({ email: undefined })
 
 async function onEmailSubmit(payload: FormSubmitEvent<EmailSchema>) {
   const userId = await getUserId()
@@ -101,6 +103,7 @@ async function onEmailSubmit(payload: FormSubmitEvent<EmailSchema>) {
         new_email: payload.data.email
       }
     })
+    emailState.email = undefined
     toast.add({ title: 'Email change requested', description: 'Please check your inbox for verification links.', color: 'success' })
   } catch (err) {
     toast.add({ title: 'Failed to update email', description: err instanceof Error ? err.message : 'Something went wrong', color: 'error' })
@@ -120,6 +123,12 @@ const passwordSchema = z.object({
 })
 type PasswordSchema = z.output<typeof passwordSchema>
 const passwordLoading = ref(false)
+// UForm validates against `state`; without it the form never emits `submit`.
+const passwordState = reactive<{ currentPassword: string | undefined, newPassword: string | undefined, confirmPassword: string | undefined }>({
+  currentPassword: undefined,
+  newPassword: undefined,
+  confirmPassword: undefined
+})
 
 async function onPasswordSubmit(payload: FormSubmitEvent<PasswordSchema>) {
   const userId = await getUserId()
@@ -133,6 +142,9 @@ async function onPasswordSubmit(payload: FormSubmitEvent<PasswordSchema>) {
         new_password: payload.data.newPassword
       }
     })
+    passwordState.currentPassword = undefined
+    passwordState.newPassword = undefined
+    passwordState.confirmPassword = undefined
     toast.add({ title: 'Password updated', description: 'Your password was changed successfully.', color: 'success' })
   } catch (err) {
     toast.add({ title: 'Failed to update password', description: err instanceof Error ? err.message : 'Something went wrong', color: 'error' })
@@ -246,6 +258,7 @@ async function handleDeleteAccount() {
 
       <UForm
         :schema="emailSchema"
+        :state="emailState"
         class="space-y-4"
         @submit="onEmailSubmit"
       >
@@ -265,6 +278,7 @@ async function handleDeleteAccount() {
           name="email"
         >
           <UInput
+            v-model="emailState.email"
             type="email"
             placeholder="Enter new email"
             class="w-full"
@@ -293,6 +307,7 @@ async function handleDeleteAccount() {
 
       <UForm
         :schema="passwordSchema"
+        :state="passwordState"
         class="space-y-4"
         @submit="onPasswordSubmit"
       >
@@ -301,6 +316,7 @@ async function handleDeleteAccount() {
           name="currentPassword"
         >
           <UInput
+            v-model="passwordState.currentPassword"
             type="password"
             placeholder="Enter current password"
             class="w-full"
@@ -312,6 +328,7 @@ async function handleDeleteAccount() {
           name="newPassword"
         >
           <UInput
+            v-model="passwordState.newPassword"
             type="password"
             placeholder="Create new password"
             class="w-full"
@@ -323,6 +340,7 @@ async function handleDeleteAccount() {
           name="confirmPassword"
         >
           <UInput
+            v-model="passwordState.confirmPassword"
             type="password"
             placeholder="Confirm new password"
             class="w-full"

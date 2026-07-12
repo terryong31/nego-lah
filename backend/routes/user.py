@@ -15,15 +15,16 @@ on their own account (token user id must match the path user id).
 """
 
 import uuid
-from typing import Annotated, Optional
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
-from connector import admin_supabase, user_supabase
-from auth_middleware import verify_user_token, get_user_id_from_body_or_token
+
+from auth_middleware import get_user_id_from_body_or_token, verify_user_token
 from cache import invalidate_token
+from connector import admin_supabase, user_supabase
 from env import STORAGE_BUCKET
-from schemas import PasswordUpdateSchema, EmailUpdateSchema
 from logger import logger
+from schemas import EmailUpdateSchema, PasswordUpdateSchema
 
 router = APIRouter(prefix="/user", tags=["User"])
 
@@ -64,7 +65,7 @@ def change_password(
             "password": payload.current_password
         })
     except Exception:
-        raise HTTPException(status_code=401, detail="Current password is incorrect")
+        raise HTTPException(status_code=401, detail="Current password is incorrect") from None
 
     try:
         admin_supabase.auth.admin.update_user_by_id(
@@ -72,7 +73,7 @@ def change_password(
         )
     except Exception as e:
         logger.error(f"Error changing password for {user_id}: {e}")
-        raise HTTPException(status_code=500, detail="Failed to change password")
+        raise HTTPException(status_code=500, detail="Failed to change password") from e
 
     return {"message": "Password changed successfully"}
 
@@ -92,7 +93,7 @@ def change_email(
         )
     except Exception as e:
         logger.error(f"Error changing email for {user_id}: {e}")
-        raise HTTPException(status_code=500, detail="Failed to change email")
+        raise HTTPException(status_code=500, detail="Failed to change email") from e
 
     return {"message": "Email changed successfully", "email": payload.new_email}
 
@@ -101,8 +102,8 @@ def change_email(
 async def update_profile(
     user_id: str,
     token_user_id: str = Depends(verify_user_token),
-    display_name: Annotated[Optional[str], Form()] = None,
-    avatar: Annotated[Optional[UploadFile], File()] = None,
+    display_name: Annotated[str | None, Form()] = None,
+    avatar: Annotated[UploadFile | None, File()] = None,
 ):
     """
     Update the authenticated user's display name and/or profile picture.
@@ -139,7 +140,7 @@ async def update_profile(
             ).get_public_url(file_path)
         except Exception as e:
             logger.error(f"Avatar upload failed for {user_id}: {e}")
-            raise HTTPException(status_code=500, detail="Failed to upload avatar")
+            raise HTTPException(status_code=500, detail="Failed to upload avatar") from e
 
     if display_name is not None:
         metadata["display_name"] = display_name
@@ -150,7 +151,7 @@ async def update_profile(
         )
     except Exception as e:
         logger.error(f"Profile update failed for {user_id}: {e}")
-        raise HTTPException(status_code=500, detail="Failed to update profile")
+        raise HTTPException(status_code=500, detail="Failed to update profile") from e
 
     return {
         "message": "Profile updated successfully",
@@ -190,7 +191,7 @@ def delete_account(
         admin_supabase.auth.admin.delete_user(user_id)
     except Exception as e:
         logger.error(f"Error deleting auth user {user_id}: {e}")
-        raise HTTPException(status_code=500, detail="Failed to delete account")
+        raise HTTPException(status_code=500, detail="Failed to delete account") from e
 
     # Invalidate the cached token so the deleted session can't be reused
     auth_header = request.headers.get("Authorization", "")

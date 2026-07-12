@@ -18,8 +18,8 @@ fallback) funnel through `fulfill_purchase`. It is designed to be:
 """
 
 import requests
-import stripe
 import sentry_sdk
+import stripe
 
 from connector import admin_supabase
 from env import STRIPE_API_KEY, SUPABASE_URL, USER_SUPABASE_KEY
@@ -221,8 +221,8 @@ def fulfill_purchase(
         msg = f"❌ Order/buyer mismatch for {payment_intent}: {order_buyer} != {user_id}"
         logger.error(msg)
         sentry_sdk.capture_message(
-            msg, 
-            level="fatal", 
+            msg,
+            level="fatal",
             tags={"alert": "buyer_mismatch", "payment_intent": payment_intent}
         )
         return {"status": "error", "error": "buyer_mismatch"}
@@ -264,8 +264,8 @@ def fulfill_purchase(
         msg = f"🚨 Auto-refund FAILED for {payment_intent} — order {order_id} left for retry"
         logger.error(msg)
         sentry_sdk.capture_message(
-            msg, 
-            level="fatal", 
+            msg,
+            level="fatal",
             tags={"alert": "refund_failed", "payment_intent": payment_intent, "order_id": order_id}
         )
         return {"status": "error", "error": "refund_failed", "order_id": order_id}

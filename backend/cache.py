@@ -1,7 +1,6 @@
 import fnmatch
 import json
 import time
-from typing import Dict, List, Optional
 
 import redis
 
@@ -10,10 +9,10 @@ from env import REDIS_URL
 
 class _InMemoryRedis:
     def __init__(self):
-        self._store: Dict[str, str] = {}
-        self._hash_store: Dict[str, Dict[str, str]] = {}
-        self._zset_store: Dict[str, Dict[str, float]] = {}
-        self._exp: Dict[str, float] = {}
+        self._store: dict[str, str] = {}
+        self._hash_store: dict[str, dict[str, str]] = {}
+        self._zset_store: dict[str, dict[str, float]] = {}
+        self._exp: dict[str, float] = {}
 
     def _purge(self, key: str):
         exp = self._exp.get(key)
@@ -27,7 +26,7 @@ class _InMemoryRedis:
         self._store[key] = value
         self._exp[key] = time.time() + ttl
 
-    def get(self, key: str) -> Optional[str]:
+    def get(self, key: str) -> str | None:
         self._purge(key)
         return self._store.get(key)
 
@@ -37,28 +36,28 @@ class _InMemoryRedis:
         self._zset_store.pop(key, None)
         self._exp.pop(key, None)
 
-    def hset(self, key: str, mapping: Dict[str, str]):
+    def hset(self, key: str, mapping: dict[str, str]):
         self._purge(key)
         self._hash_store.setdefault(key, {}).update(mapping)
 
     def expire(self, key: str, ttl: int):
         self._exp[key] = time.time() + ttl
 
-    def hgetall(self, key: str) -> Dict[str, str]:
+    def hgetall(self, key: str) -> dict[str, str]:
         self._purge(key)
         return dict(self._hash_store.get(key, {}))
 
-    def keys(self, pattern: str = "*") -> List[str]:
+    def keys(self, pattern: str = "*") -> list[str]:
         for key in list(self._exp.keys()):
             self._purge(key)
         all_keys = set(self._store) | set(self._hash_store) | set(self._zset_store)
         return [k for k in all_keys if fnmatch.fnmatch(k, pattern)]
 
-    def zadd(self, key: str, mapping: Dict[str, float]):
+    def zadd(self, key: str, mapping: dict[str, float]):
         self._purge(key)
         self._zset_store.setdefault(key, {}).update(mapping)
 
-    def zrangebyscore(self, key: str, min_score: float, max_score: float) -> List[str]:
+    def zrangebyscore(self, key: str, min_score: float, max_score: float) -> list[str]:
         self._purge(key)
         members = self._zset_store.get(key, {})
         ranked = sorted(members.items(), key=lambda kv: kv[1])
@@ -129,7 +128,7 @@ def cache_token_user(token: str, user_id: str, ttl: int = 7200):
     redis_client.setex(f"token:{token}", ttl, user_id)
 
 
-def get_cached_user_by_token(token: str) -> Optional[str]:
+def get_cached_user_by_token(token: str) -> str | None:
     """Get user_id from cached token"""
     return redis_client.get(f"token:{token}")
 
@@ -148,7 +147,7 @@ def cache_ban_status(user_id: str, banned: bool, ttl: int = 300):
     redis_client.setex(f"banned:{user_id}", ttl, "1" if banned else "0")
 
 
-def get_cached_ban_status(user_id: str) -> Optional[bool]:
+def get_cached_ban_status(user_id: str) -> bool | None:
     """Return cached ban status, or None if not cached."""
     val = redis_client.get(f"banned:{user_id}")
     if val is None:
@@ -165,7 +164,7 @@ def invalidate_ban_status(user_id: str):
 # ITEM CACHING (with SHA validation)
 # ============================================
 
-def cache_items_with_hash(items: List[Dict], data_hash: str, ttl: int = 3600):
+def cache_items_with_hash(items: list[dict], data_hash: str, ttl: int = 3600):
     """
     Cache all items list with a hash for validation.
     Hash is computed from count + max timestamp to detect changes.
@@ -177,7 +176,7 @@ def cache_items_with_hash(items: List[Dict], data_hash: str, ttl: int = 3600):
     redis_client.expire("items:all", ttl)
 
 
-def get_cached_items_with_hash() -> tuple[Optional[List[Dict]], Optional[str]]:
+def get_cached_items_with_hash() -> tuple[list[dict] | None, str | None]:
     """Get cached items list and its hash"""
     result = redis_client.hgetall("items:all")
     if result and "data" in result:
@@ -185,12 +184,12 @@ def get_cached_items_with_hash() -> tuple[Optional[List[Dict]], Optional[str]]:
     return None, None
 
 
-def cache_item(item_id: str, item: Dict, ttl: int = 7200):
+def cache_item(item_id: str, item: dict, ttl: int = 7200):
     """Cache single item (2 hours default - images use Supabase CDN caching)"""
     redis_client.setex(f"item:{item_id}", ttl, json.dumps(item))
 
 
-def get_cached_item(item_id: str) -> Optional[Dict]:
+def get_cached_item(item_id: str) -> dict | None:
     """Get cached item by ID"""
     data = redis_client.get(f"item:{item_id}")
     return json.loads(data) if data else None
@@ -211,21 +210,21 @@ def invalidate_item_cache(item_id: str = None):
 def check_rate_limit(key: str, max_requests: int = 10, window: int = 60) -> bool:
     """
     Check if rate limit exceeded.
-    
+
     Args:
         key: Unique identifier (e.g., user_id or IP)
         max_requests: Max requests allowed in window
         window: Time window in seconds
-    
+
     Returns:
         True if OK to proceed, False if limit exceeded
     """
     rate_key = f"rate:{key}"
     current = redis_client.get(rate_key)
-    
+
     if current and int(current) >= max_requests:
         return False
-    
+
     pipe = redis_client.pipeline()
     pipe.incr(rate_key)
     pipe.expire(rate_key, window)
@@ -248,7 +247,7 @@ def get_rate_limit_remaining(key: str, max_requests: int = 10) -> int:
 def track_ai_tokens(user_id: str, input_tokens: int, output_tokens: int, window: int = 1800):
     """
     Track AI token usage for a user.
-    
+
     Args:
         user_id: The user ID
         input_tokens: Number of input tokens used
@@ -257,7 +256,7 @@ def track_ai_tokens(user_id: str, input_tokens: int, output_tokens: int, window:
     """
     key = f"ai_tokens:{user_id}"
     total_tokens = input_tokens + output_tokens
-    
+
     # Use Redis INCRBY to atomically add tokens
     pipe = redis_client.pipeline()
     pipe.incrby(key, total_tokens)
@@ -268,18 +267,18 @@ def track_ai_tokens(user_id: str, input_tokens: int, output_tokens: int, window:
 def check_ai_token_limit(user_id: str, limit: int = 1_000_000, window: int = 1800) -> tuple[bool, int]:
     """
     Check if user has exceeded AI token limit.
-    
+
     Args:
         user_id: The user ID
         limit: Maximum tokens allowed in window (default 1M)
         window: Time window in seconds (default 30 minutes)
-    
+
     Returns:
         Tuple of (is_within_limit, current_usage)
     """
     key = f"ai_tokens:{user_id}"
     current = redis_client.get(key)
-    
+
     if current:
         usage = int(current)
         return usage < limit, usage

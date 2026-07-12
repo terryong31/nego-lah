@@ -6,18 +6,19 @@ Script to check for fulfillment anomalies:
 This script should be run periodically (e.g. daily via cron or GitHub Actions).
 """
 
+import logging
 import os
 import sys
-import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 # Add parent directory to path so we can import backend modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from connector import admin_supabase
-import stripe
-from env import STRIPE_API_KEY
 import sentry_sdk
+import stripe
+
+from connector import admin_supabase
+from env import STRIPE_API_KEY
 
 stripe.api_key = STRIPE_API_KEY
 
@@ -35,12 +36,12 @@ def check_anomalies():
 
     # 1. Find orders that are 'pending_info' but the item is sold to someone else.
     orders_res = admin_supabase.table("orders").select("id, item_id, buyer_id, stripe_payment_id, created_at, status").eq("status", "pending_info").execute()
-    
+
     if not orders_res.data:
         logger.info("No pending_info orders found.")
         return
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     for order in orders_res.data:
         order_id = order["id"]
@@ -48,7 +49,7 @@ def check_anomalies():
         buyer_id = order["buyer_id"]
         payment_intent_id = order.get("stripe_payment_id")
         created_at_str = order.get("created_at")
-        
+
         try:
             if "." in created_at_str:
                 created_at = datetime.strptime(created_at_str, "%Y-%m-%dT%H:%M:%S.%f%z")
@@ -62,9 +63,9 @@ def check_anomalies():
         item_res = admin_supabase.table("items").select("status, buyer_id").eq("id", item_id).execute()
         if not item_res.data:
             continue
-        
+
         item = item_res.data[0]
-        
+
         # If item is sold to someone else
         if item.get("status") == "sold" and item.get("buyer_id") != buyer_id:
             # SLA: check if older than 24 hours to alert manually
@@ -72,7 +73,7 @@ def check_anomalies():
                 if payment_intent_id and payment_intent_id.startswith("pi_"):
                     try:
                         pi = stripe.PaymentIntent.retrieve(payment_intent_id)
-                        
+
                         if pi.status == "succeeded":
                             latest_charge = pi.latest_charge
                             if latest_charge:

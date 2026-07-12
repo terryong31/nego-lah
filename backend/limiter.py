@@ -1,8 +1,8 @@
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
+from cache import _InMemoryRedis, redis_client
 from env import REDIS_URL
-from cache import redis_client, _InMemoryRedis
 
 # Share rate-limit counters across worker processes via Redis when it's actually
 # available. Falls back to per-process in-memory storage otherwise, mirroring how

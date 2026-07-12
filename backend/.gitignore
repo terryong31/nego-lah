@@ -12,3 +12,11 @@ ENV/
 
 # Local data
 data/
+
+# Test/coverage artifacts
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.pytest_cache/
+.ruff_cache/

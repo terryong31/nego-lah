@@ -1,16 +1,17 @@
-from connector import user_supabase, admin_supabase
-from datetime import datetime
-from fastapi import UploadFile
-from typing import List
+import hashlib
 import json
 import uuid
-import hashlib
+from datetime import datetime
+
+from fastapi import UploadFile
+
 from cache import (
     cache_items_with_hash,
     get_cached_items_with_hash,
     invalidate_item_cache,
     redis_client,
 )
+from connector import admin_supabase, user_supabase
 from env import STORAGE_BUCKET
 from logger import logger
 
@@ -34,7 +35,7 @@ def get_items_fingerprint():
     # Query latest created_at
     latest_response = user_supabase.table('items').select('created_at').is_('deleted_at', 'null').order('created_at', desc=True).limit(1).execute()
     max_created_at = latest_response.data[0]['created_at'] if latest_response.data else ""
-    
+
     return item_count, max_created_at
 
 
@@ -52,19 +53,19 @@ def should_validate_cache() -> bool:
     redis_client.setex("items:last_validation", 30, "1")
     return True
 
-    
-def get_items(keyword: str = None) -> List[str]:
+
+def get_items(keyword: str = None) -> list[str]:
     if keyword is None:
         # Get cached data and its hash
         cached, cached_hash = get_cached_items_with_hash()
-        
+
         if cached and cached_hash:
             # Only validate against Supabase every 30 seconds
             if should_validate_cache():
                 # Time to check if data has changed
                 count, max_timestamp = get_items_fingerprint()
                 current_hash = compute_items_hash(count, max_timestamp)
-                
+
                 if current_hash != cached_hash:
                     # Cache is stale - invalidate and refetch below
                     invalidate_item_cache()
@@ -75,7 +76,7 @@ def get_items(keyword: str = None) -> List[str]:
             else:
                 # Skip validation - trust the cache
                 return cached
-        
+
         # Cache miss or stale - get full data from DB
         # Order by status (available first) then by created_at (newest first)
         retrieve = user_supabase.table('items').select('*').is_('deleted_at', 'null').order('status', desc=False).order('created_at', desc=True).execute()
@@ -94,7 +95,7 @@ def get_items(keyword: str = None) -> List[str]:
             return retrieve.data
         return []
 
-def get_featured_items(limit: int = 6) -> List[dict]:
+def get_featured_items(limit: int = 6) -> list[dict]:
     """
     Get the most-interacted listings to feature on the home page.
 
@@ -119,30 +120,30 @@ def get_featured_items(limit: int = 6) -> List[dict]:
 
 
 async def upload_item(
-    name: str, 
-    description: str, 
-    condition: str, 
-    uploaded_images: List[UploadFile],
+    name: str,
+    description: str,
+    condition: str,
+    uploaded_images: list[UploadFile],
     price: float,
     min_price: float = None
     ) -> bool:
     """
     Uploads images to Supabase Storage and creates an item in the database.
-    
+
     Args:
         name: Item name
-        description: Item description  
+        description: Item description
         condition: Item condition
         uploaded_images: List of uploaded image files
         price: Listed price
         min_price: Base price (minimum acceptable price for negotiation)
     """
-    
+
     try:
         random_uuid = str(uuid.uuid4())
-        
+
         urls = {}
-        
+
         for i, img in enumerate(uploaded_images):
             img_extension = img.filename.split(".")[-1] if img.filename else "dat"
             img_name =f"{i}.{img_extension}"
@@ -154,22 +155,22 @@ async def upload_item(
             )
             public_url_response = admin_supabase.storage.from_(STORAGE_BUCKET).get_public_url(path=f"items/{random_uuid}/{img_name}")
             urls[f'{img_name}'] = public_url_response
-            
+
         item_data = {
-            "id" : random_uuid, 
+            "id" : random_uuid,
             "name" : name,
             "price" : price,
             "description" : description,
-            "condition" : condition, 
+            "condition" : condition,
             "image_path": json.dumps(urls),
             "status": "available",  # Default status for new items
             "created_at": datetime.now().isoformat()
         }
-        
+
         # Only include min_price if provided
         if min_price is not None:
             item_data["min_price"] = min_price
-            
+
         admin_supabase.table('items').insert(item_data).execute()
 
         # Invalidate cache so new item shows up
@@ -201,15 +202,15 @@ def delete_item(item_id: str) -> bool:
 def update_item(
     item_id: str,
     name: str = None,
-    description: str = None, 
-    condition: str = None, 
+    description: str = None,
+    condition: str = None,
     price: float = None,
     min_price: float = None,
     images: str = None
     ):
     """
     Update an item in the database.
-    
+
     Args:
         item_id: Item ID to update
         name: New name (optional)
@@ -233,10 +234,10 @@ def update_item(
             update["min_price"] = float(min_price)
         if images:
             update["image_path"] = images
-            
+
         if not update:
             return False
-            
+
         admin_supabase.table('items').update(update).eq("id", item_id).execute()
         invalidate_item_cache(item_id)  # Clear cache
         return True

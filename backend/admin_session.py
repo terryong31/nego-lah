@@ -18,23 +18,22 @@ plus rate limiting, audit logging, and the layers documented in the README.
 """
 import json
 import secrets
-from typing import Optional
 
-from fastapi import HTTPException, Request, Response, Depends
+from fastapi import HTTPException, Request, Response
 from supabase import create_client
 
+from cache import check_rate_limit, redis_client
+from connector import admin_supabase
 from env import (
+    ADMIN_COOKIE_NAME,
+    ADMIN_COOKIE_PATH,
+    ADMIN_COOKIE_SAMESITE,
+    ADMIN_COOKIE_SECURE,
+    ADMIN_PREAUTH_TTL,
+    ADMIN_SESSION_TTL,
     SUPABASE_URL,
     USER_SUPABASE_KEY,
-    ADMIN_COOKIE_NAME,
-    ADMIN_COOKIE_SECURE,
-    ADMIN_COOKIE_SAMESITE,
-    ADMIN_COOKIE_PATH,
-    ADMIN_SESSION_TTL,
-    ADMIN_PREAUTH_TTL,
 )
-from cache import redis_client, check_rate_limit
-from connector import admin_supabase
 from logger import logger
 
 # Redis key prefixes
@@ -119,7 +118,7 @@ def password_then_send_otp(email: str, password: str) -> str:
     try:
         resp = client.auth.sign_in_with_password({"email": email, "password": password})
     except Exception:
-        raise generic
+        raise generic from None
     user = getattr(resp, "user", None)
     if not user:
         raise generic
@@ -133,8 +132,8 @@ def password_then_send_otp(email: str, password: str) -> str:
     # Don't keep the password-grade session around.
     try:
         client.auth.sign_out()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"Best-effort sign_out failed (ignored): {e}")
 
     # Factor 2: email OTP. Failure here is logged but still returns a handle so
     # the response shape can't be used to probe accounts.
@@ -165,7 +164,7 @@ def verify_otp_and_open_session(handle: str, code: str, response: Response, requ
     try:
         resp = client.auth.verify_otp({"email": email, "token": code, "type": "email"})
     except Exception:
-        raise generic
+        raise generic from None
     user = getattr(resp, "user", None)
     if not user or not _is_admin_user(user):
         raise generic
@@ -175,8 +174,8 @@ def verify_otp_and_open_session(handle: str, code: str, response: Response, requ
     grant_admin(user.id, email)
     try:
         client.auth.sign_out()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"Best-effort sign_out failed (ignored): {e}")
 
     sid = _create_session(user.id, email)
     _set_cookie(response, sid)
@@ -238,7 +237,7 @@ async def verify_admin(request: Request) -> dict:
     try:
         data = json.loads(raw)
     except Exception:
-        raise unauth
+        raise unauth from None
 
     user_id = data.get("user_id")
     if not user_id or not is_allowed_admin(user_id):
@@ -257,7 +256,7 @@ async def verify_admin(request: Request) -> dict:
 # ---------------------------------------------------------------------------
 
 def write_audit(actor_user_id: str, actor_email: str, action: str,
-                target: Optional[str], ip: str) -> None:
+                target: str | None, ip: str) -> None:
     try:
         admin_supabase.table("admin_audit_log").insert({
             "actor_user_id": actor_user_id,

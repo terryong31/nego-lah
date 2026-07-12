@@ -1,0 +1,7 @@
+# Dev/test/lint tooling — not needed at runtime, so kept out of requirements.txt
+# (which is the production image's install list).
+-r requirements.txt
+
+pytest-cov==7.1.0
+ruff==0.15.20
+pip-audit==2.10.1

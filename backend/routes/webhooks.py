@@ -40,7 +40,7 @@ async def resend_webhook(request: Request):
         # ValueError also covers malformed (non-base64) signature/header values that
         # the svix/standardwebhooks library doesn't wrap in WebhookVerificationError.
         logger.error("❌ Resend webhook signature verification FAILED")
-        raise HTTPException(status_code=400, detail="Invalid webhook signature")
+        raise HTTPException(status_code=400, detail="Invalid webhook signature") from None
 
     event_type = event.get("type")
     if event_type != "email.received":
@@ -133,6 +133,6 @@ async def resend_webhook(request: Request):
             response.raise_for_status()
     except httpx.HTTPError as e:
         logger.error(f"❌ Failed to fetch/forward inbound email: {e}")
-        raise HTTPException(status_code=503, detail="Forwarding failed, retry")
+        raise HTTPException(status_code=503, detail="Forwarding failed, retry") from e
 
     return {"status": "success"}

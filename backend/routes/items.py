@@ -1,7 +1,8 @@
 import json
+
 from fastapi import APIRouter, HTTPException, status
-from typing import List, Optional
-from items import get_items, get_featured_items
+
+from items import get_featured_items, get_items
 
 # Public items API — READ ONLY.
 # All writes (create/update/delete, image management) live under the admin router
@@ -37,7 +38,7 @@ def _to_public(row: dict) -> dict:
 
 
 @router.get('')
-async def get_all_items(keyword: Optional[str] = None) -> List[dict]:
+async def get_all_items(keyword: str | None = None) -> list[dict]:
     """
     Get all items or search by keyword.
 
@@ -48,7 +49,7 @@ async def get_all_items(keyword: Optional[str] = None) -> List[dict]:
 
 
 @router.get('/featured')
-async def get_featured(limit: int = 6) -> List[dict]:
+async def get_featured(limit: int = 6) -> list[dict]:
     """
     Get the most-interacted listings for the home page.
 
@@ -75,7 +76,7 @@ async def get_item_by_id(item_id: str) -> dict:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Item with id '{item_id}' not found"
-        )
+        ) from None
 
     if response.data and len(response.data) > 0:
         return _to_public(response.data[0])

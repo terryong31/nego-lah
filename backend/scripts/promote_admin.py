@@ -19,8 +19,8 @@ import sys
 # Allow running both as `python -m scripts.promote_admin` and `python scripts/promote_admin.py`
 sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.dirname(__import__("os").path.abspath(__file__))))
 
-from connector import admin_supabase
 from admin_session import grant_admin, revoke_admin
+from connector import admin_supabase
 
 
 def _find_user(email: str):
@@ -28,7 +28,10 @@ def _find_user(email: str):
     # list_users paginates; scan for the matching email.
     page = 1
     while True:
-        users = admin_supabase.auth.admin.list_users(page=page, per_page=200)
+        resp = admin_supabase.auth.admin.list_users(page=page, per_page=200)
+        # Newer SDKs may wrap the page in an envelope object instead of returning
+        # a bare list; accept both so pagination doesn't silently break.
+        users = resp if isinstance(resp, list) else getattr(resp, "users", resp)
         if not users:
             return None
         for u in users:

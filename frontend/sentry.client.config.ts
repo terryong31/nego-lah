@@ -17,7 +17,7 @@ if (config.public.sentryDsn) {
         blockAllMedia: false
       })
     ],
-    // Bumped to 1.0 for testing so EVERY session is recorded. 
+    // Bumped to 1.0 for testing so EVERY session is recorded.
     // You can lower this back to 0.1 once you verify replays are showing.
     replaysSessionSampleRate: 1.0,
     replaysOnErrorSampleRate: 1.0

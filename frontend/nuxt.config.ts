@@ -54,7 +54,16 @@ export default defineNuxtConfig({
   // the FastAPI backend, which would hijack that route and 404 every icon.
   // Move it off `/api` so it stays on the Nuxt server.
   icon: {
-    localApiEndpoint: '/_nuxt_icon'
+    localApiEndpoint: '/_nuxt_icon',
+    // Pre-bundle the icons actually used in the app (static analysis of literal
+    // `i-*` names) into the client build, so they render instantly and offline
+    // with no runtime request to the Iconify API. This also removes the
+    // "failed to load icon" noise and per-icon network timeouts in CI/tests,
+    // where there's no network to api.iconify.design.
+    clientBundle: {
+      scan: true,
+      sizeLimitKb: 512
+    }
   },
 
   // The production image runs `node .output/server/index.mjs` directly (no

@@ -77,7 +77,10 @@ jobs:
 
   # Build the images on GitHub's runners (plenty of RAM) and push to GHCR, so
   # the 2 GB Lightsail box never has to build (it used to OOM/take ~16 min).
-  build-and-push:
+  # The two images build in parallel as separate jobs (they used to build
+  # sequentially in one job — the ~3m bottleneck of the ~6m pipeline). Both
+  # are gated on BOTH test suites, so a failing test still blocks any push.
+  build-backend:
     needs: [backend-test, frontend-test]
     runs-on: ubuntu-latest
     permissions:
@@ -107,6 +110,25 @@ jobs:
           cache-from: type=gha,scope=backend
           cache-to: type=gha,mode=max,scope=backend
 
+  build-frontend:
+    needs: [backend-test, frontend-test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Build & push frontend
         uses: docker/build-push-action@v6
         with:
@@ -129,7 +151,7 @@ jobs:
   # Ship only the runtime config to the server, then pull the freshly built
   # images and restart. No source is copied and nothing is built on the server.
   deploy:
-    needs: build-and-push
+    needs: [build-backend, build-frontend]
     runs-on: ubuntu-latest
     permissions:
       contents: read

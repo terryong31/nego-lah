@@ -5,7 +5,7 @@ export default defineNuxtConfig({
     '@nuxt/ui',
     '@nuxtjs/supabase',
     '@nuxtjs/mdc',
-    '@sentry/nuxt/module'
+    '@sentry/nuxt/module',
   ],
 
   devtools: {
@@ -13,6 +13,16 @@ export default defineNuxtConfig({
   },
 
   css: ['~/assets/css/main.css'],
+
+
+  vite: {
+    optimizeDeps: {
+      include: [
+        '@vue/devtools-core',
+        '@vue/devtools-kit'
+      ]
+    }
+  },
 
   runtimeConfig: {
     public: {
@@ -25,9 +35,20 @@ export default defineNuxtConfig({
 
   // The admin console authenticates via an httpOnly cookie on the API host, which
   // SSR can't forward — render it client-side only (no SEO needed there anyway).
+  //
+  // The catch-all '/**' rule adds security headers that mirror production (Caddy).
+  // Full CSP is skipped in dev because Vite HMR injects dynamic scripts/WebSocket
+  // connections that would violate a strict policy.
   routeRules: {
     '/_console/**': { ssr: false },
-    '/_console': { ssr: false }
+    '/_console': { ssr: false },
+    '/**': {
+      headers: {
+        'X-Content-Type-Options': 'nosniff',
+        'X-Frame-Options': 'DENY',
+        'Referrer-Policy': 'strict-origin-when-cross-origin'
+      }
+    }
   },
 
   // Nuxt disables client source maps by default. "hidden" generates them (so
@@ -62,6 +83,32 @@ export default defineNuxtConfig({
     // where there's no network to api.iconify.design.
     clientBundle: {
       scan: true,
+      // `scan` only sees the app's own source, so icons injected by Nuxt UI
+      // internals (the loading spinner, chevrons, close, etc. — all living in
+      // node_modules) are missed and then fail to render wherever there's no
+      // icon server: SSR and, especially, the Vitest env (the `loader-circle`
+      // spinner alone logged ~2.4k "failed to load icon" lines in CI). List
+      // Nuxt UI's default icon set explicitly so those are bundled too.
+      icons: [
+        'lucide:loader-circle',
+        'lucide:check',
+        'lucide:x',
+        'lucide:chevron-down',
+        'lucide:chevron-up',
+        'lucide:chevron-left',
+        'lucide:chevron-right',
+        'lucide:chevrons-left',
+        'lucide:chevrons-right',
+        'lucide:arrow-left',
+        'lucide:arrow-right',
+        'lucide:arrow-up-right',
+        'lucide:ellipsis',
+        'lucide:search',
+        'lucide:plus',
+        'lucide:minus',
+        'lucide:folder',
+        'lucide:folder-open'
+      ],
       sizeLimitKb: 512
     }
   },

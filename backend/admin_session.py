@@ -24,6 +24,7 @@ from supabase import create_client
 
 from cache import check_rate_limit, redis_client
 from connector import admin_supabase
+from csrf import clear_csrf, generate_csrf_token, set_csrf_cookie
 from env import (
     ADMIN_COOKIE_NAME,
     ADMIN_COOKIE_PATH,
@@ -179,6 +180,11 @@ def verify_otp_and_open_session(handle: str, code: str, response: Response, requ
 
     sid = _create_session(user.id, email)
     _set_cookie(response, sid)
+
+    # CSRF: generate a token for this session and set the readable cookie.
+    csrf_token = generate_csrf_token(sid)
+    set_csrf_cookie(response, csrf_token)
+
     write_audit(user.id, email, "login", None, client_ip(request))
     return {"user_id": user.id, "email": email}
 
@@ -214,6 +220,9 @@ def clear_session(request: Request, response: Response) -> None:
     if sid:
         redis_client.delete(f"{_SESS_KEY}{sid}")
     response.delete_cookie(key=ADMIN_COOKIE_NAME, path=ADMIN_COOKIE_PATH)
+
+    # Also clear the CSRF token and its cookie.
+    clear_csrf(sid, response)
 
 
 # ---------------------------------------------------------------------------

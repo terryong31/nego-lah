@@ -13,8 +13,12 @@ afterEach(() => {
   fetchMock.mockReset()
 })
 
+// In the test environment there is no document.cookie, so getCsrfToken() returns ''.
+// Every call now includes headers: { 'X-CSRF-Token': '' } at minimum.
+const CSRF_HEADERS = { 'X-CSRF-Token': '' }
+
 describe('composables/useAdminApi', () => {
-  it('calls $fetch against `${apiBaseUrl}/admin${path}` with credentials: include', async () => {
+  it('calls $fetch against `${apiBaseUrl}/admin${path}` with credentials: include and CSRF header', async () => {
     fetchMock.mockResolvedValueOnce({ ok: true })
     const { call } = useAdminApi()
 
@@ -22,7 +26,8 @@ describe('composables/useAdminApi', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(fetchMock).toHaveBeenCalledWith('http://localhost:8000/admin/users', {
-      credentials: 'include'
+      credentials: 'include',
+      headers: CSRF_HEADERS
     })
     expect(result).toEqual({ ok: true })
   })
@@ -36,7 +41,7 @@ describe('composables/useAdminApi', () => {
     expect(fetchMock).toHaveBeenCalledWith('http://localhost:8000/admin/orders/123', expect.anything())
   })
 
-  it('spreads caller-supplied opts into the request after credentials', async () => {
+  it('spreads caller-supplied opts into the request after credentials, merging headers', async () => {
     fetchMock.mockResolvedValueOnce({ id: 1 })
     const { call } = useAdminApi()
 
@@ -45,7 +50,8 @@ describe('composables/useAdminApi', () => {
     expect(fetchMock).toHaveBeenCalledWith('http://localhost:8000/admin/orders/1', {
       credentials: 'include',
       method: 'PATCH',
-      body: { status: 'fulfilled' }
+      body: { status: 'fulfilled' },
+      headers: CSRF_HEADERS
     })
   })
 
@@ -56,19 +62,19 @@ describe('composables/useAdminApi', () => {
     await call('/users', { credentials: 'omit' })
 
     expect(fetchMock).toHaveBeenCalledWith('http://localhost:8000/admin/users', {
-      credentials: 'omit'
+      credentials: 'omit',
+      headers: CSRF_HEADERS
     })
   })
 
-  it('does not pass a second argument at all when no opts are provided, only the default credentials object', async () => {
+  it('includes credentials and the CSRF header when no opts are provided', async () => {
     fetchMock.mockResolvedValueOnce({})
     const { call } = useAdminApi()
 
     await call('/dashboard')
 
     const [, options] = fetchMock.mock.calls[0]
-    expect(options).toEqual({ credentials: 'include' })
-    expect(Object.keys(options)).toEqual(['credentials'])
+    expect(options).toEqual({ credentials: 'include', headers: CSRF_HEADERS })
   })
 
   it('propagates rejections from $fetch (e.g. a 401/403 from an expired admin session)', async () => {
@@ -96,7 +102,7 @@ describe('composables/useAdminApi', () => {
     await call('/a')
     await call('/b')
 
-    expect(fetchMock).toHaveBeenNthCalledWith(1, 'http://localhost:8000/admin/a', { credentials: 'include' })
-    expect(fetchMock).toHaveBeenNthCalledWith(2, 'http://localhost:8000/admin/b', { credentials: 'include' })
+    expect(fetchMock).toHaveBeenNthCalledWith(1, 'http://localhost:8000/admin/a', { credentials: 'include', headers: CSRF_HEADERS })
+    expect(fetchMock).toHaveBeenNthCalledWith(2, 'http://localhost:8000/admin/b', { credentials: 'include', headers: CSRF_HEADERS })
   })
 })

@@ -1,15 +1,28 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { ref } from 'vue'
 import { flushPromises } from '@vue/test-utils'
 import { mockNuxtImport, mountSuspended } from '@nuxt/test-utils/runtime'
 import AdminItems from '~/components/admin/AdminItems.vue'
 
-const { callMock, toastAddMock } = vi.hoisted(() => ({
+const { callMock, toastAddMock, analyzeMock } = vi.hoisted(() => ({
   callMock: vi.fn(),
-  toastAddMock: vi.fn()
+  toastAddMock: vi.fn(),
+  analyzeMock: vi.fn()
 }))
 
 mockNuxtImport('useAdminApi', () => () => ({ call: callMock }))
 mockNuxtImport('useToast', () => () => ({ add: toastAddMock }))
+
+// The streaming analysis itself is covered by tests/composables/useItemAnalysis.test.ts;
+// here we only care that the component drives it and applies what comes back.
+// Fresh refs per instance mirror the real composable, and the component
+// re-exposes them, so tests can still read/write vm.isAnalyzing & vm.progress.
+mockNuxtImport('useItemAnalysis', () => () => ({
+  analyze: analyzeMock,
+  isAnalyzing: ref(false),
+  progress: ref(0),
+  stageMessage: ref('')
+}))
 
 interface Item {
   id: string
@@ -76,22 +89,45 @@ interface VmAny {
     min_price: number | undefined
   }
   files: File[]
+  images: { id: string, file: File, url: string }[]
+  step: 'choose' | 'photos' | 'details'
+  mode: 'manual' | 'ai'
+  autofilled: boolean
+  dragIndex: number | null
   isAnalyzing: boolean
   progress: number
   busy: string | null
   canSubmit: boolean
   openCreate: () => void
   openEdit: (item: Item) => void
+  startManual: () => void
+  startAi: () => void
+  detectAndContinue: () => Promise<void>
+  skipToManual: () => void
+  goBack: () => void
+  moveImage: (from: number, to: number) => void
+  removeImage: (index: number) => void
+  dropOn: (index: number) => void
+  addImages: (files: File[]) => void
   submitItem: () => Promise<void>
   remove: (item: Item) => Promise<void>
   firstImage: (item: Item) => string | undefined
   formatDate: (d: string) => string
 }
 
+/** Open the create modal on the manual path with the named photos staged. */
+function stageManual(vm: VmAny, ...names: string[]) {
+  vm.openCreate()
+  vm.startManual()
+  vm.addImages(names.map(n => makeFile(n)))
+}
+
 describe('components/admin/AdminItems.vue', () => {
   beforeEach(() => {
     callMock.mockReset()
     toastAddMock.mockReset()
+    analyzeMock.mockReset()
+    analyzeMock.mockResolvedValue({})
     // useAsyncData('admin-items', ...) caches its result on the shared nuxtApp
     // instance that backs every mountSuspended() call in this file, so without
     // clearing it, only the very first test's mount would ever actually
@@ -199,6 +235,25 @@ describe('components/admin/AdminItems.vue', () => {
       expect(vm.form.price).toBeUndefined()
       expect(vm.form.min_price).toBeUndefined()
       expect(vm.files).toEqual([])
+      expect(vm.images).toEqual([])
+      expect(vm.step).toBe('choose')
+      expect(vm.autofilled).toBe(false)
+    })
+
+    it('openCreate returns to the choice screen after a previous create reached the details step', async () => {
+      callMock.mockResolvedValueOnce([])
+      const wrapper = await mountSuspended(AdminItems)
+      const vm = wrapper.vm as unknown as VmAny
+
+      stageManual(vm, 'a.png')
+      expect(vm.step).toBe('details')
+
+      vm.open = false
+      await flushPromises()
+      vm.openCreate()
+
+      expect(vm.step).toBe('choose')
+      expect(vm.images).toEqual([])
     })
 
     it('openCreate clears out state left over from a previous openEdit', async () => {
@@ -286,43 +341,37 @@ describe('components/admin/AdminItems.vue', () => {
       expect(vm.canSubmit).toBe(false)
     })
 
-    it('is false when creating with name + price but no files', async () => {
+    it('is false when creating with name + price but no photos staged', async () => {
       callMock.mockResolvedValueOnce([])
       const wrapper = await mountSuspended(AdminItems)
       const vm = wrapper.vm as unknown as VmAny
       vm.openCreate()
+      vm.startManual()
       vm.form.name = 'Chair'
       vm.form.price = 50
-      expect(vm.files).toEqual([])
+      expect(vm.images).toEqual([])
       expect(vm.canSubmit).toBe(false)
     })
 
-    it('is true when creating with name + price + at least one file', async () => {
+    it('is true when creating with name + price + at least one staged photo', async () => {
       callMock.mockResolvedValueOnce([])
       const wrapper = await mountSuspended(AdminItems)
       const vm = wrapper.vm as unknown as VmAny
-      vm.openCreate()
+      stageManual(vm, 'chair.png')
       vm.form.name = 'Chair'
       vm.form.price = 50
 
-      // Assigning `files` triggers the auto-analyze watcher as a side effect;
-      // reject it so it resolves quickly via the fast catch branch instead of
-      // idling on the component's internal timers.
-      callMock.mockRejectedValueOnce(new Error('not used in this test'))
-      vm.files = [makeFile()]
-
       expect(vm.canSubmit).toBe(true)
-      await flushPromises()
     })
 
-    it('is true when editing with name + price even without any files', async () => {
+    it('is true when editing with name + price even without any photos', async () => {
       callMock.mockResolvedValueOnce([])
       const wrapper = await mountSuspended(AdminItems)
       const vm = wrapper.vm as unknown as VmAny
       vm.openEdit(makeItem())
       vm.form.name = 'Chair'
       vm.form.price = 50
-      expect(vm.files).toEqual([])
+      expect(vm.images).toEqual([])
       expect(vm.canSubmit).toBe(true)
     })
 
@@ -330,7 +379,6 @@ describe('components/admin/AdminItems.vue', () => {
       callMock.mockResolvedValueOnce([])
       const wrapper = await mountSuspended(AdminItems)
       const vm = wrapper.vm as unknown as VmAny
-      // Use edit mode so we don't have to touch `files` (and trigger the watcher).
       vm.openEdit(makeItem())
       vm.form.name = 'Chair'
       vm.form.price = 50
@@ -341,89 +389,158 @@ describe('components/admin/AdminItems.vue', () => {
     })
   })
 
-  // ---- watch(files) auto-analyze ----
+  // ---- choosing a create mode ----
 
-  describe('watch(files) auto-analyze', () => {
-    it('does not call analyze-image while editing', async () => {
+  describe('create mode choice', () => {
+    it('openCreate lands on the choice screen with no mode committed', async () => {
       callMock.mockResolvedValueOnce([])
       const wrapper = await mountSuspended(AdminItems)
       const vm = wrapper.vm as unknown as VmAny
-      vm.openEdit(makeItem())
 
-      vm.files = [makeFile()]
-      await flushPromises()
+      vm.openCreate()
 
-      expect(callMock).toHaveBeenCalledTimes(1) // only the initial GET /items
-      expect(vm.isAnalyzing).toBe(false)
+      expect(vm.step).toBe('choose')
+      expect(vm.canSubmit).toBe(false)
     })
 
-    it('does not call analyze-image again while an analysis is already in flight', async () => {
+    it('startManual goes straight to the details step', async () => {
+      callMock.mockResolvedValueOnce([])
+      const wrapper = await mountSuspended(AdminItems)
+      const vm = wrapper.vm as unknown as VmAny
+
+      vm.openCreate()
+      vm.startManual()
+
+      expect(vm.mode).toBe('manual')
+      expect(vm.step).toBe('details')
+      expect(analyzeMock).not.toHaveBeenCalled()
+    })
+
+    it('startAi goes to the photos step without analyzing anything yet', async () => {
+      callMock.mockResolvedValueOnce([])
+      const wrapper = await mountSuspended(AdminItems)
+      const vm = wrapper.vm as unknown as VmAny
+
+      vm.openCreate()
+      vm.startAi()
+
+      expect(vm.mode).toBe('ai')
+      expect(vm.step).toBe('photos')
+      expect(analyzeMock).not.toHaveBeenCalled()
+    })
+
+    it('goBack returns from manual details to the choice screen', async () => {
+      callMock.mockResolvedValueOnce([])
+      const wrapper = await mountSuspended(AdminItems)
+      const vm = wrapper.vm as unknown as VmAny
+
+      stageManual(vm, 'a.png')
+      vm.goBack()
+
+      expect(vm.step).toBe('choose')
+    })
+
+    it('goBack returns from AI details to the photos step, restoring the picker selection', async () => {
+      callMock.mockResolvedValueOnce([])
+      const wrapper = await mountSuspended(AdminItems)
+      const vm = wrapper.vm as unknown as VmAny
+      const file = makeFile('lamp.png')
+
+      vm.openCreate()
+      vm.startAi()
+      vm.files = [file]
+      await vm.detectAndContinue()
+      expect(vm.step).toBe('details')
+
+      vm.goBack()
+
+      expect(vm.step).toBe('photos')
+      expect(vm.files).toEqual([file])
+    })
+
+    it('goBack from the photos step returns to the choice screen', async () => {
+      callMock.mockResolvedValueOnce([])
+      const wrapper = await mountSuspended(AdminItems)
+      const vm = wrapper.vm as unknown as VmAny
+
+      vm.openCreate()
+      vm.startAi()
+      vm.goBack()
+
+      expect(vm.step).toBe('choose')
+    })
+  })
+
+  // ---- AI detect step ----
+
+  describe('detectAndContinue', () => {
+    it('does nothing without any selected photos', async () => {
       callMock.mockResolvedValueOnce([])
       const wrapper = await mountSuspended(AdminItems)
       const vm = wrapper.vm as unknown as VmAny
       vm.openCreate()
+      vm.startAi()
+
+      await vm.detectAndContinue()
+
+      expect(analyzeMock).not.toHaveBeenCalled()
+      expect(vm.step).toBe('photos')
+    })
+
+    it('does not start a second analysis while one is already in flight', async () => {
+      callMock.mockResolvedValueOnce([])
+      const wrapper = await mountSuspended(AdminItems)
+      const vm = wrapper.vm as unknown as VmAny
+      vm.openCreate()
+      vm.startAi()
+      vm.files = [makeFile()]
       vm.isAnalyzing = true
 
-      vm.files = [makeFile()]
-      await flushPromises()
+      await vm.detectAndContinue()
 
-      expect(callMock).toHaveBeenCalledTimes(1) // only the initial GET /items
+      expect(analyzeMock).not.toHaveBeenCalled()
     })
 
-    it('does not call analyze-image when the file list is empty', async () => {
+    it('hands the selected photos to the analyzer and stages them in picked order', async () => {
       callMock.mockResolvedValueOnce([])
       const wrapper = await mountSuspended(AdminItems)
       const vm = wrapper.vm as unknown as VmAny
       vm.openCreate()
+      vm.startAi()
+      const first = makeFile('front.png')
+      const second = makeFile('back.png')
+      vm.files = [first, second]
 
-      vm.files = [] // reference change, but still zero-length
-      await flushPromises()
+      await vm.detectAndContinue()
 
-      expect(callMock).toHaveBeenCalledTimes(1)
+      expect(analyzeMock).toHaveBeenCalledTimes(1)
+      expect(analyzeMock.mock.calls[0]![0]).toEqual([first, second])
+      expect(vm.images.map(i => i.file)).toEqual([first, second])
+      expect(vm.step).toBe('details')
     })
 
-    it('posts a FormData of the selected files to /analyze-image', async () => {
+    it('populates empty name/description/condition/price fields and flags the form as auto-filled', async () => {
       callMock.mockResolvedValueOnce([])
       const wrapper = await mountSuspended(AdminItems)
       const vm = wrapper.vm as unknown as VmAny
       vm.openCreate()
+      vm.startAi()
+      vm.files = [makeFile('sofa.png')]
 
-      callMock.mockRejectedValueOnce(new Error('not used'))
-      const file = makeFile('sofa.png')
-      vm.files = [file]
-      await flushPromises()
-
-      const analyzeCall = callMock.mock.calls.find(([path]) => path === '/analyze-image')
-      expect(analyzeCall).toBeTruthy()
-      const [, opts] = analyzeCall!
-      expect(opts.method).toBe('POST')
-      expect(opts.body).toBeInstanceOf(FormData)
-      expect((opts.body as FormData).getAll('images')).toEqual([file])
-    })
-
-    it('populates empty name/description/condition/price fields from a successful response and shows a success toast', async () => {
-      callMock.mockResolvedValueOnce([])
-      const wrapper = await mountSuspended(AdminItems)
-      const vm = wrapper.vm as unknown as VmAny
-      vm.openCreate()
-
-      vi.useFakeTimers()
-      callMock.mockResolvedValueOnce({
+      analyzeMock.mockResolvedValueOnce({
         name: 'Leather Sofa',
         description: 'A comfy 3-seater',
         condition: 'like new',
         market_data: { suggested_listing: 899.99 }
       })
 
-      vm.files = [makeFile('sofa.png')]
-      await vi.advanceTimersByTimeAsync(1000)
+      await vm.detectAndContinue()
 
       expect(vm.form.name).toBe('Leather Sofa')
       expect(vm.form.description).toBe('A comfy 3-seater')
       expect(vm.form.condition).toBe('Like New')
       expect(vm.form.price).toBe(899.99)
-      expect(vm.isAnalyzing).toBe(false)
-      expect(vm.progress).toBe(0)
+      expect(vm.autofilled).toBe(true)
       expect(toastAddMock).toHaveBeenCalledWith({
         title: 'Analysis complete',
         description: 'Item details have been auto-filled',
@@ -431,24 +548,47 @@ describe('components/admin/AdminItems.vue', () => {
       })
     })
 
+    it('applies streamed patches as they arrive, before the analysis finishes', async () => {
+      callMock.mockResolvedValueOnce([])
+      const wrapper = await mountSuspended(AdminItems)
+      const vm = wrapper.vm as unknown as VmAny
+      vm.openCreate()
+      vm.startAi()
+      vm.files = [makeFile('lamp.png')]
+
+      // Stand in for the SSE stages landing one at a time.
+      analyzeMock.mockImplementationOnce(async (_files, onPatch) => {
+        onPatch({ name: 'Brass Lamp', condition: 'good' })
+        expect(vm.form.name).toBe('Brass Lamp')
+        onPatch({ description: 'Warm glow', price: 120 })
+        return { name: 'Brass Lamp' }
+      })
+
+      await vm.detectAndContinue()
+
+      expect(vm.form.name).toBe('Brass Lamp')
+      expect(vm.form.description).toBe('Warm glow')
+      expect(vm.form.price).toBe(120)
+    })
+
     it('does not overwrite name/description/price fields the user already filled in', async () => {
       callMock.mockResolvedValueOnce([])
       const wrapper = await mountSuspended(AdminItems)
       const vm = wrapper.vm as unknown as VmAny
       vm.openCreate()
+      vm.startAi()
+      vm.files = [makeFile()]
       vm.form.name = 'My Own Name'
       vm.form.description = 'My own description'
       vm.form.price = 500
 
-      vi.useFakeTimers()
-      callMock.mockResolvedValueOnce({
+      analyzeMock.mockResolvedValueOnce({
         name: 'Detected Name',
         description: 'Detected description',
         market_data: { suggested_listing: 10 }
       })
 
-      vm.files = [makeFile()]
-      await vi.advanceTimersByTimeAsync(1000)
+      await vm.detectAndContinue()
 
       expect(vm.form.name).toBe('My Own Name')
       expect(vm.form.description).toBe('My own description')
@@ -460,13 +600,13 @@ describe('components/admin/AdminItems.vue', () => {
       const wrapper = await mountSuspended(AdminItems)
       const vm = wrapper.vm as unknown as VmAny
       vm.openCreate()
+      vm.startAi()
+      vm.files = [makeFile()]
       expect(vm.form.condition).toBe('Good')
 
-      vi.useFakeTimers()
-      callMock.mockResolvedValueOnce({ condition: 'Mint' })
+      analyzeMock.mockResolvedValueOnce({ condition: 'Mint' })
 
-      vm.files = [makeFile()]
-      await vi.advanceTimersByTimeAsync(1000)
+      await vm.detectAndContinue()
 
       expect(vm.form.condition).toBe('Good')
     })
@@ -482,33 +622,37 @@ describe('components/admin/AdminItems.vue', () => {
       const wrapper = await mountSuspended(AdminItems)
       const vm = wrapper.vm as unknown as VmAny
       vm.openCreate()
-
-      vi.useFakeTimers()
-      callMock.mockResolvedValueOnce({ condition: input })
-
+      vm.startAi()
       vm.files = [makeFile()]
-      await vi.advanceTimersByTimeAsync(1000)
+
+      analyzeMock.mockResolvedValueOnce({ condition: input })
+
+      await vm.detectAndContinue()
 
       expect(vm.form.condition).toBe(expected)
     })
 
-    it('shows an "Analysis failed" toast with the API detail message when the request rejects', async () => {
+    it('warns but still advances to the details step when the analysis fails', async () => {
       callMock.mockResolvedValueOnce([])
       const wrapper = await mountSuspended(AdminItems)
       const vm = wrapper.vm as unknown as VmAny
       vm.openCreate()
-
-      callMock.mockRejectedValueOnce({ data: { detail: 'Could not read image' } })
+      vm.startAi()
       vm.files = [makeFile()]
-      await flushPromises()
+
+      analyzeMock.mockRejectedValueOnce({ data: { detail: 'Could not read image' } })
+
+      await vm.detectAndContinue()
 
       expect(toastAddMock).toHaveBeenCalledWith({
         title: 'Analysis failed',
         description: 'Could not read image',
         color: 'warning'
       })
-      expect(vm.isAnalyzing).toBe(false)
-      expect(vm.progress).toBe(0)
+      // Still usable: the photos are staged and the form is just blank.
+      expect(vm.step).toBe('details')
+      expect(vm.images).toHaveLength(1)
+      expect(vm.autofilled).toBe(false)
       expect(vm.form.name).toBe('')
     })
 
@@ -517,10 +661,12 @@ describe('components/admin/AdminItems.vue', () => {
       const wrapper = await mountSuspended(AdminItems)
       const vm = wrapper.vm as unknown as VmAny
       vm.openCreate()
-
-      callMock.mockRejectedValueOnce(new Error('boom'))
+      vm.startAi()
       vm.files = [makeFile()]
-      await flushPromises()
+
+      analyzeMock.mockRejectedValueOnce(new Error('boom'))
+
+      await vm.detectAndContinue()
 
       expect(toastAddMock).toHaveBeenCalledWith({
         title: 'Analysis failed',
@@ -529,51 +675,115 @@ describe('components/admin/AdminItems.vue', () => {
       })
     })
 
-    it('ticks progress upward via the interval on each 300ms tick while the analyze-image call is still pending', async () => {
+    it('skipToManual stages the picked photos without analyzing them', async () => {
       callMock.mockResolvedValueOnce([])
       const wrapper = await mountSuspended(AdminItems)
       const vm = wrapper.vm as unknown as VmAny
       vm.openCreate()
+      vm.startAi()
+      const file = makeFile('desk.png')
+      vm.files = [file]
 
-      vi.useFakeTimers()
-      let resolveCall!: (v: unknown) => void
-      callMock.mockImplementationOnce(() => new Promise((resolve) => {
-        resolveCall = resolve
-      }))
+      vm.skipToManual()
 
-      vm.files = [makeFile()]
+      expect(analyzeMock).not.toHaveBeenCalled()
+      expect(vm.mode).toBe('manual')
+      expect(vm.step).toBe('details')
+      expect(vm.images.map(i => i.file)).toEqual([file])
+    })
+  })
 
-      // Let the watcher's synchronous setup (isAnalyzing/progress reset, the
-      // setInterval call) run before the analyze-image call resolves at all.
-      await vi.advanceTimersByTimeAsync(0)
-      expect(vm.isAnalyzing).toBe(true)
-      expect(vm.progress).toBe(0)
+  // ---- photo ordering ----
 
-      // First 300ms tick: progress.value (0) < 90, so it bumps up.
-      await vi.advanceTimersByTimeAsync(300)
-      const afterFirstTick = vm.progress
-      expect(afterFirstTick).toBeGreaterThan(0)
-      expect(afterFirstTick).toBeLessThan(90)
+  describe('photo ordering', () => {
+    function names(vm: VmAny) {
+      return vm.images.map(i => i.file.name)
+    }
 
-      // Second tick: still below 90, bumps up again - proves the interval
-      // (not a one-shot timeout) is what's driving progress here.
-      await vi.advanceTimersByTimeAsync(300)
-      expect(vm.progress).toBeGreaterThan(afterFirstTick)
-      expect(vm.progress).toBeLessThan(90)
+    it('addImages appends to the end, keeping the existing thumbnail first', async () => {
+      callMock.mockResolvedValueOnce([])
+      const wrapper = await mountSuspended(AdminItems)
+      const vm = wrapper.vm as unknown as VmAny
+      stageManual(vm, 'a.png', 'b.png')
 
-      // Keep ticking (the increment shrinks toward 1/tick as progress
-      // approaches 90) until it actually reaches the 90 ceiling, so the
-      // `if (progress.value < 90)` guard's *false* branch - progress pinned
-      // at 90, no further increments - gets exercised too, not just the
-      // "still climbing" true branch above.
-      await vi.advanceTimersByTimeAsync(300 * 40)
-      expect(vm.progress).toBe(90)
+      vm.addImages([makeFile('c.png')])
 
-      resolveCall({})
-      await vi.advanceTimersByTimeAsync(1000)
+      expect(names(vm)).toEqual(['a.png', 'b.png', 'c.png'])
+    })
 
-      expect(vm.isAnalyzing).toBe(false)
-      expect(vm.progress).toBe(0)
+    it('moveImage reorders and can promote a later photo to the thumbnail slot', async () => {
+      callMock.mockResolvedValueOnce([])
+      const wrapper = await mountSuspended(AdminItems)
+      const vm = wrapper.vm as unknown as VmAny
+      stageManual(vm, 'a.png', 'b.png', 'c.png')
+
+      vm.moveImage(2, 0)
+
+      expect(names(vm)).toEqual(['c.png', 'a.png', 'b.png'])
+    })
+
+    it('moveImage ignores out-of-range targets', async () => {
+      callMock.mockResolvedValueOnce([])
+      const wrapper = await mountSuspended(AdminItems)
+      const vm = wrapper.vm as unknown as VmAny
+      stageManual(vm, 'a.png', 'b.png')
+
+      vm.moveImage(0, -1)
+      vm.moveImage(1, 2)
+
+      expect(names(vm)).toEqual(['a.png', 'b.png'])
+    })
+
+    it('removeImage drops the photo and revokes its preview URL', async () => {
+      const revoke = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+      callMock.mockResolvedValueOnce([])
+      const wrapper = await mountSuspended(AdminItems)
+      const vm = wrapper.vm as unknown as VmAny
+      stageManual(vm, 'a.png', 'b.png')
+
+      vm.removeImage(0)
+
+      expect(names(vm)).toEqual(['b.png'])
+      expect(revoke).toHaveBeenCalledWith('blob:mock-url')
+      revoke.mockRestore()
+    })
+
+    it('removeImage is a no-op for an index that does not exist', async () => {
+      callMock.mockResolvedValueOnce([])
+      const wrapper = await mountSuspended(AdminItems)
+      const vm = wrapper.vm as unknown as VmAny
+      stageManual(vm, 'a.png')
+
+      vm.removeImage(5)
+
+      expect(names(vm)).toEqual(['a.png'])
+    })
+
+    it('dropOn moves the dragged photo onto the drop target', async () => {
+      callMock.mockResolvedValueOnce([])
+      const wrapper = await mountSuspended(AdminItems)
+      const vm = wrapper.vm as unknown as VmAny
+      stageManual(vm, 'a.png', 'b.png', 'c.png')
+
+      vm.dragIndex = 0
+      vm.dropOn(2)
+
+      expect(names(vm)).toEqual(['b.png', 'c.png', 'a.png'])
+      expect(vm.dragIndex).toBeNull()
+    })
+
+    it('dropOn does nothing without an active drag, or when dropped on itself', async () => {
+      callMock.mockResolvedValueOnce([])
+      const wrapper = await mountSuspended(AdminItems)
+      const vm = wrapper.vm as unknown as VmAny
+      stageManual(vm, 'a.png', 'b.png')
+
+      vm.dropOn(1)
+      expect(names(vm)).toEqual(['a.png', 'b.png'])
+
+      vm.dragIndex = 1
+      vm.dropOn(1)
+      expect(names(vm)).toEqual(['a.png', 'b.png'])
     })
   })
 
@@ -594,15 +804,12 @@ describe('components/admin/AdminItems.vue', () => {
 
     describe('create (multipart FormData)', () => {
       async function setupCreatable(vm: VmAny) {
-        vm.openCreate()
+        stageManual(vm, 'guitar.png')
         vm.form.name = 'Guitar'
         vm.form.description = 'Six-string acoustic'
         vm.form.condition = 'Like New'
         vm.form.price = 250
-
-        callMock.mockRejectedValueOnce(new Error('analyze not used'))
-        vm.files = [makeFile('guitar.png')]
-        await flushPromises() // let the (rejected) auto-analyze settle first
+        await flushPromises()
       }
 
       it('POSTs a FormData body to /items, toasts, closes the modal, and refreshes', async () => {
@@ -664,7 +871,30 @@ describe('components/admin/AdminItems.vue', () => {
         expect(vm.form.name).toBe('')
         expect(vm.form.price).toBeUndefined()
         expect(vm.files).toEqual([])
+        expect(vm.images).toEqual([])
+        expect(vm.step).toBe('choose')
         expect(vm.editingId).toBeNull()
+      })
+
+      it('appends the photos in the order they were arranged, thumbnail first', async () => {
+        callMock.mockResolvedValueOnce([])
+        const wrapper = await mountSuspended(AdminItems)
+        const vm = wrapper.vm as unknown as VmAny
+        stageManual(vm, 'a.png', 'b.png', 'c.png')
+        vm.form.name = 'Guitar'
+        vm.form.price = 250
+
+        // Promote the last photo to the thumbnail slot.
+        vm.moveImage(2, 0)
+
+        callMock.mockResolvedValueOnce({})
+        callMock.mockResolvedValueOnce([])
+
+        await vm.submitItem()
+
+        const createCall = callMock.mock.calls.find(([path, opts]) => path === '/items' && opts?.method === 'POST')
+        const body = createCall![1].body as FormData
+        expect((body.getAll('images') as File[]).map(f => f.name)).toEqual(['c.png', 'a.png', 'b.png'])
       })
 
       it('shows a "Create failed" toast with the API detail and keeps the modal open on failure', async () => {
@@ -1002,11 +1232,47 @@ describe('components/admin/AdminItems.vue', () => {
   // ---- modal body/footer template (UModal stubbed so its slot content renders inline) ----
 
   describe('modal body/footer fields (via UModalStub)', () => {
-    it('creating: shows the images upload field plus empty name/description/condition/price/min-price fields', async () => {
+    it('creating: offers the manual and AI paths before showing any fields', async () => {
       callMock.mockResolvedValueOnce([])
       const wrapper = await mountSuspended(AdminItems, { global: { stubs: { UModal: UModalStub } } })
       const vm = wrapper.vm as unknown as VmAny
       vm.openCreate()
+      await flushPromises()
+
+      expect(wrapper.text()).toContain('Fill in manually')
+      expect(wrapper.text()).toContain('Let AI detect it')
+      // Nothing to fill in or upload yet.
+      expect(wrapper.find('input[placeholder="e.g. Fender Stratocaster"]').exists()).toBe(false)
+      expect(wrapper.findComponent({ name: 'UFileUpload' }).exists()).toBe(false)
+    })
+
+    it('creating: clicking "Let AI detect it" opens the photo picker with the detect action', async () => {
+      callMock.mockResolvedValueOnce([])
+      const wrapper = await mountSuspended(AdminItems, { global: { stubs: { UModal: UModalStub } } })
+      const vm = wrapper.vm as unknown as VmAny
+      vm.openCreate()
+      await flushPromises()
+
+      const aiChoice = wrapper.findAll('button').find(b => b.text().includes('Let AI detect it'))
+      expect(aiChoice).toBeTruthy()
+      await aiChoice!.trigger('click')
+      await flushPromises()
+
+      expect(vm.step).toBe('photos')
+      expect(wrapper.findComponent({ name: 'UFileUpload' }).exists()).toBe(true)
+      expect(wrapper.findAll('button').some(b => b.text() === 'Detect with AI')).toBe(true)
+    })
+
+    it('creating: clicking "Fill in manually" shows the empty name/description/condition/price/min-price fields', async () => {
+      callMock.mockResolvedValueOnce([])
+      const wrapper = await mountSuspended(AdminItems, { global: { stubs: { UModal: UModalStub } } })
+      const vm = wrapper.vm as unknown as VmAny
+      vm.openCreate()
+      await flushPromises()
+
+      const manualChoice = wrapper.findAll('button').find(b => b.text().includes('Fill in manually'))
+      expect(manualChoice).toBeTruthy()
+      await manualChoice!.trigger('click')
       await flushPromises()
 
       expect(wrapper.find('input[type="file"]').exists()).toBe(true)
@@ -1074,6 +1340,7 @@ describe('components/admin/AdminItems.vue', () => {
       const wrapper = await mountSuspended(AdminItems, { global: { stubs: { UModal: UModalStub } } })
       const vm = wrapper.vm as unknown as VmAny
       vm.openCreate()
+      vm.startManual()
       await flushPromises()
 
       await wrapper.find('input[placeholder="e.g. Fender Stratocaster"]').setValue('Standing Desk')
@@ -1087,11 +1354,12 @@ describe('components/admin/AdminItems.vue', () => {
       expect(vm.form.min_price).toBe(75)
     })
 
-    it('changing the Condition select and the Images upload updates the form via v-model', async () => {
+    it('changing the Condition select updates the form via v-model', async () => {
       callMock.mockResolvedValueOnce([])
       const wrapper = await mountSuspended(AdminItems, { global: { stubs: { UModal: UModalStub } } })
       const vm = wrapper.vm as unknown as VmAny
       vm.openCreate()
+      vm.startManual()
       await flushPromises()
 
       // Reka UI's <USelect> opens its option list in a teleported popover,
@@ -1105,6 +1373,15 @@ describe('components/admin/AdminItems.vue', () => {
       select.vm.$emit('update:modelValue', 'Fair')
       await flushPromises()
       expect(vm.form.condition).toBe('Fair')
+    })
+
+    it('the AI step\'s Images upload updates `files` via v-model', async () => {
+      callMock.mockResolvedValueOnce([])
+      const wrapper = await mountSuspended(AdminItems, { global: { stubs: { UModal: UModalStub } } })
+      const vm = wrapper.vm as unknown as VmAny
+      vm.openCreate()
+      vm.startAi()
+      await flushPromises()
 
       const fileUpload = wrapper.findComponent({ name: 'UFileUpload' })
       expect(fileUpload.exists()).toBe(true)
@@ -1112,6 +1389,48 @@ describe('components/admin/AdminItems.vue', () => {
       fileUpload.vm.$emit('update:modelValue', [file])
       await flushPromises()
       expect(vm.files).toEqual([file])
+    })
+
+    it('the details step renders a tile per photo, badging the first as the thumbnail', async () => {
+      callMock.mockResolvedValueOnce([])
+      const wrapper = await mountSuspended(AdminItems, { global: { stubs: { UModal: UModalStub } } })
+      const vm = wrapper.vm as unknown as VmAny
+      stageManual(vm, 'a.png', 'b.png')
+      await flushPromises()
+
+      const tiles = wrapper.findAll('[data-testid="image-tile"]')
+      expect(tiles).toHaveLength(2)
+      expect(tiles[0]!.text()).toContain('Thumbnail')
+      expect(tiles[1]!.text()).toContain('2')
+    })
+
+    it('clicking a tile\'s move-earlier button promotes that photo to the thumbnail', async () => {
+      callMock.mockResolvedValueOnce([])
+      const wrapper = await mountSuspended(AdminItems, { global: { stubs: { UModal: UModalStub } } })
+      const vm = wrapper.vm as unknown as VmAny
+      stageManual(vm, 'a.png', 'b.png')
+      await flushPromises()
+
+      const moveEarlier = wrapper.findAll('button')
+        .filter(b => b.attributes('aria-label') === 'Move photo earlier')
+      // The first tile's button is disabled, so drive the second tile's.
+      await moveEarlier[1]!.trigger('click')
+
+      expect(vm.images.map(i => i.file.name)).toEqual(['b.png', 'a.png'])
+    })
+
+    it('clicking a tile\'s remove button drops that photo', async () => {
+      callMock.mockResolvedValueOnce([])
+      const wrapper = await mountSuspended(AdminItems, { global: { stubs: { UModal: UModalStub } } })
+      const vm = wrapper.vm as unknown as VmAny
+      stageManual(vm, 'a.png', 'b.png')
+      await flushPromises()
+
+      const remove = wrapper.findAll('button').find(b => b.attributes('aria-label') === 'Remove photo')
+      expect(remove).toBeTruthy()
+      await remove!.trigger('click')
+
+      expect(vm.images.map(i => i.file.name)).toEqual(['b.png'])
     })
 
     it('clicking Cancel in the footer closes the modal without submitting anything', async () => {
@@ -1129,22 +1448,30 @@ describe('components/admin/AdminItems.vue', () => {
       expect(callMock).toHaveBeenCalledTimes(1) // only the initial GET /items
     })
 
-    it('clicking "Create item" in the footer submits the new item', async () => {
+    it('clicking Back in the footer returns to the choice screen', async () => {
       callMock.mockResolvedValueOnce([])
-      // This test isn't about the images field itself (covered separately
-      // above), so stub UFileUpload out too - AdminItems.vue's own
-      // <UFileUpload v-model="files" /> binding still gets exercised (that
-      // vnode is still created), just without mounting the real child.
-      const wrapper = await mountSuspended(AdminItems, {
-        global: { stubs: { UModal: UModalStub, UFileUpload: true } }
-      })
+      const wrapper = await mountSuspended(AdminItems, { global: { stubs: { UModal: UModalStub } } })
       const vm = wrapper.vm as unknown as VmAny
       vm.openCreate()
+      vm.startManual()
+      await flushPromises()
+
+      const backBtn = wrapper.findAll('button').find(b => b.text() === 'Back')
+      expect(backBtn).toBeTruthy()
+      await backBtn!.trigger('click')
+
+      expect(vm.step).toBe('choose')
+    })
+
+    it('clicking "Create item" in the footer submits the new item', async () => {
+      callMock.mockResolvedValueOnce([])
+      const wrapper = await mountSuspended(AdminItems, {
+        global: { stubs: { UModal: UModalStub } }
+      })
+      const vm = wrapper.vm as unknown as VmAny
+      stageManual(vm, 'guitar.png')
       vm.form.name = 'Guitar'
       vm.form.price = 250
-
-      callMock.mockRejectedValueOnce(new Error('analyze not used'))
-      vm.files = [makeFile('guitar.png')]
       await flushPromises()
 
       callMock.mockResolvedValueOnce({ id: 'new-1' }) // POST /items

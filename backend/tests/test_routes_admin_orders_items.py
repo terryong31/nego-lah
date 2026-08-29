@@ -34,12 +34,14 @@ Mocking seam notes (see conftest.py docstring for the general rules):
   `items` module.
 """
 
+import base64
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 import agent.tools.image_analyzer as image_analyzer_module
+import agent.tools.listing_pipeline as listing_pipeline_module
 import agent.tools.market_price as market_price_module
 import items as items_module
 import payment.payment_state as payment_state_module
@@ -475,6 +477,116 @@ async def test_analyze_image_analyzer_exception_returns_500(client, admin_user, 
 
     assert response.status_code == 500
     assert "Failed to analyze image" in response.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# POST /admin/analyze-image/stream
+#
+# The route delegates to agent.tools.listing_pipeline.analyze_listing (imported
+# lazily inside the handler), so patching the name on that module is what the
+# route resolves at call time. The pipeline's own stage/concurrency behaviour is
+# covered by test_agent_tools_listing_pipeline.py -- here we only assert the SSE
+# framing around it.
+# ---------------------------------------------------------------------------
+
+
+def _sse_events(body: str) -> list[dict]:
+    """Parse an SSE response body into the list of JSON payloads it carried."""
+    import json as _json
+
+    return [
+        _json.loads(line[len("data:"):].strip())
+        for frame in body.split("\n\n")
+        for line in frame.split("\n")
+        if line.startswith("data:")
+    ]
+
+
+async def test_analyze_image_stream_emits_progress_then_the_final_result(client, admin_user, monkeypatch):
+    admin_user()
+
+    async def fake_pipeline(images_data, on_progress=None):
+        await on_progress({"stage": "identifying", "progress": 20, "message": "Looking…"})
+        await on_progress({
+            "stage": "identified", "progress": 50, "message": "Identified: Lamp",
+            "patch": {"name": "Lamp"},
+        })
+        return {"name": "Lamp", "description": "A lamp", "market_data": {"suggested_listing": 90}}
+
+    monkeypatch.setattr(listing_pipeline_module, "analyze_listing", fake_pipeline)
+
+    files = [("images", ("lamp.jpg", b"fake-image-bytes", "image/jpeg"))]
+    response = await client.post("/admin/analyze-image/stream", files=files)
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert response.headers["x-accel-buffering"] == "no"
+
+    events = _sse_events(response.text)
+    assert [e["stage"] for e in events] == ["uploaded", "identifying", "identified", "done"]
+    assert events[0]["progress"] == 10
+    assert events[2]["patch"] == {"name": "Lamp"}
+    assert events[-1]["progress"] == 100
+    assert events[-1]["result"]["name"] == "Lamp"
+
+
+async def test_analyze_image_stream_passes_every_encoded_image_through(client, admin_user, monkeypatch):
+    admin_user()
+    seen = {}
+
+    async def fake_pipeline(images_data, on_progress=None):
+        seen["images"] = images_data
+        return {"name": "Item"}
+
+    monkeypatch.setattr(listing_pipeline_module, "analyze_listing", fake_pipeline)
+
+    files = [
+        ("images", ("a.jpg", b"aaa", "image/jpeg")),
+        ("images", ("b.png", b"bbb", "image/png")),
+    ]
+    response = await client.post("/admin/analyze-image/stream", files=files)
+
+    assert response.status_code == 200
+    # Order is preserved, and each image arrives base64-encoded with its type.
+    assert [i["mime_type"] for i in seen["images"]] == ["image/jpeg", "image/png"]
+    assert seen["images"][0]["base64_image"] == base64.b64encode(b"aaa").decode()
+
+
+async def test_encode_images_defaults_a_missing_content_type_to_jpeg():
+    # Exercised directly: an HTTP client always fills in *some* content type
+    # (httpx defaults to application/octet-stream), so this branch is only
+    # reachable from an UploadFile that carries none.
+    import io
+
+    from fastapi import UploadFile
+
+    from routes.admin import _encode_images
+
+    upload = UploadFile(filename="mystery", file=io.BytesIO(b"data"))
+    assert upload.content_type is None
+
+    encoded = await _encode_images([upload])
+
+    assert encoded == [{"base64_image": base64.b64encode(b"data").decode(), "mime_type": "image/jpeg"}]
+
+
+async def test_analyze_image_stream_reports_a_pipeline_failure_as_an_error_event(client, admin_user, monkeypatch):
+    admin_user()
+
+    async def boom(images_data, on_progress=None):
+        raise RuntimeError("gemini exploded")
+
+    monkeypatch.setattr(listing_pipeline_module, "analyze_listing", boom)
+
+    files = [("images", ("broken.jpg", b"fake", "image/jpeg"))]
+    response = await client.post("/admin/analyze-image/stream", files=files)
+
+    # The stream has already started, so the failure is delivered in-band
+    # rather than as an HTTP error status.
+    assert response.status_code == 200
+    events = _sse_events(response.text)
+    assert events[-1]["stage"] == "error"
+    assert "gemini exploded" in events[-1]["message"]
 
 
 # ---------------------------------------------------------------------------

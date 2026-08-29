@@ -120,7 +120,25 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# CORS middleware
+# CORS middleware — environment-aware origins.
+# Production: only the real domain. Dev: localhost variants + prod (for testing).
+# CORS_ORIGINS env var overrides everything (e.g. staging).
+_PROD_ORIGINS = [
+    "https://negolah.my",
+    "https://www.negolah.my",
+]
+
+_DEV_ORIGINS = [
+    "http://localhost",
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "http://localhost:8000",
+    "http://127.0.0.1",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:3001",
+    "http://127.0.0.1:8000",
+]
+
 cors_origins_str = os.environ.get("CORS_ORIGINS")
 if cors_origins_str:
     try:
@@ -128,27 +146,22 @@ if cors_origins_str:
     except Exception:
         origins = cors_origins_str.split(",")
 else:
-    # Default origins if not specified in environment
-    origins = [
-        "http://localhost",
-        "http://localhost:3000",
-        "http://localhost:3001",
-        "http://localhost:8000",
-        "http://127.0.0.1",
-        "http://127.0.0.1:3000",
-        "http://127.0.0.1:3001",
-        "http://127.0.0.1:8000",
-        "https://negolah.my",
-        "http://negolah.my",
-        "https://www.negolah.my"
-    ]
+    origins = _PROD_ORIGINS if IS_PROD else _DEV_ORIGINS + _PROD_ORIGINS
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=[
+        "Authorization",
+        "Content-Type",
+        "Accept",
+        "X-CSRF-Token",
+        "sentry-trace",
+        "baggage",
+    ],
+    expose_headers=["X-CSRF-Token"],
 )
 
 # Include routers

@@ -538,3 +538,90 @@ def test_get_market_valuation_default_condition_is_good(monkeypatch):
 
     assert result["source"] == "Estimation (Fallback)"
     assert result["condition_used"] == "good"
+
+
+# ---------------------------------------------------------------------------
+# aget_market_valuation -- the async twin used by the listing pipeline
+# ---------------------------------------------------------------------------
+
+
+async def test_aget_market_valuation_parses_the_grounded_response(monkeypatch):
+    content = json.dumps({
+        "market_average": 500.0,
+        "min_price": 100.0,
+        "max_price": 900.0,
+        "suggested_listing": 460.0,
+    })
+    fake_class, fake_instance, fake_grounded = _make_fake_chat_model(content)
+    monkeypatch.setattr("langchain_google_genai.ChatGoogleGenerativeAI", fake_class)
+
+    svc = MarketPriceService()
+    result = await svc.aget_market_valuation("iPhone 13", condition="good", category="electronics")
+
+    assert result == svc.get_market_valuation("iPhone 13", condition="good", category="electronics")
+    assert result["source"] == "Google Search (AI)"
+    fake_instance.bind.assert_called_with(tools=[{"google_search": {}}])
+    assert fake_grounded.invoke.call_count == 2  # once here, once via the sync twin above
+
+
+async def test_aget_market_valuation_falls_back_when_the_model_raises(monkeypatch):
+    from unittest.mock import MagicMock
+
+    fake_grounded_model = MagicMock()
+    fake_grounded_model.invoke.side_effect = RuntimeError("network is down")
+    fake_model_instance = MagicMock()
+    fake_model_instance.bind.return_value = fake_grounded_model
+    monkeypatch.setattr(
+        "langchain_google_genai.ChatGoogleGenerativeAI", MagicMock(return_value=fake_model_instance)
+    )
+
+    svc = MarketPriceService()
+    result = await svc.aget_market_valuation("flaky item", condition="good", category=None)
+
+    assert result == svc._fallback_estimate_price("flaky item", "good", None)
+    assert result["source"] == "Estimation (Fallback)"
+
+
+async def test_aget_market_valuation_falls_back_without_an_api_key(monkeypatch):
+    monkeypatch.setattr("env.GEMINI_API_KEY", None)
+
+    svc = MarketPriceService()
+    result = await svc.aget_market_valuation("anything", category="other")
+
+    assert result["source"] == "Estimation (Fallback)"
+    assert result["condition_used"] == "good"
+
+
+async def test_aget_market_valuation_does_not_block_the_event_loop(monkeypatch):
+    """The blocking SDK call runs in a thread, so other tasks keep running."""
+    import asyncio
+    from unittest.mock import MagicMock
+
+    started = asyncio.Event()
+    loop = asyncio.get_running_loop()
+
+    def slow_invoke(_messages):
+        loop.call_soon_threadsafe(started.set)
+        response = MagicMock()
+        response.content = json.dumps({
+            "market_average": 1.0, "min_price": 1.0, "max_price": 1.0, "suggested_listing": 1.0,
+        })
+        return response
+
+    fake_grounded_model = MagicMock()
+    fake_grounded_model.invoke = slow_invoke
+    fake_model_instance = MagicMock()
+    fake_model_instance.bind.return_value = fake_grounded_model
+    monkeypatch.setattr(
+        "langchain_google_genai.ChatGoogleGenerativeAI", MagicMock(return_value=fake_model_instance)
+    )
+
+    svc = MarketPriceService()
+    task = asyncio.create_task(svc.aget_market_valuation("widget"))
+
+    # If invoke() ran inline on the event loop, this would never get a turn
+    # before the call completed.
+    await asyncio.wait_for(started.wait(), timeout=2)
+    result = await task
+
+    assert result["market_average"] == 1.0

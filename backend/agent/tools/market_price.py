@@ -6,6 +6,7 @@ Provides market price valuations using intelligent estimation
 based on item category and condition.
 """
 
+import asyncio
 import statistics
 
 from logger import logger
@@ -58,35 +59,44 @@ class MarketPriceService:
         """
         return self._estimate_price(query, condition, category)
 
-    def _estimate_price(
+    async def aget_market_valuation(
         self,
         query: str,
-        condition: str,
-        category: str | None = None
+        condition: str = "good",
+        category: str | None = None,
     ) -> dict:
-        """
-        Estimate price based on item characteristics using Gemini with Google Search Grounding.
+        """Async twin of `get_market_valuation`.
+
+        The grounded search is the slowest step in the listing pipeline, so it
+        runs off the event loop — that's what lets it overlap with the
+        description call instead of queuing behind it.
         """
         try:
-            import json
-            import re
+            grounded_model, msg = self._build_valuation_query(query, condition)
+            response = await asyncio.to_thread(grounded_model.invoke, [msg])
+            return self._parse_valuation(response.content, condition, category)
+        except Exception as e:
+            logger.error(f"Failed to use Gemini Google Search Grounding: {e}. Falling back to basic estimation.")
+            return self._fallback_estimate_price(query, condition, category)
 
-            from langchain_core.messages import HumanMessage
-            from langchain_google_genai import ChatGoogleGenerativeAI
+    def _build_valuation_query(self, query: str, condition: str):
+        """Build the grounded Gemini model + prompt used to price an item."""
+        from langchain_core.messages import HumanMessage
+        from langchain_google_genai import ChatGoogleGenerativeAI
 
-            from env import GEMINI_API_KEY
+        from env import GEMINI_API_KEY
 
-            if not GEMINI_API_KEY:
-                raise ValueError("GEMINI_API_KEY not set")
+        if not GEMINI_API_KEY:
+            raise ValueError("GEMINI_API_KEY not set")
 
-            model = ChatGoogleGenerativeAI(
-                model="gemini-3.5-flash",
-                temperature=0.1,
-                google_api_key=GEMINI_API_KEY
-            )
-            grounded_model = model.bind(tools=[{"google_search": {}}])
+        model = ChatGoogleGenerativeAI(
+            model="gemini-3.6-flash",
+            temperature=0.1,
+            google_api_key=GEMINI_API_KEY
+        )
+        grounded_model = model.bind(tools=[{"google_search": {}}])
 
-            prompt = f"""
+        prompt = f"""
 You are an expert market analyst for a Malaysian marketplace.
 Search the web for the current market price of: "{query}" in Malaysia.
 The item is in '{condition}' condition.
@@ -104,38 +114,55 @@ Return ONLY a valid JSON object with the following fields:
 - Values must be numbers (floats), do NOT include RM or currency symbols in the values.
 - If you absolutely cannot find data, make a very educated guess based on the item type.
 """
-            msg = HumanMessage(content=prompt)
+        return grounded_model, HumanMessage(content=prompt)
+
+    def _parse_valuation(self, content, condition: str, category: str | None) -> dict:
+        """Turn a grounded-search response body into a valuation dict."""
+        import json
+        import re
+
+        if isinstance(content, list):
+            text_parts = []
+            for part in content:
+                if isinstance(part, str):
+                    text_parts.append(part)
+                elif isinstance(part, dict) and 'text' in part:
+                    text_parts.append(part['text'])
+            content = ''.join(text_parts)
+
+        clean_content = content.replace('```json', '').replace('```', '').strip()
+
+        # Sometimes Gemini returns text before or after the JSON. Try to extract just the JSON.
+        match = re.search(r'\{.*\}', clean_content, re.DOTALL)
+        if match:
+            clean_content = match.group(0)
+
+        data = json.loads(clean_content)
+
+        return {
+            "market_average": float(data.get("market_average", 0)),
+            "min_price": float(data.get("min_price", 0)),
+            "max_price": float(data.get("max_price", 0)),
+            "suggested_listing": float(data.get("suggested_listing", 0)),
+            "currency": "MYR",
+            "source": "Google Search (AI)",
+            "category_detected": category or "unknown",
+            "condition_used": condition,
+        }
+
+    def _estimate_price(
+        self,
+        query: str,
+        condition: str,
+        category: str | None = None
+    ) -> dict:
+        """
+        Estimate price based on item characteristics using Gemini with Google Search Grounding.
+        """
+        try:
+            grounded_model, msg = self._build_valuation_query(query, condition)
             response = grounded_model.invoke([msg])
-            content = response.content
-
-            if isinstance(content, list):
-                text_parts = []
-                for part in content:
-                    if isinstance(part, str):
-                        text_parts.append(part)
-                    elif isinstance(part, dict) and 'text' in part:
-                        text_parts.append(part['text'])
-                content = ''.join(text_parts)
-
-            clean_content = content.replace('```json', '').replace('```', '').strip()
-
-            # Sometimes Gemini returns text before or after the JSON. Try to extract just the JSON.
-            match = re.search(r'\{.*\}', clean_content, re.DOTALL)
-            if match:
-                clean_content = match.group(0)
-
-            data = json.loads(clean_content)
-
-            return {
-                "market_average": float(data.get("market_average", 0)),
-                "min_price": float(data.get("min_price", 0)),
-                "max_price": float(data.get("max_price", 0)),
-                "suggested_listing": float(data.get("suggested_listing", 0)),
-                "currency": "MYR",
-                "source": "Google Search (AI)",
-                "category_detected": category or "unknown",
-                "condition_used": condition,
-            }
+            return self._parse_valuation(response.content, condition, category)
         except Exception as e:
             logger.error(f"Failed to use Gemini Google Search Grounding: {e}. Falling back to basic estimation.")
             return self._fallback_estimate_price(query, condition, category)

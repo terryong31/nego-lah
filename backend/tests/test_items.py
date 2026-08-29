@@ -10,6 +10,7 @@ Tests for items.py:
   except-returns-False fallback paths.
 """
 import json
+import time
 
 from cache import cache_items_with_hash, redis_client
 from conftest import make_supabase_result
@@ -360,6 +361,38 @@ async def test_upload_item_multiple_images_all_uploaded(patch_supabase, fake_sup
     item_data = fake_supabase.table.return_value.insert.call_args.args[0]
     urls = json.loads(item_data["image_path"])
     assert set(urls.keys()) == {"0.jpg", "1.png", "2.gif"}
+
+
+async def test_upload_item_stores_images_in_the_order_they_were_given(patch_supabase, fake_supabase):
+    """Uploads run concurrently, but the stored map must stay in input order --
+    the storefront reads the first entry as the item's thumbnail."""
+    patch_supabase("items", admin=fake_supabase)
+    fake_supabase.table.return_value.insert.return_value.execute.return_value = make_supabase_result([{"id": "x"}])
+
+    # Make the first upload the slowest, so a naive gather-and-collect would
+    # end up with it last.
+    delays = {"0.jpg": 0.03, "1.png": 0.02, "2.gif": 0.0}
+
+    def slow_upload(*, file, path, file_options):
+        time.sleep(delays[path.rsplit("/", 1)[-1]])
+
+    fake_supabase.storage.from_.return_value.upload.side_effect = slow_upload
+    fake_supabase.storage.from_.return_value.get_public_url.side_effect = (
+        lambda path: f"https://cdn.example.com/{path}"
+    )
+
+    images = [FakeUploadFile("a.jpg"), FakeUploadFile("b.png"), FakeUploadFile("c.gif")]
+    ok = await upload_item(
+        name="Ordered",
+        description="desc",
+        condition="new",
+        uploaded_images=images,
+        price=1.0,
+    )
+
+    assert ok is True
+    urls = json.loads(fake_supabase.table.return_value.insert.call_args.args[0]["image_path"])
+    assert list(urls.keys()) == ["0.jpg", "1.png", "2.gif"]
 
 
 async def test_upload_item_exception_returns_false(patch_supabase, fake_supabase):

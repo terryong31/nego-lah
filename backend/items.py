@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import json
 import uuid
@@ -142,19 +143,26 @@ async def upload_item(
     try:
         random_uuid = str(uuid.uuid4())
 
-        urls = {}
-
-        for i, img in enumerate(uploaded_images):
+        async def upload_image(i: int, img: UploadFile) -> tuple[str, str]:
             img_extension = img.filename.split(".")[-1] if img.filename else "dat"
-            img_name =f"{i}.{img_extension}"
+            img_name = f"{i}.{img_extension}"
             file_content = await img.read()
-            admin_supabase.storage.from_(STORAGE_BUCKET).upload(
-                file = file_content,
-                path = f"items/{random_uuid}/{img_name}",
+            # The storage client is synchronous, so each upload gets its own
+            # thread — otherwise a five-photo listing pays for five round trips
+            # back to back.
+            await asyncio.to_thread(
+                admin_supabase.storage.from_(STORAGE_BUCKET).upload,
+                file=file_content,
+                path=f"items/{random_uuid}/{img_name}",
                 file_options={"content-type": img.content_type or "application/octet-stream"}
             )
             public_url_response = admin_supabase.storage.from_(STORAGE_BUCKET).get_public_url(path=f"items/{random_uuid}/{img_name}")
-            urls[f'{img_name}'] = public_url_response
+            return img_name, public_url_response
+
+        # gather preserves input order, so image 0 stays the thumbnail.
+        urls = dict(await asyncio.gather(
+            *(upload_image(i, img) for i, img in enumerate(uploaded_images))
+        ))
 
         item_data = {
             "id" : random_uuid,

@@ -36,7 +36,7 @@ def test_item_agent_recursion_limit_config():
 
 def test_item_agent_model_config():
     model = item_agent_module.model
-    assert model.model == "gemini-3.5-flash"
+    assert model.model == "gemini-3.6-flash"
     assert model.temperature == 0.3
     assert model.google_api_key.get_secret_value() == "test-gemini-api-key"
 
@@ -99,7 +99,7 @@ def test_stripe_agent_recursion_limit_config():
 
 def test_stripe_agent_model_config():
     model = stripe_agent_module.model
-    assert model.model == "gemini-3.5-flash"
+    assert model.model == "gemini-3.6-flash"
     # Payment logic uses a stricter (lower) temperature than the item agent.
     assert model.temperature == 0.1
     assert model.google_api_key.get_secret_value() == "test-gemini-api-key"

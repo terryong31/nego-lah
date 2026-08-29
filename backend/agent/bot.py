@@ -38,7 +38,7 @@ def _get_model():
     if not GEMINI_API_KEY:
         raise RuntimeError("Missing GEMINI_API_KEY")
     _model = ChatGoogleGenerativeAI(
-        model="gemini-3.5-flash",
+        model="gemini-3.6-flash",
         temperature=0.7,
         google_api_key=GEMINI_API_KEY,
     )

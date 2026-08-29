@@ -1,3 +1,4 @@
+import socket
 import subprocess
 import sys
 import signal
@@ -13,7 +14,7 @@ FRONTEND_DIR = ROOT_DIR / "frontend"
 processes = []
 
 
-def cleanup():
+def cleanup(signum=None, frame=None):
     """Clean up all spawned processes"""
     print("\nShutting down all services...")
     for name, proc in processes:
@@ -28,25 +29,34 @@ def cleanup():
     sys.exit(0)
 
 
+def redis_is_up(host="127.0.0.1", port=6379):
+    """Check whether something is already listening on the Redis port"""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(0.5)
+        return sock.connect_ex((host, port)) == 0
+
+
 def start_redis():
-    """Start Redis server"""
+    """Start Redis server, unless one is already running"""
+    if redis_is_up():
+        print("Redis already running on 127.0.0.1:6379, reusing it")
+        return None
+
     print("Starting Redis server...")
     try:
-        proc = subprocess.Popen(
-            ["redis-server"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        processes.append(("Redis", proc))
-        time.sleep(1)  # Give Redis time to start
-        if proc.poll() is not None:
-            print(" Redis may already be running or failed to start")
-        else:
-            print("Redis server started")
-        return proc
+        proc = subprocess.Popen(["redis-server"])
     except FileNotFoundError:
         print("Redis not found. Please install Redis or start it manually.")
         return None
+
+    time.sleep(1)  # Give Redis time to start
+    if proc.poll() is not None:
+        print(f"Redis failed to start (exit code {proc.returncode}), see output above")
+        return None
+
+    processes.append(("Redis", proc))
+    print("Redis server started")
+    return proc
 
 
 def start_backend(): 
@@ -75,7 +85,7 @@ def start_frontend():
     """Start the frontend dev server"""
     print("Starting Frontend dev server...")
     proc = subprocess.Popen(
-        ["bun", "dev", "--", "--host"],
+        ["bun", "dev"],
         cwd=str(FRONTEND_DIR),
         stdout=sys.stdout,
         stderr=sys.stderr,
@@ -116,10 +126,11 @@ def main():
     # Wait for all processes
     try:
         while True:
-            # Check if any process has died
+            # If any process has died, stop the rest instead of limping along
             for name, proc in processes:
                 if proc.poll() is not None:
-                    print(f"{name} has stopped unexpectedly!")
+                    print(f"{name} has stopped unexpectedly (exit code {proc.returncode})!")
+                    cleanup()
             time.sleep(1)
     except KeyboardInterrupt:
         cleanup()

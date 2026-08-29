@@ -15,6 +15,13 @@ negolah.my {
 
     # Everything else → Nuxt SSR server (Nitro node-server on :3000).
     handle {
+        header {
+            Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://*.sentry.io; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.supabase.co; font-src 'self'; connect-src 'self' https://negolah.my https://*.supabase.co https://*.sentry.io wss://*.supabase.co; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self' https://checkout.stripe.com; upgrade-insecure-requests"
+            X-Content-Type-Options "nosniff"
+            X-Frame-Options "DENY"
+            Referrer-Policy "strict-origin-when-cross-origin"
+            Permissions-Policy "camera=(), microphone=(), geolocation=()"
+        }
         reverse_proxy frontend:3000
     }
 }

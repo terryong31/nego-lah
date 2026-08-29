@@ -21,7 +21,11 @@ from unittest.mock import MagicMock
 
 from langchain_core.messages import HumanMessage
 
-from agent.tools.image_analyzer import ImageAnalyzerService, image_analyzer
+from agent.tools.image_analyzer import (
+    MAX_ANALYSIS_IMAGES,
+    ImageAnalyzerService,
+    image_analyzer,
+)
 
 SAMPLE_IMAGES = [
     {"base64_image": "aGVsbG8=", "mime_type": "image/png"},
@@ -301,3 +305,142 @@ async def test_analyze_non_dict_json_result_returns_fallback(monkeypatch):
     result = await image_analyzer.analyze(SAMPLE_IMAGES)
 
     assert result == image_analyzer._get_fallback_response()
+
+
+# ---------------------------------------------------------------------------
+# Image cap -- only the first few photos are worth the latency
+# ---------------------------------------------------------------------------
+
+
+async def test_only_the_first_max_analysis_images_are_sent(monkeypatch):
+    mock_invoke = _patch_invoke(monkeypatch, return_value=_fake_response('{"name": "Capped"}'))
+    many = [
+        {"base64_image": f"img{i}", "mime_type": "image/png"}
+        for i in range(MAX_ANALYSIS_IMAGES + 3)
+    ]
+
+    await image_analyzer.analyze(many)
+
+    (call_args,), _ = mock_invoke.call_args
+    image_blocks = [c for c in call_args[0].content if c["type"] == "image_url"]
+    assert len(image_blocks) == MAX_ANALYSIS_IMAGES
+    assert image_blocks[0]["image_url"]["url"] == "data:image/png;base64,img0"
+
+
+# ---------------------------------------------------------------------------
+# identify() -- the fast pass that the market lookup waits on
+# ---------------------------------------------------------------------------
+
+
+async def test_identify_parses_json_and_omits_the_description(monkeypatch):
+    payload = {
+        "name": "Sony WH-1000XM4",
+        "condition": "Good",
+        "category": "Electronics",
+        "suggested_keywords": ["headphones", "sony"],
+    }
+    mock_invoke = _patch_invoke(monkeypatch, return_value=_fake_response(json.dumps(payload)))
+
+    result = await image_analyzer.identify(SAMPLE_IMAGES)
+
+    assert result == payload
+    # The identify prompt must not ask for a description -- that's the whole
+    # point of splitting it out.
+    (call_args,), _ = mock_invoke.call_args
+    prompt = call_args[0].content[0]["text"]
+    assert "description" not in prompt.lower().split("guidelines")[0]
+
+
+async def test_identify_fills_defaults_for_missing_fields(monkeypatch):
+    _patch_invoke(monkeypatch, return_value=_fake_response("{}"))
+
+    result = await image_analyzer.identify(SAMPLE_IMAGES)
+
+    assert result == {
+        "name": "Unknown Item",
+        "condition": "Good",
+        "category": "Other",
+        "suggested_keywords": [],
+    }
+
+
+async def test_identify_strips_markdown_fences(monkeypatch):
+    fenced = "```json\n" + json.dumps({"name": "Fenced"}) + "\n```"
+    _patch_invoke(monkeypatch, return_value=_fake_response(fenced))
+
+    result = await image_analyzer.identify(SAMPLE_IMAGES)
+
+    assert result["name"] == "Fenced"
+
+
+async def test_identify_malformed_json_returns_fallback_without_a_description(monkeypatch):
+    _patch_invoke(monkeypatch, return_value=_fake_response("{not valid json!!"))
+
+    result = await image_analyzer.identify(SAMPLE_IMAGES)
+
+    assert "description" not in result
+    assert result["name"] == "Item"
+    assert result["error"] == "Image analysis unavailable. Please set GEMINI_API_KEY."
+
+
+async def test_identify_invoke_exception_returns_fallback(monkeypatch):
+    _patch_invoke(monkeypatch, side_effect=RuntimeError("boom"))
+
+    result = await image_analyzer.identify(SAMPLE_IMAGES)
+
+    assert result["name"] == "Item"
+    assert "description" not in result
+
+
+async def test_identify_without_a_model_short_circuits(monkeypatch):
+    service = ImageAnalyzerService()
+    service.model = None
+
+    result = await service.identify(SAMPLE_IMAGES)
+
+    assert "description" not in result
+    assert result["error"] == "Image analysis unavailable. Please set GEMINI_API_KEY."
+
+
+# ---------------------------------------------------------------------------
+# describe() -- the slow pass, returning raw Markdown rather than JSON
+# ---------------------------------------------------------------------------
+
+
+async def test_describe_returns_the_markdown_body_verbatim(monkeypatch):
+    body = "A **great** jacket.\n- warm\n- stylish"
+    mock_invoke = _patch_invoke(monkeypatch, return_value=_fake_response(f"  {body}  "))
+
+    result = await image_analyzer.describe(SAMPLE_IMAGES)
+
+    assert result == body
+    (call_args,), _ = mock_invoke.call_args
+    image_blocks = [c for c in call_args[0].content if c["type"] == "image_url"]
+    assert len(image_blocks) == len(SAMPLE_IMAGES)
+
+
+async def test_describe_joins_multipart_content(monkeypatch):
+    _patch_invoke(monkeypatch, return_value=_fake_response([{"text": "Half one. "}, "Half two."]))
+
+    result = await image_analyzer.describe(SAMPLE_IMAGES)
+
+    assert result == "Half one. Half two."
+
+
+async def test_describe_empty_response_returns_none(monkeypatch):
+    _patch_invoke(monkeypatch, return_value=_fake_response("   "))
+
+    assert await image_analyzer.describe(SAMPLE_IMAGES) is None
+
+
+async def test_describe_exception_returns_none(monkeypatch):
+    _patch_invoke(monkeypatch, side_effect=RuntimeError("boom"))
+
+    assert await image_analyzer.describe(SAMPLE_IMAGES) is None
+
+
+async def test_describe_without_a_model_returns_none():
+    service = ImageAnalyzerService()
+    service.model = None
+
+    assert await service.describe(SAMPLE_IMAGES) is None

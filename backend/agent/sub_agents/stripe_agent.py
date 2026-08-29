@@ -7,7 +7,7 @@ from ..tools.payment import cancel_payment_link, collect_shipping_info, create_c
 
 # Initialize the model
 model = ChatGoogleGenerativeAI(
-    model="gemini-3.5-flash",
+    model="gemini-3.6-flash",
     temperature=0.1, # Extremely low temperature for strict payment logic
     google_api_key=GEMINI_API_KEY
 )

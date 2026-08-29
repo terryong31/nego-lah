@@ -71,6 +71,13 @@ ADMIN_COOKIE_PATH = os.getenv("ADMIN_COOKIE_PATH", "/")
 ADMIN_SESSION_TTL = int(os.getenv("ADMIN_SESSION_TTL", "7200"))  # sliding session, seconds
 ADMIN_PREAUTH_TTL = int(os.getenv("ADMIN_PREAUTH_TTL", "300"))   # 2FA pre-auth handle, seconds
 
+# CSRF double-submit cookie configuration (admin console only).
+# The CSRF cookie is NOT httpOnly (JS must read it). Secure/SameSite follow the
+# same pattern as the admin session cookie — override for local dev in .env.
+CSRF_COOKIE_NAME = os.getenv("CSRF_COOKIE_NAME", "csrf_token")
+CSRF_COOKIE_SECURE = os.getenv("CSRF_COOKIE_SECURE", "true").lower() == "true"
+CSRF_COOKIE_SAMESITE = os.getenv("CSRF_COOKIE_SAMESITE", "strict").lower()
+
 # Supabase Storage bucket for item images and avatars.
 # Must match an existing bucket in your Supabase project.
 STORAGE_BUCKET = os.getenv("STORAGE_BUCKET", "images")

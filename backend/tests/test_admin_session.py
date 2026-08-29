@@ -246,8 +246,10 @@ def test_verify_otp_and_open_session_happy_path(fake_auth_client, patch_supabase
     assert result == {"user_id": "otp-admin-user", "email": "otp-admin@example.com"}
 
     cookies = set_cookie_values(response)
-    assert len(cookies) == 1
-    assert admin_session.ADMIN_COOKIE_NAME.encode() in cookies[0]
+    assert len(cookies) == 2
+    cookie_names = b" ".join(cookies)
+    assert admin_session.ADMIN_COOKIE_NAME.encode() in cookie_names
+    assert b"csrf_token" in cookie_names
 
     # One-time handle: consumed from Redis.
     assert redis_client.get(f"{_PREAUTH_KEY}{handle}") is None
@@ -435,8 +437,10 @@ def test_clear_session_deletes_redis_key_and_issues_delete_cookie():
 
     assert redis_client.get(f"{_SESS_KEY}{sid}") is None
     cookies = set_cookie_values(response)
-    assert len(cookies) == 1
-    assert admin_session.ADMIN_COOKIE_NAME.encode() in cookies[0]
+    assert len(cookies) == 2
+    cookie_names = b" ".join(cookies)
+    assert admin_session.ADMIN_COOKIE_NAME.encode() in cookie_names
+    assert b"csrf_token" in cookie_names
 
 
 def test_clear_session_without_cookie_is_a_no_op_but_still_deletes_cookie():
@@ -445,7 +449,7 @@ def test_clear_session_without_cookie_is_a_no_op_but_still_deletes_cookie():
     clear_session(request, response)  # must not raise
 
     cookies = set_cookie_values(response)
-    assert len(cookies) == 1
+    assert len(cookies) == 2
 
 
 # ---------------------------------------------------------------------------

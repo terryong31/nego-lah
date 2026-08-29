@@ -1,6 +1,8 @@
+import json
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
+from fastapi.responses import StreamingResponse
 
 from admin_session import (
     clear_session,
@@ -11,6 +13,7 @@ from admin_session import (
     verify_otp_and_open_session,
     write_audit,
 )
+from csrf import generate_csrf_token, set_csrf_cookie, verify_csrf_token
 from env import ADMIN_PREFIX, STORAGE_BUCKET
 from logger import logger
 from schemas import (
@@ -30,8 +33,8 @@ from schemas import (
 # There is no IP allowlist; access is gated by 2FA + rate limiting + audit.
 router = APIRouter(prefix=ADMIN_PREFIX, tags=["System"])
 
-# Every data route below requires a valid admin session.
-protected = APIRouter(dependencies=[Depends(verify_admin)])
+# Every data route below requires a valid admin session + CSRF verification.
+protected = APIRouter(dependencies=[Depends(verify_admin), Depends(verify_csrf_token)])
 
 
 # =====================
@@ -70,6 +73,16 @@ def admin_logout(req: Request, response: Response, admin: dict = Depends(verify_
 def admin_session(admin: dict = Depends(verify_admin)):
     """Lightweight check used by the frontend route middleware."""
     return {"valid": True, "email": admin.get("email")}
+
+
+@router.get("/auth/csrf")
+def admin_csrf_token(req: Request, response: Response, admin: dict = Depends(verify_admin)):
+    """Return a fresh CSRF token. Called on page refresh when the cookie may be stale."""
+    from env import ADMIN_COOKIE_NAME
+    sid = req.cookies.get(ADMIN_COOKIE_NAME, "")
+    token = generate_csrf_token(sid)
+    set_csrf_cookie(response, token)
+    return {"csrf_token": token}
 
 
 # =====================
@@ -589,6 +602,84 @@ def delete_order(order_id: str, admin: dict = Depends(verify_admin)):
 # AI Image Analysis
 # =====================
 
+async def _encode_images(images: list[UploadFile]) -> list[dict]:
+    """Read and base64-encode uploads concurrently, preserving their order."""
+    import asyncio
+    import base64
+
+    async def encode(img: UploadFile) -> dict:
+        contents = await img.read()
+        # Encoding a multi-MB photo is CPU work; keep it off the event loop so
+        # several images encode at once instead of one after another.
+        encoded = await asyncio.to_thread(base64.b64encode, contents)
+        return {
+            "base64_image": encoded.decode('utf-8'),
+            "mime_type": img.content_type or "image/jpeg"
+        }
+
+    return list(await asyncio.gather(*(encode(img) for img in images)))
+
+
+@protected.post("/analyze-image/stream")
+async def analyze_item_image_stream(
+    images: list[UploadFile] = File(...)
+):
+    """Streaming twin of /analyze-image.
+
+    Emits Server-Sent Events as each pipeline stage genuinely completes, so the
+    client can show a real progress percentage (and fill in fields early)
+    instead of animating a fake bar. See agent.tools.listing_pipeline for why
+    the stages overlap.
+    """
+    import asyncio
+
+    from agent.tools.listing_pipeline import analyze_listing
+
+    # Read the uploads before streaming starts — the request body is not
+    # available once we've handed back a streaming response.
+    images_data = await _encode_images(images)
+
+    async def event_stream():
+        queue: asyncio.Queue = asyncio.Queue()
+
+        async def on_progress(event: dict):
+            await queue.put(event)
+
+        async def run():
+            try:
+                data = await analyze_listing(images_data, on_progress)
+                await queue.put({"stage": "done", "progress": 100, "message": "Done", "result": data})
+            except Exception as e:
+                logger.error(f"Error analyzing image: {e}")
+                await queue.put({"stage": "error", "progress": 100, "message": f"Failed to analyze image: {e}"})
+            finally:
+                await queue.put(None)
+
+        worker = asyncio.create_task(run())
+        try:
+            yield f"data: {json.dumps({'stage': 'uploaded', 'progress': 10, 'message': 'Photos received'})}\n\n"
+            while True:
+                event = await queue.get()
+                if event is None:
+                    break
+                yield f"data: {json.dumps(event)}\n\n"
+        finally:
+            # The client hung up (or we're done) — don't leave the pipeline running.
+            worker.cancel()
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            # Tells nginx/Caddy-style proxies not to buffer, which would
+            # defeat the whole point of streaming progress.
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @protected.post("/analyze-image")
 async def analyze_item_image(
     images: list[UploadFile] = File(...)
@@ -596,20 +687,14 @@ async def analyze_item_image(
     """
     Analyze uploaded images to generate item details (Name, Description, Condition).
     Uses custom Image Analyzer service (Gemini Vision).
-    """
-    import base64
 
+    Non-streaming fallback for clients that can't read the SSE variant above.
+    """
     from agent.tools.image_analyzer import image_analyzer
     from agent.tools.market_price import market_service
 
     try:
-        images_data = []
-        for img in images:
-            contents = await img.read()
-            images_data.append({
-                "base64_image": base64.b64encode(contents).decode('utf-8'),
-                "mime_type": img.content_type or "image/jpeg"
-            })
+        images_data = await _encode_images(images)
 
         # --- Custom Image Analyzer (Gemini Vision) ---
         logger.info(f"Analyzing {len(images_data)} image(s) with custom Image Analyzer...")

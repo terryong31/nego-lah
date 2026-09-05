@@ -127,7 +127,7 @@ def get_all_users():
                 or profile.get('display_name')
                 or (user.email.split('@')[0] if user.email else 'User')
             )
-            avatar_url = meta.get('avatar_url') or profile.get('avatar_url')
+            avatar_url = _resolve_avatar_url(meta, profile)
 
             users.append({
                 "id": user_id,
@@ -144,6 +144,21 @@ def get_all_users():
     except Exception as e:
         logger.error(f"Error in get_all_users: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+def _resolve_avatar_url(meta: dict, profile: dict | None = None) -> str | None:
+    """The avatar to show for a user.
+
+    `custom_avatar_url` is what the self-service profile page uploads. It wins
+    over `avatar_url`, which Supabase re-syncs from the identity provider (i.e.
+    the Google photo) on every OAuth sign-in. The legacy `user_profiles` row is
+    the last resort, for users predating the move to auth metadata.
+    """
+    return (
+        meta.get('custom_avatar_url')
+        or meta.get('avatar_url')
+        or (profile or {}).get('avatar_url')
+    )
 
 
 @protected.put("/users/{user_id}/profile")
@@ -411,7 +426,7 @@ def get_all_chats():
             or profile.get('display_name')
             or (email.split('@')[0] if email else 'Unknown user')
         )
-        avatar_url = meta.get('avatar_url') or profile.get('avatar_url')
+        avatar_url = _resolve_avatar_url(meta, profile)
         return display_name, avatar_url
 
     # Get all user histories

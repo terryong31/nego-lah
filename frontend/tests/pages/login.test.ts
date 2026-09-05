@@ -244,7 +244,7 @@ describe('pages/login.vue', () => {
   })
 
   describe('Google OAuth', () => {
-    it('calls signInWithOAuth with the google provider and a redirectTo ending in /confirm', async () => {
+    it('calls signInWithOAuth with the google provider and a /confirm redirectTo tagged as the OAuth flow', async () => {
       const wrapper = await mountSuspended(LoginPage)
 
       const googleButton = wrapper.findAll('button').find(b => b.text().includes('Google'))
@@ -255,7 +255,13 @@ describe('pages/login.vue', () => {
       expect(signInWithOAuthMock).toHaveBeenCalledTimes(1)
       const [args] = signInWithOAuthMock.mock.calls[0]
       expect(args.provider).toBe('google')
-      expect(args.options.redirectTo).toMatch(/\/confirm$/)
+
+      // /confirm serves both the email-confirmation link and this callback, and
+      // the two need different screens. We own this URL, so tag it rather than
+      // leaving /confirm to infer the flow.
+      const redirectTo = new URL(args.options.redirectTo)
+      expect(redirectTo.pathname).toBe('/confirm')
+      expect(redirectTo.searchParams.get('flow')).toBe('oauth')
       expect(toastAddMock).not.toHaveBeenCalled()
     })
 

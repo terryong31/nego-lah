@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { loginRedirect } from '~/utils/auth'
+import { loginRedirect, resolveAvatarUrl } from '~/utils/auth'
 
 const user = useSupabaseUser()
 const supabase = useSupabaseClient()
@@ -97,7 +97,7 @@ const dropdownItems = computed(() => {
                   <UUser
                     :name="`Hello, ${user.user_metadata?.display_name || user.email || 'there'}`"
                     :avatar="{
-                      src: user.user_metadata?.avatar_url,
+                      src: resolveAvatarUrl(user),
                       alt: user.email || '',
                       loading: 'lazy'
                     }"

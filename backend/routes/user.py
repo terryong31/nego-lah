@@ -149,7 +149,8 @@ async def update_profile(
 
     The avatar is uploaded to storage server-side using the service role key -
     clients are never allowed to write to the bucket directly (read-only).
-    Both values are stored in the Supabase auth user_metadata.
+    Both values are stored in the Supabase auth user_metadata, the avatar under
+    `custom_avatar_url` so an OAuth sign-in can't overwrite it.
     """
     get_user_id_from_body_or_token(user_id, token_user_id)
 
@@ -179,7 +180,12 @@ async def update_profile(
                 )
                 return admin_supabase.storage.from_(STORAGE_BUCKET).get_public_url(file_path)
 
-            metadata["avatar_url"] = await asyncio.to_thread(_upload)
+            # Deliberately NOT `avatar_url`: Supabase re-syncs user_metadata from
+            # the identity provider's claims on every OAuth sign-in, and Google's
+            # claims carry `avatar_url` / `picture`. Writing there means the next
+            # Google login silently replaces the user's upload with their Google
+            # photo. `custom_avatar_url` is ours alone, so it survives.
+            metadata["custom_avatar_url"] = await asyncio.to_thread(_upload)
         except Exception as e:
             logger.error(f"Avatar upload failed for {user_id}: {e}")
             raise HTTPException(status_code=500, detail="Failed to upload avatar") from e
@@ -200,7 +206,8 @@ async def update_profile(
     return {
         "message": "Profile updated successfully",
         "display_name": metadata.get("display_name"),
-        "avatar_url": metadata.get("avatar_url"),
+        # The *effective* avatar, resolved the same way the clients resolve it.
+        "avatar_url": metadata.get("custom_avatar_url") or metadata.get("avatar_url"),
     }
 
 

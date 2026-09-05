@@ -6,6 +6,7 @@ import {
   type EmailChangeForm,
   type PasswordChangeForm
 } from '~/utils/schemas'
+import { resolveAvatarUrl } from '~/utils/auth'
 
 definePageMeta({
   middleware: 'auth'
@@ -20,7 +21,7 @@ const toast = useToast()
 
 // General Settings - display name & profile picture (stored in user metadata)
 const displayName = ref(user.value?.user_metadata?.display_name || '')
-const avatarUrl = ref(user.value?.user_metadata?.avatar_url || '')
+const avatarUrl = ref(resolveAvatarUrl(user.value) || '')
 const avatarFile = ref<File | null>(null)
 const avatarPreview = ref('')
 const profileLoading = ref(false)
@@ -44,7 +45,7 @@ async function getUserId(): Promise<string | null> {
 // Keep local fields in sync if the user object updates elsewhere
 watch(user, (u) => {
   displayName.value = u?.user_metadata?.display_name || ''
-  avatarUrl.value = u?.user_metadata?.avatar_url || ''
+  avatarUrl.value = resolveAvatarUrl(u) || ''
 })
 
 function onAvatarChange(e: Event) {

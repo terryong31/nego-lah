@@ -39,7 +39,7 @@ async def resend_webhook(request: Request):
     except (WebhookVerificationError, ValueError):
         # ValueError also covers malformed (non-base64) signature/header values that
         # the svix/standardwebhooks library doesn't wrap in WebhookVerificationError.
-        logger.error("❌ Resend webhook signature verification FAILED")
+        logger.warning("⚠️ Resend webhook signature verification failed: invalid signature or headers")
         raise HTTPException(status_code=400, detail="Invalid webhook signature") from None
 
     event_type = event.get("type")

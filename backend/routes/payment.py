@@ -101,7 +101,7 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None))
     event = await asyncio.to_thread(verify_webhook, payload, stripe_signature)
 
     if not event:
-        logger.error("❌ Webhook signature verification FAILED")
+        logger.warning("⚠️ Stripe webhook signature verification failed: invalid signature")
         raise HTTPException(status_code=400, detail="Invalid webhook signature")
 
     event_type = event['type']

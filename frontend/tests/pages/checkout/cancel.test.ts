@@ -13,11 +13,11 @@ describe('pages/checkout/cancel.vue', () => {
     expect(wrapper.text()).toContain('Your Stripe transaction was cancelled. No charges were made to your account.')
   })
 
-  it('renders a link back to the home page', async () => {
+  it('renders a link back to the items catalog page', async () => {
     const wrapper = await mountSuspended(CancelPage)
     const link = wrapper.find('a')
     expect(link.exists()).toBe(true)
-    expect(link.attributes('href')).toBe('/')
+    expect(link.attributes('href')).toBe('/items')
     expect(link.text()).toContain('View Items')
   })
 

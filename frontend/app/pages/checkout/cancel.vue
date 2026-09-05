@@ -14,7 +14,7 @@
       <div class="pt-4 flex gap-4 w-full">
         <UButton
           :label="$t('checkout.viewItems')"
-          to="/"
+          to="/items"
           color="primary"
           class="flex-1 justify-center"
         />

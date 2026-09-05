@@ -202,6 +202,7 @@ jobs:
       - name: Generate static SPA with Infisical secrets
         env:
           INFISICAL_TOKEN: ${{ secrets.INFISICAL_TOKEN }}
+          SENTRY_RELEASE: ${{ github.sha }}
         run: |
           cd frontend
           infisical run --env=prod --path=/Frontend -- bun run generate
@@ -269,6 +270,7 @@ jobs:
         run: |
           mkdir -p backend
           infisical export --env=prod --path=/Backend --format=dotenv > backend/.env.production
+          echo "SENTRY_RELEASE=${{ github.sha }}" >> backend/.env.production
 
       - name: Copy compose, Caddyfile, and env to server
         uses: appleboy/scp-action@v0.1.7

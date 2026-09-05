@@ -102,14 +102,20 @@ depends = ["cdn:sync:staging", "cdn:sync:prod"]
 [tasks."sentry:info"]
 description = "Verify Sentry CLI configuration and authentication"
 dir = "frontend"
-run = "export $(grep -E '^SENTRY_' .env | xargs) && ./node_modules/.bin/sentry-cli info"
+run = "infisical run --env=prod --path=/Frontend -- bun x @sentry/cli info"
 
 [tasks."sentry:projects"]
 description = "List all Sentry projects via Sentry CLI"
 dir = "frontend"
-run = "export $(grep -E '^SENTRY_' .env | xargs) && ./node_modules/.bin/sentry-cli projects list"
+run = "infisical run --env=prod --path=/Frontend -- bun x @sentry/cli projects list"
 
 [tasks."sentry:releases"]
 description = "List Sentry releases via Sentry CLI"
 dir = "frontend"
-run = "export $(grep -E '^SENTRY_' .env | xargs) && ./node_modules/.bin/sentry-cli releases list"
+run = "infisical run --env=prod --path=/Frontend -- bun x @sentry/cli releases list"
+
+[tasks."sentry:verify"]
+description = "Emit test telemetry across all 7 Sentry pillars (Traces, Logs, Metrics, Errors, Profiles, Replays, Releases)"
+dir = "backend"
+run = "infisical run --env=prod --path=/Backend -- uv run python scripts/verify_sentry_all.py"
+

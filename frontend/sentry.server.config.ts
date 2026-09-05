@@ -15,7 +15,7 @@ if (!import.meta.test && isProd) {
   Sentry.init({
     dsn: dsn,
     environment: 'production',
-    release: process.env.SENTRY_RELEASE || '731092f67e3a1eefb8716bc53dc145016e6c412f',
+    release: process.env.SENTRY_RELEASE || 'latest',
     // Mirrors the backend's Sentry config (see backend/main.py).
     sendDefaultPii: true,
     enableLogs: true,

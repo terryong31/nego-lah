@@ -40,6 +40,7 @@ def verify_all():
         enable_logs=True,
         enable_metrics=True,
         traces_sample_rate=1.0,
+        profiles_sample_rate=1.0,
         profile_session_sample_rate=1.0,
         profile_lifecycle="trace",
         integrations=[logging_integration]

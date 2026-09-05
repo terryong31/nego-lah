@@ -43,10 +43,52 @@ const containerRef = useTemplateRef<HTMLElement>('containerRef')
 
 let observer: IntersectionObserver | null = null
 
+function attemptPlay() {
+  const el = videoRef.value
+  if (!el) return
+  el.defaultMuted = true
+  el.muted = true
+
+  const playPromise = el.play()
+  if (playPromise !== undefined) {
+    playPromise.catch(() => {
+      // If the browser blocks autonomous unmuted or initial autoplay,
+      // attach a one-time gesture listener to kick off playback on first interaction
+      const resumeOnInteraction = () => {
+        if (!videoRef.value) return
+        videoRef.value.defaultMuted = true
+        videoRef.value.muted = true
+        videoRef.value.play().catch(() => {})
+        window.removeEventListener('pointerdown', resumeOnInteraction)
+        window.removeEventListener('keydown', resumeOnInteraction)
+      }
+      window.addEventListener('pointerdown', resumeOnInteraction, { once: true, passive: true })
+      window.addEventListener('keydown', resumeOnInteraction, { once: true, passive: true })
+    })
+  }
+}
+
+watch(videoSource, () => {
+  const el = videoRef.value
+  if (el) {
+    el.load()
+    attemptPlay()
+  }
+})
+
 onMounted(() => {
   const el = videoRef.value
   if (el) {
+    el.defaultMuted = true
     el.muted = true
+  }
+
+  // If already visible in viewport on initial load, play immediately
+  if (containerRef.value && typeof window !== 'undefined') {
+    const rect = containerRef.value.getBoundingClientRect()
+    if (rect.top < window.innerHeight && rect.bottom > 0) {
+      attemptPlay()
+    }
   }
 
   // Viewport intersection observer for autonomous play / pause
@@ -55,15 +97,12 @@ onMounted(() => {
       const entry = entries[0]
       if (!entry || !videoRef.value) return
 
-      if (entry.isIntersecting && entry.intersectionRatio >= 0.25) {
-        videoRef.value.muted = true
-        videoRef.value.play().catch(() => {
-          // Handled gracefully if browser blocks background autoplay
-        })
-      } else if (!entry.isIntersecting && !videoRef.value.paused) {
+      if (entry.isIntersecting) {
+        attemptPlay()
+      } else if (!videoRef.value.paused) {
         videoRef.value.pause()
       }
-    }, { threshold: [0.1, 0.3] })
+    }, { threshold: [0, 0.15, 0.5] })
 
     observer.observe(containerRef.value)
   }
@@ -245,11 +284,13 @@ onMounted(() => {
       >
         <video
           ref="videoRef"
+          :src="videoSource"
           class="w-full h-full object-cover pointer-events-none select-none"
           playsinline
           autoplay
           muted
           loop
+          preload="auto"
           tabindex="-1"
           disablepictureinpicture
           disableremoteplayback

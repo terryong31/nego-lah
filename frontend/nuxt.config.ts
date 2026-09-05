@@ -328,7 +328,7 @@ export default defineNuxtConfig({
     project: process.env.SENTRY_PROJECT || process.env.NUXT_PUBLIC_SENTRY_PROJECT || 'nego-lah-frontend',
     authToken: process.env.SENTRY_AUTH_TOKEN,
     release: {
-      name: process.env.SENTRY_RELEASE || '731092f67e3a1eefb8716bc53dc145016e6c412f'
+      name: process.env.SENTRY_RELEASE || 'latest'
     },
     sourcemaps: {
       filesToDeleteAfterUpload: ['.output/**/*.map']

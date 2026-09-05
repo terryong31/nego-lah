@@ -1,4 +1,9 @@
 import * as Sentry from '@sentry/nuxt'
+import {
+  replayIntegration,
+  browserProfilingIntegration,
+  consoleLoggingIntegration
+} from '@sentry/browser'
 import { useRuntimeConfig } from '#imports'
 
 // Skip Sentry initialization during unit tests and in development mode (strictly enforced in production)
@@ -13,55 +18,59 @@ if (!import.meta.test && isProd) {
     throw new Error('SENTRY_DSN must be configured in production')
   }
 
-  const integrations = []
+  const integrations = [
+    // 1. Session Replay Integration (Visual reproduction)
+    replayIntegration({
+      // Privacy & Compliance: Mask sensitive content in production
+      maskAllText: isProd,
+      blockAllMedia: isProd,
+      maskAllInputs: true,
+      networkDetailAllowUrls: [
+        typeof window !== 'undefined' ? window.location.origin : '',
+        'http://localhost:8000',
+        'http://127.0.0.1:8000',
+        'https://api.negolah.my'
+      ].filter(Boolean),
+      networkCaptureBodies: true,
+      networkRequestHeaders: ['X-CSRF-Token', 'X-Turnstile-Token', 'sentry-trace', 'baggage'],
+      networkResponseHeaders: ['content-type', 'sentry-trace', 'baggage'],
+      // Capture all errors plus fatal exceptions
+      beforeErrorSampling: (event) => {
+        if (event.level === 'fatal') return true
 
-  if (typeof Sentry.replayIntegration === 'function') {
-    integrations.push(
-      Sentry.replayIntegration({
-        // Privacy & Compliance: Mask sensitive content in production
-        maskAllText: isProd,
-        blockAllMedia: isProd,
-        maskAllInputs: true,
-        networkDetailAllowUrls: [
-          typeof window !== 'undefined' ? window.location.origin : '',
-          'http://localhost:8000',
-          'http://127.0.0.1:8000',
-          'https://api.negolah.my'
-        ].filter(Boolean),
-        networkCaptureBodies: true,
-        networkRequestHeaders: ['X-CSRF-Token', 'X-Turnstile-Token', 'sentry-trace', 'baggage'],
-        networkResponseHeaders: ['content-type', 'sentry-trace', 'baggage'],
-        // Only replay very serious errors (fatal crashes, unhandled exceptions, and 5xx server failures)
-        beforeErrorSampling: (event) => {
-          // 1. Explicit fatal errors
-          if (event.level === 'fatal') return true
+        const isUnhandled = event.exception?.values?.some(
+          val => val.mechanism?.handled === false
+        )
+        if (isUnhandled) return true
 
-          // 2. Unhandled exceptions (crashes that were uncaught by client code)
-          const isUnhandled = event.exception?.values?.some(
-            val => val.mechanism?.handled === false
-          )
-          if (isUnhandled) return true
+        const statusCode = Number(
+          event.tags?.statusCode
+          || event.contexts?.response?.status_code
+          || event.extra?.status_code
+          || 0
+        )
+        if (statusCode >= 500) return true
 
-          // 3. Severe backend 5xx failures captured in contexts/tags
-          const statusCode = Number(
-            event.tags?.statusCode
-            || event.contexts?.response?.status_code
-            || event.extra?.status_code
-            || 0
-          )
-          if (statusCode >= 500) return true
+        return false
+      }
+    }),
 
-          // Drop replays for handled user validation, 4xx, network aborts, or warnings
-          return false
-        }
-      })
-    )
-  }
+    // 2. Continuous Browser Profiling (Flame charts & CPU performance)
+    browserProfilingIntegration(),
+
+    // 3. Structured Logging (Pipes console.info/warn/error to Sentry Logs)
+    consoleLoggingIntegration({
+      levels: ['info', 'warn', 'error']
+    }),
+
+    // 4. Capture console.error as Sentry Error events
+    Sentry.captureConsoleIntegration({ levels: ['error'] })
+  ]
 
   Sentry.init({
     dsn,
     environment: isProd ? 'production' : 'development',
-    release: process.env.SENTRY_RELEASE || '731092f67e3a1eefb8716bc53dc145016e6c412f',
+    release: process.env.SENTRY_RELEASE || 'latest',
     sendDefaultPii: true,
     enableLogs: true,
     // Traces: 20% in production to conserve quota, 100% in development
@@ -74,11 +83,9 @@ if (!import.meta.test && isProd) {
       /^http:\/\/localhost:8000/,
       /^http:\/\/127\.0\.0\.1:8000/
     ],
-    integrations: [
-      ...integrations,
-      // Only capture console.error (never warn, which floods Sentry with Vue/i18n warnings)
-      Sentry.captureConsoleIntegration({ levels: ['error'] })
-    ],
+    // Profiles: 20% in production, 100% in development
+    profilesSampleRate: isProd ? 0.2 : 1.0,
+    integrations,
     // Filter out noisy, benign browser errors and cancellation events
     beforeSend: (event, hint) => {
       const error = hint?.originalException
@@ -99,10 +106,9 @@ if (!import.meta.test && isProd) {
       return event
     },
     // Session Replay rates:
-    // replaysSessionSampleRate: 0.0 (Do NOT record normal healthy sessions; zero quota waste)
-    replaysSessionSampleRate: 0.0,
-    // replaysOnErrorSampleRate: 1.0 in production (qualified by beforeErrorSampling),
-    // 0.0 in development to prevent dev HMR/reloads from consuming monthly replay limits
+    // replaysSessionSampleRate: 5% of healthy sessions to populate Replays dashboard
+    replaysSessionSampleRate: isProd ? 0.05 : 0.0,
+    // replaysOnErrorSampleRate: 100% of error sessions captured
     replaysOnErrorSampleRate: isProd ? 1.0 : 0.0
   })
 }

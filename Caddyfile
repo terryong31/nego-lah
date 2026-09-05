@@ -9,13 +9,3 @@ api.negolah.my {
 
     reverse_proxy backend:8000
 }
-
-negolah.my {
-    request_body {
-        max_size 10MB
-    }
-
-    handle_path /api/* {
-        reverse_proxy backend:8000
-    }
-}

@@ -57,14 +57,16 @@ ADMIN_PREFIX = "/admin"
 
 _is_https = FRONTEND_URL.startswith("https://")
 
+_default_cookie_domain = ".negolah.my" if "negolah.my" in FRONTEND_URL else None
+
 ADMIN_COOKIE_NAME = os.getenv("ADMIN_COOKIE_NAME", "admin_sid")
 ADMIN_COOKIE_SECURE = (
     os.getenv("ADMIN_COOKIE_SECURE", "true" if _is_https else "false").lower() == "true"
     and _is_https
 )
-ADMIN_COOKIE_SAMESITE = os.getenv("ADMIN_COOKIE_SAMESITE", "strict" if _is_https else "lax").lower()
+ADMIN_COOKIE_SAMESITE = os.getenv("ADMIN_COOKIE_SAMESITE", "lax").lower()
 ADMIN_COOKIE_PATH = os.getenv("ADMIN_COOKIE_PATH", "/")
-ADMIN_COOKIE_DOMAIN = os.getenv("ADMIN_COOKIE_DOMAIN")
+ADMIN_COOKIE_DOMAIN = os.getenv("ADMIN_COOKIE_DOMAIN", _default_cookie_domain)
 ADMIN_SESSION_TTL = int(os.getenv("ADMIN_SESSION_TTL", "7200"))
 ADMIN_PREAUTH_TTL = int(os.getenv("ADMIN_PREAUTH_TTL", "300"))
 
@@ -73,7 +75,7 @@ CSRF_COOKIE_SECURE = (
     os.getenv("CSRF_COOKIE_SECURE", "true" if _is_https else "false").lower() == "true"
     and _is_https
 )
-CSRF_COOKIE_SAMESITE = os.getenv("CSRF_COOKIE_SAMESITE", "strict" if _is_https else "lax").lower()
-CSRF_COOKIE_DOMAIN = os.getenv("CSRF_COOKIE_DOMAIN")
+CSRF_COOKIE_SAMESITE = os.getenv("CSRF_COOKIE_SAMESITE", "lax").lower()
+CSRF_COOKIE_DOMAIN = os.getenv("CSRF_COOKIE_DOMAIN", _default_cookie_domain)
 
 STORAGE_BUCKET = os.getenv("STORAGE_BUCKET", "images")

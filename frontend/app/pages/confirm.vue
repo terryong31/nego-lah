@@ -40,6 +40,8 @@ function proceedToHome() {
   }
 }
 
+let authSubscription: { unsubscribe: () => void } | null = null
+
 onMounted(async () => {
   const searchParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null
   const hashParams = typeof window !== 'undefined' && window.location.hash ? new URLSearchParams(window.location.hash.replace(/^#/, '')) : null
@@ -51,14 +53,24 @@ onMounted(async () => {
   const errDesc = (route.query.error_description as string) || searchParams?.get('error_description') || hashParams?.get('error_description')
 
   if (err || errCode) {
+    console.error('[confirm.vue] Auth provider error:', { err, errCode, errDesc })
     status.value = 'error'
-    errorMessage.value = getLocalizedError(errCode, errDesc)
-    // Clean up address bar
+    errorMessage.value = getLocalizedError(errCode, errDesc) || errDesc || null
     if (typeof window !== 'undefined' && (window.location.search || window.location.hash)) {
       window.history.replaceState(window.history.state, '', window.location.pathname)
     }
     return
   }
+
+  // Subscribe to auth state changes in case @nuxtjs/supabase exchanges the code in the background
+  const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
+    if (session?.user && status.value !== 'success') {
+      status.value = 'success'
+      await initLanguage()
+      startCountdown()
+    }
+  })
+  authSubscription = authListener.subscription
 
   const code = (route.query.code as string) || searchParams?.get('code') || hashParams?.get('code')
   const tokenHash = (route.query.token_hash as string) || searchParams?.get('token_hash') || hashParams?.get('token_hash')
@@ -70,18 +82,39 @@ onMounted(async () => {
       if (!error && data?.session) {
         status.value = 'success'
         await initLanguage()
+        startCountdown()
       } else {
+        if (error) console.warn('[confirm.vue] exchangeCodeForSession:', error.message)
+        // Check if session was already established or is being established
         const { data: sessionData } = await supabase.auth.getSession()
         if (sessionData?.session || user.value) {
           status.value = 'success'
           await initLanguage()
+          startCountdown()
         } else {
-          status.value = 'error'
+          // Allow brief grace period for Supabase client storage sync
+          setTimeout(async () => {
+            const { data: sData } = await supabase.auth.getSession()
+            if (sData?.session || user.value) {
+              status.value = 'success'
+              await initLanguage()
+              startCountdown()
+            } else {
+              status.value = 'error'
+            }
+          }, 800)
         }
       }
-    } catch {
+    } catch (e) {
+      console.warn('[confirm.vue] exchangeCodeForSession caught:', e)
       const { data: sessionData } = await supabase.auth.getSession()
-      status.value = (sessionData?.session || user.value) ? 'success' : 'error'
+      if (sessionData?.session || user.value) {
+        status.value = 'success'
+        await initLanguage()
+        startCountdown()
+      } else {
+        status.value = 'error'
+      }
     }
   } else if (tokenHash) {
     try {
@@ -89,28 +122,40 @@ onMounted(async () => {
       if (!error && data?.session) {
         status.value = 'success'
         await initLanguage()
+        startCountdown()
       } else {
+        if (error) console.warn('[confirm.vue] verifyOtp:', error.message)
         const { data: sessionData } = await supabase.auth.getSession()
         if (sessionData?.session || user.value) {
           status.value = 'success'
           await initLanguage()
+          startCountdown()
         } else {
           status.value = 'error'
         }
       }
-    } catch {
+    } catch (e) {
+      console.warn('[confirm.vue] verifyOtp caught:', e)
       const { data: sessionData } = await supabase.auth.getSession()
-      status.value = (sessionData?.session || user.value) ? 'success' : 'error'
+      if (sessionData?.session || user.value) {
+        status.value = 'success'
+        await initLanguage()
+        startCountdown()
+      } else {
+        status.value = 'error'
+      }
     }
   } else {
     const { data: sessionData } = await supabase.auth.getSession()
     if (sessionData?.session || user.value) {
       status.value = 'success'
+      startCountdown()
     } else {
       setTimeout(async () => {
         const { data: sData } = await supabase.auth.getSession()
         if (sData?.session || user.value) {
           status.value = 'success'
+          startCountdown()
         } else {
           status.value = 'error'
         }
@@ -134,9 +179,10 @@ function startCountdown() {
   }, 1000)
 }
 
-watch(user, (newUser) => {
-  if (newUser && status.value !== 'error') {
+watch(user, async (newUser) => {
+  if (newUser && !errorMessage.value) {
     status.value = 'success'
+    await initLanguage()
     startCountdown()
   }
 }, { immediate: true })
@@ -149,6 +195,7 @@ watch(status, (newStatus) => {
 
 onUnmounted(() => {
   if (timer) clearInterval(timer)
+  if (authSubscription) authSubscription.unsubscribe()
 })
 </script>
 

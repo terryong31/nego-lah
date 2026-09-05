@@ -43,8 +43,12 @@ enabled = true
 site_url = "http://localhost:3000"
 additional_redirect_urls = [
   "http://localhost:3000",
+  "http://localhost:3000/**",
+  "http://127.0.0.1:3000/**",
   "https://negolah.my",
+  "https://negolah.my/**",
   "https://www.negolah.my",
+  "https://www.negolah.my/**",
 ]
 jwt_expiry = 3600
 enable_refresh_token_rotation = true

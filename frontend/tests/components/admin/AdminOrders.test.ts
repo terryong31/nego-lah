@@ -78,15 +78,12 @@ describe('components/admin/AdminOrders.vue', () => {
     clearNuxtData('admin-orders')
   })
 
-  it('fetches /orders on mount and renders stats + order count', async () => {
+  it('fetches /orders on mount and renders order count', async () => {
     callMock.mockResolvedValueOnce(makeResponse())
     const wrapper = await mountSuspended(AdminOrders)
 
     expect(callMock).toHaveBeenCalledWith('/orders')
     expect(wrapper.text()).toContain('1 order(s)')
-    expect(wrapper.text()).toContain('RM 12.50')
-    expect(wrapper.text()).toContain('Total Orders')
-    expect(wrapper.text()).toContain('Total Sales')
   })
 
   it('falls back to the empty default state when the initial fetch rejects', async () => {
@@ -94,7 +91,6 @@ describe('components/admin/AdminOrders.vue', () => {
     const wrapper = await mountSuspended(AdminOrders)
 
     expect(wrapper.text()).toContain('0 order(s)')
-    expect(wrapper.text()).toContain('RM 0.00')
     expect((wrapper.vm as VmAny).orders).toEqual([])
   })
 

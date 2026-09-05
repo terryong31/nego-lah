@@ -4,6 +4,9 @@ Tests for auth_middleware.py:
   exception handling, ban enforcement.
 - get_user_id_from_body_or_token: body/token user_id consistency check.
 """
+import asyncio
+import contextlib
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -230,3 +233,89 @@ def test_get_user_id_from_body_or_token_empty_string_body_returns_token_id():
     # Empty string is falsy, so it should fall back to the token's user_id
     # rather than being treated as a mismatch.
     assert get_user_id_from_body_or_token("", "token-user") == "token-user"
+
+
+# ---------------------------------------------------------------------------
+# Event-loop safety
+#
+# FastAPI runs `def` ENDPOINTS in a threadpool but always runs `async def`
+# DEPENDENCIES on the event loop. `verify_user_token` is such a dependency and
+# guards nearly every route, so a synchronous Supabase round trip inside it
+# freezes the whole worker — every other user's request included.
+# ---------------------------------------------------------------------------
+
+@contextlib.asynccontextmanager
+async def loop_ticks():
+    """Count event-loop turns while the block runs. Zero means it was blocked."""
+    counter = {"ticks": 0}
+
+    async def ticker():
+        while True:
+            await asyncio.sleep(0.01)
+            counter["ticks"] += 1
+
+    beat = asyncio.create_task(ticker())
+    try:
+        yield counter
+    finally:
+        beat.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await beat
+
+
+def slow_get_user(user_id="user-slow", delay=0.2):
+    def _lookup(_token):
+        time.sleep(delay)
+        return SimpleNamespace(user=SimpleNamespace(id=user_id))
+    return _lookup
+
+
+@pytest.mark.asyncio
+async def test_token_validation_does_not_block_the_event_loop(patch_supabase, fake_supabase):
+    patch_supabase("auth_middleware", admin=fake_supabase)
+    fake_supabase.auth.get_user = slow_get_user("user-slow")
+    configure_ban_check(fake_supabase, is_banned=False)
+
+    async with loop_ticks() as counter:
+        user_id = await verify_user_token(make_request({"Authorization": "Bearer cold-token"}))
+
+    assert user_id == "user-slow"
+    assert counter["ticks"] > 5
+
+
+@pytest.mark.asyncio
+async def test_ban_lookup_does_not_block_the_event_loop(patch_supabase, fake_supabase):
+    patch_supabase("auth_middleware", admin=fake_supabase)
+    cache_token_user("warm-token", "user-warm")
+
+    def slow_ban_check():
+        time.sleep(0.2)
+        return make_supabase_result([{"is_banned": False}])
+
+    (
+        fake_supabase.table.return_value.select.return_value.eq.return_value
+        .limit.return_value.execute
+    ) = slow_ban_check
+
+    async with loop_ticks() as counter:
+        user_id = await verify_user_token(make_request({"Authorization": "Bearer warm-token"}))
+
+    assert user_id == "user-warm"
+    assert counter["ticks"] > 5
+
+
+@pytest.mark.asyncio
+async def test_optional_user_lookup_does_not_block_the_event_loop(patch_supabase, fake_supabase):
+    """The storefront personalises anonymous-friendly pages through this."""
+    from auth_middleware import get_optional_user_id
+
+    patch_supabase("auth_middleware", admin=fake_supabase)
+    fake_supabase.auth.get_user = slow_get_user("browser-1")
+
+    request = SimpleNamespace(headers={"Authorization": "Bearer cold-browse"}, query_params={})
+
+    async with loop_ticks() as counter:
+        user_id = await get_optional_user_id(request)
+
+    assert user_id == "browser-1"
+    assert counter["ticks"] > 5

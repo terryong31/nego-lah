@@ -520,7 +520,8 @@ async def test_toggle_user_ai_enable_broadcasts_via_supabase(client, admin_user,
     assert kwargs["headers"]["Authorization"] == "Bearer test-admin-service-role-key"
     broadcast_msg = kwargs["json"]["messages"][0]
     assert broadcast_msg["topic"] == "chat:target-user"
-    assert broadcast_msg["payload"]["payload"]["content"] == (
+    assert broadcast_msg["event"] == "new_message"
+    assert broadcast_msg["payload"]["content"] == (
         "--- Terry has retired from the chat and the AI will take over now ---"
     )
 
@@ -551,6 +552,25 @@ async def test_toggle_user_ai_disable_sets_admin_intervening(client, admin_user,
 
 async def test_toggle_user_ai_requires_admin(client):
     resp = await client.put("/admin/users/target-user/ai", json={"ai_enabled": True})
+    assert resp.status_code == 401
+
+
+async def test_get_user_ai_status_success(client, admin_user, fake_supabase, patch_supabase):
+    admin_user()
+    patch_supabase("connector", admin=fake_supabase)
+    settings_mock = MagicMock()
+    settings_mock.select.return_value.eq.return_value.execute.return_value = make_supabase_result(
+        [{"user_id": "target-user", "ai_enabled": False}]
+    )
+    fake_supabase.table.return_value = settings_mock
+
+    resp = await client.get("/admin/users/target-user/ai")
+    assert resp.status_code == 200
+    assert resp.json() == {"user_id": "target-user", "ai_enabled": False}
+
+
+async def test_get_user_ai_status_requires_admin(client):
+    resp = await client.get("/admin/users/target-user/ai")
     assert resp.status_code == 401
 
 

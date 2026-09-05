@@ -6,14 +6,14 @@
         class="size-16 text-warning"
       />
       <h2 class="text-2xl font-black text-highlighted">
-        Payment Cancelled
+        {{ $t('checkout.cancelTitle') }}
       </h2>
       <p class="text-sm text-muted">
-        Your Stripe transaction was cancelled. No charges were made to your account.
+        {{ $t('checkout.cancelDesc') }}
       </p>
       <div class="pt-4 flex gap-4 w-full">
         <UButton
-          label="View Items"
+          :label="$t('checkout.viewItems')"
           to="/"
           color="primary"
           class="flex-1 justify-center"

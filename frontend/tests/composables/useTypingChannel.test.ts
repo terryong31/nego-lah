@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
 import { mockNuxtImport, mountSuspended } from '@nuxt/test-utils/runtime'
+import { useTypingChannel } from '../../app/composables/useTypingChannel'
 
 // A minimal chainable fake standing in for a Supabase RealtimeChannel: records
 // the handlers registered via `.on(...)` and the callback passed to

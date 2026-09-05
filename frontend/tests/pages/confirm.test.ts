@@ -1,92 +1,130 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ref } from 'vue'
+import { reactive, ref } from 'vue'
 import { mockNuxtImport, mountSuspended } from '@nuxt/test-utils/runtime'
 import { flushPromises } from '@vue/test-utils'
 import ConfirmPage from '~/pages/confirm.vue'
 
-// A real Vue ref (not a hand-rolled stand-in) is required here, unlike some
-// other test files: this page's `watch(user, ...)` needs genuine reactivity
-// so that mutating `.value` *after* mount actually re-fires the watcher.
 const userRef = ref<{ id: string, email: string } | null>(null)
+const routeStub = reactive<{ query: Record<string, string | undefined>, hash?: string }>({ query: {} })
 
 mockNuxtImport('useSupabaseUser', () => () => userRef)
+mockNuxtImport('useRoute', () => () => routeStub)
 
-// Note: useRouter is deliberately left un-mocked (see tests/pages/login.test.ts
-// and tests/components/AppHeader.test.ts for precedent) — a partial stub like
-// `{ push: vi.fn() }` breaks Nuxt's own internal client plugins which call real
-// router methods during app init. Instead we spy on the real router's `push`
-// method per-test via `wrapper.vm.$router`.
 function spyOnRouterPush(wrapper: { vm: { $router: { push: (...args: unknown[]) => unknown } } }) {
   return vi.spyOn(wrapper.vm.$router, 'push').mockImplementation(() => Promise.resolve())
 }
 
 describe('pages/confirm.vue', () => {
-  // Each `mountSuspended` call sets up a fresh `watch(user, ...)` tied to that
-  // component instance. Because all instances in this file share the same
-  // module-level `userRef` (and the same underlying Nuxt test app / router
-  // singleton), a still-mounted component from a previous test would also
-  // react to later mutations of `userRef.value` and pollute the next test's
-  // push-spy call count. Unmount after every test to stop that watcher.
   let wrapper: Awaited<ReturnType<typeof mountSuspended>> | undefined
 
   beforeEach(() => {
+    vi.useFakeTimers()
     userRef.value = null
+    routeStub.query = {}
+    routeStub.hash = ''
   })
 
   afterEach(() => {
+    vi.useRealTimers()
     wrapper?.unmount()
     wrapper = undefined
   })
 
-  it('renders a loading indicator and confirming message', async () => {
+  it('renders a loading indicator and confirming message initially', async () => {
     wrapper = await mountSuspended(ConfirmPage)
 
     expect(wrapper.findComponent({ name: 'UProgress' }).exists()).toBe(true)
     expect(wrapper.text()).toContain('Confirming your session, please wait...')
   })
 
-  it('does not redirect immediately when there is no user on mount (immediate watch, falsy value)', async () => {
+  it('displays the Email Confirmed screen once the user ref becomes truthy', async () => {
     userRef.value = null
     wrapper = await mountSuspended(ConfirmPage)
-    const pushSpy = spyOnRouterPush(wrapper)
 
-    await flushPromises()
-
-    expect(pushSpy).not.toHaveBeenCalled()
-  })
-
-  it('redirects to / once the user ref becomes truthy after mount', async () => {
-    userRef.value = null
-    wrapper = await mountSuspended(ConfirmPage)
-    const pushSpy = spyOnRouterPush(wrapper)
-
-    expect(pushSpy).not.toHaveBeenCalled()
+    expect(wrapper.findComponent({ name: 'UProgress' }).exists()).toBe(true)
 
     userRef.value = { id: 'u1', email: 'user@example.com' }
     await flushPromises()
 
-    expect(pushSpy).toHaveBeenCalledTimes(1)
+    expect(wrapper.text()).toContain('Email Confirmed!')
+    expect(wrapper.text()).toContain('Your email has been successfully verified')
+    const button = wrapper.findComponent({ name: 'UButton' })
+    expect(button.exists()).toBe(true)
+    expect(button.props('label')).toBe('Explore Storefront')
+  })
+
+  it('navigates to / when clicking Explore Storefront', async () => {
+    userRef.value = { id: 'u1', email: 'user@example.com' }
+    wrapper = await mountSuspended(ConfirmPage)
+    const pushSpy = spyOnRouterPush(wrapper)
+
+    await flushPromises()
+
+    const button = wrapper.findComponent({ name: 'UButton' })
+    await button.trigger('click')
+
     expect(pushSpy).toHaveBeenCalledWith('/')
   })
 
-  it('does not redirect again when the user ref changes to a different truthy value more than once', async () => {
-    userRef.value = null
+  it('navigates to redirect target when query has a safe redirect path', async () => {
+    userRef.value = { id: 'u1', email: 'user@example.com' }
+    routeStub.query = { redirect: '/items/item-1' }
     wrapper = await mountSuspended(ConfirmPage)
     const pushSpy = spyOnRouterPush(wrapper)
 
+    await flushPromises()
+
+    const button = wrapper.findComponent({ name: 'UButton' })
+    await button.trigger('click')
+
+    expect(pushSpy).toHaveBeenCalledWith('/items/item-1')
+  })
+
+  it('auto-redirects to / after countdown expires', async () => {
     userRef.value = { id: 'u1', email: 'user@example.com' }
-    await flushPromises()
-    expect(pushSpy).toHaveBeenCalledTimes(1)
+    wrapper = await mountSuspended(ConfirmPage)
+    const pushSpy = spyOnRouterPush(wrapper)
 
-    // Simulate the user switching back to null and then truthy again — each
-    // truthy transition should fire another push('/').
-    userRef.value = null
     await flushPromises()
-    expect(pushSpy).toHaveBeenCalledTimes(1)
+    expect(pushSpy).not.toHaveBeenCalled()
 
-    userRef.value = { id: 'u2', email: 'other@example.com' }
+    vi.advanceTimersByTime(5000)
     await flushPromises()
-    expect(pushSpy).toHaveBeenCalledTimes(2)
-    expect(pushSpy).toHaveBeenLastCalledWith('/')
+
+    expect(pushSpy).toHaveBeenCalledWith('/')
+  })
+
+  it('displays the Verification Failed screen when error params are present', async () => {
+    routeStub.query = {
+      error: 'access_denied',
+      error_code: 'otp_expired',
+      error_description: 'Email link is invalid or has expired'
+    }
+
+    wrapper = await mountSuspended(ConfirmPage)
+
+    expect(wrapper.text()).toContain('Verification Failed')
+    expect(wrapper.text()).toContain('Email link is invalid or has expired')
+    const button = wrapper.findComponent({ name: 'UButton' })
+    expect(button.exists()).toBe(true)
+    expect(button.props('label')).toBe('Back to Login')
+  })
+
+  it('points Back to Login button to loginRedirect with redirect query when present', async () => {
+    routeStub.query = {
+      error: 'access_denied',
+      error_code: 'otp_expired',
+      redirect: '/chat?item_id=item-1'
+    }
+
+    wrapper = await mountSuspended(ConfirmPage)
+
+    const empty = wrapper.findComponent({ name: 'UEmpty' })
+    expect(empty.props('actions')).toEqual([
+      expect.objectContaining({
+        label: 'Back to Login',
+        to: { path: '/login', query: { redirect: '/chat?item_id=item-1' } }
+      })
+    ])
   })
 })

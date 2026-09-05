@@ -6,6 +6,7 @@ Tests for items.py:
 - get_items: cache hit / stale-cache / cache-miss / keyword-search paths.
 - get_featured_items: success path + broad-except-returns-[] fallback.
 - upload_item: async image upload + item insert, and its except-returns-False path.
+- sync_item_images: rebuilding an item's ordered image map on edit.
 - delete_item / update_item: soft delete / partial update, and their
   except-returns-False fallback paths.
 """
@@ -21,6 +22,7 @@ from items import (
     get_items,
     get_items_fingerprint,
     should_validate_cache,
+    sync_item_images,
     update_item,
     upload_item,
 )
@@ -409,6 +411,163 @@ async def test_upload_item_exception_returns_false(patch_supabase, fake_supabase
     )
 
     assert ok is False
+
+
+# ---------------------------------------------------------------------------
+# sync_item_images
+# ---------------------------------------------------------------------------
+
+
+def _stub_current_images(fake_supabase, image_path):
+    """Point the `select('image_path').eq('id', ...)` chain at a stored map."""
+    fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = (
+        make_supabase_result([{"image_path": json.dumps(image_path)}])
+    )
+
+
+async def test_sync_item_images_keeps_a_subset_in_the_requested_order(patch_supabase, fake_supabase):
+    patch_supabase("items", admin=fake_supabase)
+    _stub_current_images(fake_supabase, {
+        "0.jpg": "https://cdn.example.com/a.jpg",
+        "1.jpg": "https://cdn.example.com/b.jpg",
+        "2.jpg": "https://cdn.example.com/c.jpg",
+    })
+
+    result = await sync_item_images(
+        "item-1",
+        ["https://cdn.example.com/c.jpg", "https://cdn.example.com/a.jpg"],
+    )
+
+    urls = json.loads(result)
+    assert list(urls.items()) == [
+        ("2.jpg", "https://cdn.example.com/c.jpg"),
+        ("0.jpg", "https://cdn.example.com/a.jpg"),
+    ]
+    fake_supabase.storage.from_.return_value.upload.assert_not_called()
+
+
+async def test_sync_item_images_uploads_new_files_at_their_requested_position(patch_supabase, fake_supabase):
+    patch_supabase("items", admin=fake_supabase)
+    _stub_current_images(fake_supabase, {"0.jpg": "https://cdn.example.com/a.jpg"})
+    fake_supabase.storage.from_.return_value.get_public_url.return_value = "https://cdn.example.com/new.png"
+
+    result = await sync_item_images(
+        "item-1",
+        ["new:0", "https://cdn.example.com/a.jpg"],
+        [FakeUploadFile("fresh.png", content=b"pngdata", content_type="image/png")],
+    )
+
+    urls = json.loads(result)
+    assert list(urls.values()) == ["https://cdn.example.com/new.png", "https://cdn.example.com/a.jpg"]
+
+    upload_call = fake_supabase.storage.from_.return_value.upload.call_args
+    assert upload_call.kwargs["file"] == b"pngdata"
+    assert upload_call.kwargs["path"].startswith("items/item-1/")
+    assert upload_call.kwargs["path"].endswith(".png")
+    assert upload_call.kwargs["file_options"]["content-type"] == "image/png"
+
+
+async def test_sync_item_images_names_new_uploads_uniquely(patch_supabase, fake_supabase):
+    """A new photo must never overwrite the storage object of a kept one."""
+    patch_supabase("items", admin=fake_supabase)
+    _stub_current_images(fake_supabase, {"0.jpg": "https://cdn.example.com/a.jpg"})
+    fake_supabase.storage.from_.return_value.get_public_url.side_effect = (
+        lambda path: f"https://cdn.example.com/{path}"
+    )
+
+    result = await sync_item_images(
+        "item-1",
+        ["https://cdn.example.com/a.jpg", "new:0", "new:1"],
+        [FakeUploadFile("x.jpg"), FakeUploadFile("y.jpg")],
+    )
+
+    urls = json.loads(result)
+    assert len(urls) == 3
+    assert "0.jpg" in urls  # the kept photo's key survives untouched
+    assert urls["0.jpg"] == "https://cdn.example.com/a.jpg"
+
+
+async def test_sync_item_images_drops_tokens_the_item_does_not_own(patch_supabase, fake_supabase):
+    patch_supabase("items", admin=fake_supabase)
+    _stub_current_images(fake_supabase, {"0.jpg": "https://cdn.example.com/a.jpg"})
+
+    result = await sync_item_images(
+        "item-1",
+        ["https://evil.example.com/x.jpg", "new:7", "https://cdn.example.com/a.jpg"],
+    )
+
+    assert json.loads(result) == {"0.jpg": "https://cdn.example.com/a.jpg"}
+
+
+async def test_sync_item_images_removes_storage_objects_that_dropped_out(patch_supabase, fake_supabase):
+    patch_supabase("items", admin=fake_supabase)
+    _stub_current_images(fake_supabase, {
+        "0.jpg": "https://cdn.example.com/a.jpg",
+        "1.jpg": "https://cdn.example.com/b.jpg",
+    })
+
+    result = await sync_item_images("item-1", ["https://cdn.example.com/b.jpg"])
+
+    assert json.loads(result) == {"1.jpg": "https://cdn.example.com/b.jpg"}
+    fake_supabase.storage.from_.return_value.remove.assert_called_once_with(["items/item-1/0.jpg"])
+
+
+async def test_sync_item_images_survives_a_failing_storage_remove(patch_supabase, fake_supabase):
+    """Orphaned bytes are cheaper than a failed save the admin cannot retry."""
+    patch_supabase("items", admin=fake_supabase)
+    _stub_current_images(fake_supabase, {
+        "0.jpg": "https://cdn.example.com/a.jpg",
+        "1.jpg": "https://cdn.example.com/b.jpg",
+    })
+    fake_supabase.storage.from_.return_value.remove.side_effect = Exception("storage down")
+
+    result = await sync_item_images("item-1", ["https://cdn.example.com/b.jpg"])
+
+    assert json.loads(result) == {"1.jpg": "https://cdn.example.com/b.jpg"}
+
+
+async def test_sync_item_images_returns_empty_map_when_every_photo_is_dropped(patch_supabase, fake_supabase):
+    patch_supabase("items", admin=fake_supabase)
+    _stub_current_images(fake_supabase, {"0.jpg": "https://cdn.example.com/a.jpg"})
+
+    result = await sync_item_images("item-1", [])
+
+    assert json.loads(result) == {}
+    fake_supabase.storage.from_.return_value.remove.assert_called_once_with(["items/item-1/0.jpg"])
+
+
+async def test_sync_item_images_treats_an_unreadable_image_path_as_empty(patch_supabase, fake_supabase):
+    patch_supabase("items", admin=fake_supabase)
+    fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = (
+        make_supabase_result([{"image_path": "not-json"}])
+    )
+    fake_supabase.storage.from_.return_value.get_public_url.return_value = "https://cdn.example.com/new.png"
+
+    result = await sync_item_images("item-1", ["new:0"], [FakeUploadFile("fresh.png")])
+
+    assert list(json.loads(result).values()) == ["https://cdn.example.com/new.png"]
+    fake_supabase.storage.from_.return_value.remove.assert_not_called()
+
+
+async def test_sync_item_images_upload_exception_returns_none(patch_supabase, fake_supabase):
+    patch_supabase("items", admin=fake_supabase)
+    _stub_current_images(fake_supabase, {"0.jpg": "https://cdn.example.com/a.jpg"})
+    fake_supabase.storage.from_.return_value.upload.side_effect = Exception("storage exploded")
+
+    result = await sync_item_images("item-1", ["new:0"], [FakeUploadFile("fresh.png")])
+
+    assert result is None
+
+
+async def test_sync_item_images_missing_item_returns_none(patch_supabase, fake_supabase):
+    patch_supabase("items", admin=fake_supabase)
+    fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = (
+        make_supabase_result([])
+    )
+
+    result = await sync_item_images("ghost", ["https://cdn.example.com/a.jpg"])
+
+    assert result is None
 
 
 # ---------------------------------------------------------------------------

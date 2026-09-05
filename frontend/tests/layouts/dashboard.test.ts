@@ -57,10 +57,17 @@ describe('layouts/dashboard.vue', () => {
       slots: { default: () => 'content' }
     })
 
-    const logoutButton = wrapper.findAll('button').find(b => b.text().includes('Logout'))
-    expect(logoutButton).toBeTruthy()
+    interface DropdownItemLike {
+      label?: string
+      onSelect?: () => void | Promise<void>
+    }
 
-    await logoutButton!.trigger('click')
+    const vm = wrapper.vm as unknown as { footerDropdownItems: DropdownItemLike[][] }
+    const items = vm.footerDropdownItems
+    const logoutItem = items.flat().find(i => i.label === 'Logout')
+    expect(logoutItem).toBeTruthy()
+
+    await logoutItem?.onSelect?.()
     await flushPromises()
 
     expect(callMock).toHaveBeenCalledTimes(1)
@@ -77,10 +84,17 @@ describe('layouts/dashboard.vue', () => {
       slots: { default: () => 'content' }
     })
 
-    const logoutButton = wrapper.findAll('button').find(b => b.text().includes('Logout'))
-    expect(logoutButton).toBeTruthy()
+    interface DropdownItemLike {
+      label?: string
+      onSelect?: () => void | Promise<void>
+    }
 
-    await logoutButton!.trigger('click')
+    const vm = wrapper.vm as unknown as { footerDropdownItems: DropdownItemLike[][] }
+    const items = vm.footerDropdownItems
+    const logoutItem = items.flat().find(i => i.label === 'Logout')
+    expect(logoutItem).toBeTruthy()
+
+    await logoutItem?.onSelect?.()
     await flushPromises()
 
     expect(callMock).toHaveBeenCalledTimes(1)

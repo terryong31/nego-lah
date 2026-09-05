@@ -8,12 +8,14 @@ const { userRef } = vi.hoisted(() => ({
   userRef: { __v_isRef: true, value: null as Record<string, unknown> | null }
 }))
 const { toastAddMock } = vi.hoisted(() => ({ toastAddMock: vi.fn() }))
+const { navigateToMock } = vi.hoisted(() => ({ navigateToMock: vi.fn() }))
 
 const callMock = vi.fn()
 
 mockNuxtImport('useApi', () => () => ({ call: callMock }))
 mockNuxtImport('useSupabaseUser', () => () => userRef)
 mockNuxtImport('useToast', () => () => ({ add: toastAddMock }))
+mockNuxtImport('navigateTo', () => navigateToMock)
 
 // mountSuspended's `route` option (raw path+querystring, resolved via a real
 // router.replace()) does not reliably land in this page's `useRoute()` by the
@@ -377,6 +379,94 @@ describe('pages/checkout/success.vue', () => {
       }
 
       expect(wrapper.text()).not.toContain('Verifying Transaction')
+    })
+  })
+
+  describe('outcome presentation', () => {
+    it('prints the order reference returned by the backend as a receipt stub', async () => {
+      callMock.mockResolvedValue({ status: 'success', order_id: 'ord_a1b2c3' })
+
+      const wrapper = await mountAt({ item_id: 'item-1', session_id: 'sess-1' })
+      await flushPromises()
+
+      expect(wrapper.text()).toContain('Order reference')
+      expect(wrapper.text()).toContain('ord_a1b2c3')
+    })
+
+    it('omits the reference row entirely when the backend returns no order id', async () => {
+      callMock.mockResolvedValue({ status: 'success' })
+
+      const wrapper = await mountAt({ item_id: 'item-1', session_id: 'sess-1' })
+      await flushPromises()
+
+      expect(wrapper.text()).toContain('Purchase Successful!')
+      expect(wrapper.text()).not.toContain('Order reference')
+    })
+
+    it('leaves chat as the only filled action on success — no competing storefront button', async () => {
+      callMock.mockResolvedValue({ status: 'success' })
+
+      const wrapper = await mountAt({ item_id: 'item-1', session_id: 'sess-1' })
+      await flushPromises()
+
+      expect(wrapper.text()).not.toContain('Back to Storefront')
+
+      const buttons = wrapper.findAllComponents({ name: 'UButton' })
+      const chatBtn = buttons.find(b => b.text().includes('Go to Chat Now'))
+      const ordersBtn = buttons.find(b => b.text().includes('View My Orders'))
+      // One primary; the secondary action stays quiet (ghost, never outline).
+      expect(chatBtn?.props('variant')).not.toBe('ghost')
+      expect(ordersBtn?.props('variant')).toBe('ghost')
+    })
+
+    it('illustrates each outcome with the matching scene variant', async () => {
+      callMock.mockResolvedValue({ status: 'refunded' })
+      const refundedWrapper = await mountAt({ item_id: 'item-1', session_id: 'sess-1' })
+      await flushPromises()
+      expect(refundedWrapper.findComponent({ name: 'CheckoutStatusScene' }).props('variant')).toBe('refunded')
+
+      callMock.mockResolvedValue({ status: 'success' })
+      const successWrapper = await mountAt({ item_id: 'item-1', session_id: 'sess-1' })
+      await flushPromises()
+      expect(successWrapper.findComponent({ name: 'CheckoutStatusScene' }).props('variant')).toBe('success')
+    })
+
+    it('shows the pending scene while the confirmation call is still in flight', async () => {
+      let resolveCall: (v: unknown) => void = () => {}
+      callMock.mockImplementation(() => new Promise((resolve) => {
+        resolveCall = resolve
+      }))
+
+      const wrapper = await mountAt({ item_id: 'item-1', session_id: 'sess-1' })
+
+      expect(wrapper.findComponent({ name: 'CheckoutStatusScene' }).props('variant')).toBe('pending')
+
+      resolveCall({ status: 'success' })
+      await flushPromises()
+    })
+  })
+
+  describe('chat redirect on success', () => {
+    it('provides a Go to Chat Now button pointing to /chat?item_id=...', async () => {
+      callMock.mockResolvedValue({ status: 'success' })
+      const wrapper = await mountAt({ item_id: 'item-1', session_id: 'sess-1' })
+      await flushPromises()
+
+      const buttons = wrapper.findAllComponents({ name: 'UButton' })
+      const chatBtn = buttons.find(b => b.text().includes('Go to Chat Now'))
+      expect(chatBtn).toBeDefined()
+      expect(chatBtn?.props('to')).toBe('/chat?item_id=item-1')
+    })
+
+    it('automatically navigates to chat after countdown expires', async () => {
+      navigateToMock.mockClear()
+      vi.useFakeTimers()
+      callMock.mockResolvedValue({ status: 'success' })
+      await mountAt({ item_id: 'item-1', session_id: 'sess-1' })
+      await flushPromises()
+
+      await vi.advanceTimersByTimeAsync(3500)
+      expect(navigateToMock).toHaveBeenCalledWith('/chat?item_id=item-1')
     })
   })
 })

@@ -35,6 +35,7 @@ Mocking seam notes (see conftest.py docstring for the general rules):
 """
 
 import base64
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -773,6 +774,27 @@ async def test_admin_create_item_with_min_price(client, admin_user, admin_supaba
     assert args[5] == 9.99
 
 
+async def test_admin_create_item_with_translations(client, admin_user, admin_supabase, monkeypatch):
+    admin_user()
+    upload_mock = AsyncMock(return_value=True)
+    monkeypatch.setattr(items_module, "upload_item", upload_mock)
+
+    translations_dict = {"en": {"name": "En"}, "ms": {"name": "Ms"}, "zh": {"name": "Zh"}}
+    data = {
+        "name": "Widget",
+        "description": "A nice widget",
+        "condition": "good",
+        "price": "19.99",
+        "translations": json.dumps(translations_dict),
+    }
+    files = [("images", ("widget.jpg", b"fake-bytes", "image/jpeg"))]
+    response = await client.post("/admin/items", data=data, files=files)
+
+    assert response.status_code == 201
+    kwargs = upload_mock.await_args.kwargs
+    assert kwargs.get("translations") == translations_dict
+
+
 async def test_admin_create_item_upload_failure_500(client, admin_user, admin_supabase, monkeypatch):
     admin_user()
     upload_mock = AsyncMock(return_value=False)
@@ -795,7 +817,7 @@ async def test_admin_update_item_success(client, admin_user, admin_supabase, mon
     update_mock = MagicMock(return_value=True)
     monkeypatch.setattr(items_module, "update_item", update_mock)
 
-    response = await client.put("/admin/items/item-1", json={"name": "New Name", "price": 25.5})
+    response = await client.put("/admin/items/item-1", data={"name": "New Name", "price": "25.5"})
 
     assert response.status_code == 200
     assert response.json() == {"message": "Item updated successfully"}
@@ -807,15 +829,131 @@ async def test_admin_update_item_success(client, admin_user, admin_supabase, mon
         price=25.5,
         min_price=None,
         images=None,
+        translations=None,
     )
     admin_supabase.table.assert_any_call("admin_audit_log")
+
+
+async def test_admin_update_item_with_translations(client, admin_user, admin_supabase, monkeypatch):
+    admin_user()
+    update_mock = MagicMock(return_value=True)
+    monkeypatch.setattr(items_module, "update_item", update_mock)
+
+    translations = {"en": {"name": "En"}, "ms": {"name": "Ms"}, "zh": {"name": "Zh"}}
+    response = await client.put(
+        "/admin/items/item-1",
+        data={"name": "New Name", "translations": json.dumps(translations)},
+    )
+
+    assert response.status_code == 200
+    update_mock.assert_called_once_with(
+        item_id="item-1",
+        name="New Name",
+        description=None,
+        condition=None,
+        price=None,
+        min_price=None,
+        images=None,
+        translations=translations,
+    )
+
+
+async def test_admin_update_item_ignores_unparseable_translations(client, admin_user, admin_supabase, monkeypatch):
+    admin_user()
+    update_mock = MagicMock(return_value=True)
+    monkeypatch.setattr(items_module, "update_item", update_mock)
+
+    response = await client.put(
+        "/admin/items/item-1",
+        data={"name": "New Name", "translations": "{not json"},
+    )
+
+    assert response.status_code == 200
+    assert update_mock.call_args.kwargs["translations"] is None
+
+
+async def test_admin_update_item_syncs_images_when_an_order_is_given(client, admin_user, admin_supabase, monkeypatch):
+    admin_user()
+    update_mock = MagicMock(return_value=True)
+    sync_mock = AsyncMock(return_value='{"0.jpg": "https://cdn.example.com/a.jpg"}')
+    monkeypatch.setattr(items_module, "update_item", update_mock)
+    monkeypatch.setattr(items_module, "sync_item_images", sync_mock)
+
+    order = ["new:0", "https://cdn.example.com/a.jpg"]
+    response = await client.put(
+        "/admin/items/item-1",
+        data={"name": "New Name", "images_order": json.dumps(order)},
+        files=[("new_images", ("fresh.png", b"fake-bytes", "image/png"))],
+    )
+
+    assert response.status_code == 200
+    sync_mock.assert_awaited_once()
+    assert sync_mock.await_args.args[0] == "item-1"
+    assert sync_mock.await_args.args[1] == order
+    assert len(sync_mock.await_args.args[2]) == 1
+    assert update_mock.call_args.kwargs["images"] == '{"0.jpg": "https://cdn.example.com/a.jpg"}'
+
+
+async def test_admin_update_item_accepts_an_empty_new_images_list(client, admin_user, admin_supabase, monkeypatch):
+    """Reordering/removing photos sends an order but uploads nothing."""
+    admin_user()
+    update_mock = MagicMock(return_value=True)
+    sync_mock = AsyncMock(return_value="{}")
+    monkeypatch.setattr(items_module, "update_item", update_mock)
+    monkeypatch.setattr(items_module, "sync_item_images", sync_mock)
+
+    response = await client.put(
+        "/admin/items/item-1",
+        data={"name": "New Name", "images_order": json.dumps([])},
+    )
+
+    assert response.status_code == 200
+    assert sync_mock.await_args.args[2] == []
+    assert update_mock.call_args.kwargs["images"] == "{}"
+
+
+async def test_admin_update_item_rejects_an_unparseable_images_order(client, admin_user, admin_supabase, monkeypatch):
+    admin_user()
+    update_mock = MagicMock(return_value=True)
+    sync_mock = AsyncMock(return_value="{}")
+    monkeypatch.setattr(items_module, "update_item", update_mock)
+    monkeypatch.setattr(items_module, "sync_item_images", sync_mock)
+
+    response = await client.put(
+        "/admin/items/item-1",
+        data={"name": "New Name", "images_order": "{not json"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Invalid images_order"
+    sync_mock.assert_not_awaited()
+    update_mock.assert_not_called()
+
+
+async def test_admin_update_item_image_sync_failure_500(client, admin_user, admin_supabase, monkeypatch):
+    """A failed photo sync must not half-apply the edit."""
+    admin_user()
+    update_mock = MagicMock(return_value=True)
+    sync_mock = AsyncMock(return_value=None)
+    monkeypatch.setattr(items_module, "update_item", update_mock)
+    monkeypatch.setattr(items_module, "sync_item_images", sync_mock)
+
+    response = await client.put(
+        "/admin/items/item-1",
+        data={"name": "New Name", "images_order": json.dumps(["new:0"])},
+        files=[("new_images", ("fresh.png", b"fake-bytes", "image/png"))],
+    )
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == "Failed to update item images"
+    update_mock.assert_not_called()
 
 
 async def test_admin_update_item_not_found_404(client, admin_user, admin_supabase, monkeypatch):
     admin_user()
     monkeypatch.setattr(items_module, "update_item", MagicMock(return_value=False))
 
-    response = await client.put("/admin/items/missing", json={"name": "New Name"})
+    response = await client.put("/admin/items/missing", data={"name": "New Name"})
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Item not found or update failed"

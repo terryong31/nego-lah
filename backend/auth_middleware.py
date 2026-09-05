@@ -3,6 +3,8 @@ Auth middleware for JWT token validation.
 Uses Supabase for verification with Redis caching for performance.
 """
 
+import asyncio
+
 from fastapi import HTTPException, Request
 
 from cache import (
@@ -67,9 +69,12 @@ async def verify_user_token(request: Request) -> str:
     if cached_user_id:
         user_id = cached_user_id
     else:
-        # Validate with Supabase
+        # Validate with Supabase. FastAPI runs `def` *endpoints* in a threadpool
+        # but always runs `async def` *dependencies* on the event loop, so this
+        # synchronous round trip would stall every other in-flight request on
+        # this worker — on every authenticated endpoint in the API.
         try:
-            user_response = admin_supabase.auth.get_user(token)
+            user_response = await asyncio.to_thread(admin_supabase.auth.get_user, token)
             if user_response and user_response.user:
                 user_id = user_response.user.id
                 # Cache the token -> user_id mapping
@@ -86,7 +91,7 @@ async def verify_user_token(request: Request) -> str:
             raise HTTPException(status_code=401, detail="Invalid token") from e
 
     # Block banned users from every authenticated endpoint.
-    if _is_user_banned(user_id):
+    if await asyncio.to_thread(_is_user_banned, user_id):
         raise HTTPException(status_code=403, detail="Your account has been banned")
 
     return user_id
@@ -103,4 +108,30 @@ def get_user_id_from_body_or_token(body_user_id: str | None, token_user_id: str)
             detail="User ID mismatch: cannot act on behalf of another user"
         )
     return token_user_id
+
+
+async def get_optional_user_id(request: Request) -> str | None:
+    """Extract user_id from Authorization header or ?token= if present; return None if unauthenticated."""
+    auth_header = request.headers.get("Authorization") if hasattr(request, "headers") else None
+    token = None
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header.split(" ", 1)[1]
+    if not token and hasattr(request, "query_params"):
+        token = request.query_params.get("token")
+    if not token:
+        return None
+
+    try:
+        cached_user_id = get_cached_user_by_token(token)
+        if cached_user_id:
+            return cached_user_id
+        user_response = await asyncio.to_thread(admin_supabase.auth.get_user, token)
+        if user_response and user_response.user:
+            uid = user_response.user.id
+            cache_token_user(token, uid)
+            return uid
+    except Exception:
+        return None
+    return None
+
 

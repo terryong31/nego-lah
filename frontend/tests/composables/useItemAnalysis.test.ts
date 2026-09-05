@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { AnalyzePatch } from '~/composables/useItemAnalysis'
+import { watch } from 'vue'
+import { mockNuxtImport } from '@nuxt/test-utils/runtime'
+import { useItemAnalysis, type AnalyzePatch } from '../../app/composables/useItemAnalysis'
 
 // `fetch` is a runtime global here, not a Nuxt auto-import, so stub it directly
 // (same reasoning as tests/composables/useAdminApi.test.ts does for `$fetch`).

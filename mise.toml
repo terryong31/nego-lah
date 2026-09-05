@@ -1,0 +1,115 @@
+[tools]
+uv = "latest"
+bun = "latest"
+infisical = "latest"
+
+[env]
+_.python.venv = { path = "backend/.venv", create = true }
+
+[tasks."dev:backend"]
+description = "Start FastAPI backend server with Infisical secrets"
+dir = "backend"
+run = "infisical run --env=dev --path=/Backend -- uv run uvicorn main:app --host 127.0.0.1 --port 8000 --reload || uv run uvicorn main:app --host 127.0.0.1 --port 8000 --reload"
+
+[tasks."dev:frontend"]
+description = "Start Nuxt frontend dev server with Infisical secrets"
+dir = "frontend"
+run = "infisical run --env=dev --path=/Frontend -- bun dev || bun dev"
+
+[tasks."dev:redis"]
+description = "Start local Redis if not running"
+run = "redis-cli ping >/dev/null 2>&1 || redis-server --daemonize yes"
+
+[tasks."dev:all"]
+description = "Run all services concurrently"
+depends = ["dev:redis", "dev:backend", "dev:frontend"]
+
+[tasks."dev"]
+description = "Run complete development stack"
+run = "mise run dev:all"
+
+[tasks."test:backend"]
+description = "Run backend pytest suite"
+dir = "backend"
+run = "uv run pytest"
+
+[tasks."test:frontend"]
+description = "Run frontend Vitest suite"
+dir = "frontend"
+run = "bun run test"
+
+[tasks."test"]
+description = "Run complete test suite"
+depends = ["test:backend", "test:frontend"]
+
+[tasks."lint"]
+description = "Lint backend and frontend"
+run = "cd backend && uv run ruff check . && cd ../frontend && bun run lint"
+
+[tasks."typecheck"]
+description = "Typecheck frontend"
+dir = "frontend"
+run = "bun run typecheck"
+
+[tasks."audit:backend"]
+description = "Run backend security audits (pip-audit and bandit)"
+dir = "backend"
+run = "uv run pip-audit && uv run bandit -r . -x ./tests,./conftest.py,./.venv,./alembic,./htmlcov"
+
+[tasks."audit:frontend"]
+description = "Audit untrusted lifecycle scripts in frontend dependencies"
+dir = "frontend"
+run = "bun pm untrusted"
+
+[tasks."audit"]
+description = "Run all security audits (backend and frontend)"
+depends = ["audit:backend", "audit:frontend"]
+
+[tasks."build:frontend"]
+description = "Generate static SPA using Infisical dev secrets"
+dir = "frontend"
+run = "infisical run --env=dev --path=/Frontend -- bun run generate || bun run generate"
+
+[tasks."build:frontend:prod"]
+description = "Generate static SPA using Infisical prod secrets"
+dir = "frontend"
+run = "infisical run --env=prod --path=/Frontend -- bun run generate || bun run generate"
+
+[tasks."db:migrate:staging"]
+description = "Apply Supabase migrations to staging database"
+dir = "backend"
+run = "infisical run --env=dev --path=/Backend -- uv run python scripts/run_migrations.py"
+
+[tasks."db:migrate:prod"]
+description = "Apply Supabase migrations to production database"
+dir = "backend"
+run = "infisical run --env=prod --path=/Backend -- uv run python scripts/run_migrations.py"
+
+[tasks."cdn:sync:staging"]
+description = "Synchronize brand icons and demo video to staging Supabase Storage CDN"
+dir = "backend"
+run = "infisical run --env=dev --path=/Backend -- uv run python scripts/sync_cdn_assets.py"
+
+[tasks."cdn:sync:prod"]
+description = "Synchronize brand icons and demo video to production Supabase Storage CDN"
+dir = "backend"
+run = "infisical run --env=prod --path=/Backend -- uv run python scripts/sync_cdn_assets.py"
+
+[tasks."cdn:sync"]
+description = "Synchronize brand icons and demo video to both staging and production CDNs"
+depends = ["cdn:sync:staging", "cdn:sync:prod"]
+
+[tasks."sentry:info"]
+description = "Verify Sentry CLI configuration and authentication"
+dir = "frontend"
+run = "export $(grep -E '^SENTRY_' .env | xargs) && ./node_modules/.bin/sentry-cli info"
+
+[tasks."sentry:projects"]
+description = "List all Sentry projects via Sentry CLI"
+dir = "frontend"
+run = "export $(grep -E '^SENTRY_' .env | xargs) && ./node_modules/.bin/sentry-cli projects list"
+
+[tasks."sentry:releases"]
+description = "List Sentry releases via Sentry CLI"
+dir = "frontend"
+run = "export $(grep -E '^SENTRY_' .env | xargs) && ./node_modules/.bin/sentry-cli releases list"

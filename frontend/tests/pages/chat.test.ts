@@ -59,8 +59,10 @@ interface ChatItem {
   item_id: string
   name: string
   price: number
+  discounted_price?: number
   status: string
   images?: string
+  translations?: Record<string, { name?: string, description?: string, condition?: string }>
 }
 
 // Shape of the <script setup> bindings this file reaches through wrapper.vm.
@@ -74,6 +76,7 @@ interface ChatVm {
   buyLoading: boolean
   aiStatusText: string
   aiWorking: boolean
+  aiEnabled: boolean
   effectiveStatus: string
   shownText: string
   scroller: HTMLElement | null
@@ -146,8 +149,14 @@ mockNuxtImport('useTypingChannel', () => () => typingState)
 
 // `route.query.item_id` is read once at setup (contextItemId) — a real
 // reactive object so we can flip it per test before mounting.
-const routeStub = reactive<{ query: Record<string, string | undefined> }>({ query: {} })
+const routeStub = reactive<{ query: Record<string, string | undefined>, fullPath: string }>({ query: {}, fullPath: '/chat' })
 mockNuxtImport('useRoute', () => () => routeStub)
+
+// Hoisted: mockNuxtImport's factory is lifted above this file's top-level
+// consts, and this one hands the mock back directly (rather than through a
+// second arrow like the mocks above), so it must already exist by then.
+const { navigateToMock } = vi.hoisted(() => ({ navigateToMock: vi.fn() }))
+mockNuxtImport('navigateTo', () => navigateToMock)
 
 let activeWrapper: Awaited<ReturnType<typeof mountSuspended>> | undefined
 
@@ -184,6 +193,8 @@ describe('pages/chat.vue', () => {
     typingState.remoteTyping.value = false
 
     routeStub.query = {}
+    routeStub.fullPath = '/chat'
+    navigateToMock.mockReset()
   })
 
   afterEach(() => {
@@ -226,6 +237,7 @@ describe('pages/chat.vue', () => {
 
       expect(messagesRef.value).toHaveLength(3)
 
+      // No `source` on the record -> no data-source part is attached.
       expect(messagesRef.value[0]).toEqual({
         id: 'm1',
         role: 'user',
@@ -238,10 +250,15 @@ describe('pages/chat.vue', () => {
       expect(typeof messagesRef.value[1]!.id).toBe('string')
       expect(messagesRef.value[1]!.id.length).toBeGreaterThan(0)
 
+      // SPEC-027: a stored `source` rides along so blocksFor can tell an AI
+      // newline (a bubble boundary) from a human's (a line break).
       expect(messagesRef.value[2]).toEqual({
         id: 'm4',
         role: 'system',
-        parts: [{ type: 'text', text: 'AI paused' }]
+        parts: [
+          { type: 'text', text: 'AI paused' },
+          { type: 'data-source', data: 'system' }
+        ]
       })
     })
 
@@ -503,6 +520,81 @@ describe('pages/chat.vue', () => {
 
       expect(vm(wrapper).contextItem).toBeNull()
     })
+
+    it('shows the negotiated price, the struck-through listed price and the discount badge', async () => {
+      routeStub.query = { item_id: 'item-1' }
+      userRef.value = { id: 'user-1' }
+      callMock.mockImplementation((path: string) => {
+        if (path === '/items/item-1') {
+          return Promise.resolve({ item_id: 'item-1', name: 'AirPods Max', price: 1199, discounted_price: 1000, status: 'available' })
+        }
+        return Promise.resolve({ messages: [] })
+      })
+
+      const wrapper = await mountPage()
+
+      expect(wrapper.text()).toContain('RM 1000.00')
+      expect(wrapper.find('.line-through').text()).toContain('RM 1199.00')
+      expect(wrapper.text()).toContain('-17%')
+    })
+
+    it('shows only the listed price while no offer has been negotiated', async () => {
+      routeStub.query = { item_id: 'item-1' }
+      userRef.value = { id: 'user-1' }
+      callMock.mockImplementation((path: string) => {
+        if (path === '/items/item-1') return Promise.resolve({ item_id: 'item-1', name: 'AirPods Max', price: 1199, status: 'available' })
+        return Promise.resolve({ messages: [] })
+      })
+
+      const wrapper = await mountPage()
+
+      expect(wrapper.text()).toContain('RM 1199.00')
+      expect(wrapper.find('.line-through').exists()).toBe(false)
+    })
+
+    it('refetches the context item once a reply finishes streaming, so a price agreed mid-chat shows in the header', async () => {
+      routeStub.query = { item_id: 'item-1' }
+      userRef.value = { id: 'user-1' }
+      let price: Record<string, unknown> = { item_id: 'item-1', name: 'AirPods Max', price: 1199, status: 'available' }
+      callMock.mockImplementation((path: string) => {
+        if (path === '/items/item-1') return Promise.resolve(price)
+        return Promise.resolve({ messages: [] })
+      })
+
+      const wrapper = await mountPage()
+      expect(wrapper.text()).toContain('RM 1199.00')
+
+      // The agent settles on RM1000 during this turn.
+      price = { item_id: 'item-1', name: 'AirPods Max', price: 1199, discounted_price: 1000, status: 'available' }
+      statusRef.value = 'streaming'
+      await nextTick()
+      statusRef.value = 'ready'
+      await flushPromises()
+      await nextTick()
+
+      expect(vm(wrapper).contextItem?.discounted_price).toBe(1000)
+      expect(wrapper.text()).toContain('RM 1000.00')
+      expect(wrapper.text()).toContain('-17%')
+    })
+
+    it('does not refetch the context item while a reply is still streaming', async () => {
+      routeStub.query = { item_id: 'item-1' }
+      userRef.value = { id: 'user-1' }
+      callMock.mockImplementation((path: string) => {
+        if (path === '/items/item-1') return Promise.resolve({ item_id: 'item-1', name: 'AirPods Max', price: 1199, status: 'available' })
+        return Promise.resolve({ messages: [] })
+      })
+
+      await mountPage()
+      callMock.mockClear()
+
+      statusRef.value = 'submitted'
+      await nextTick()
+      statusRef.value = 'streaming'
+      await flushPromises()
+
+      expect(callMock).not.toHaveBeenCalledWith('/items/item-1')
+    })
   })
 
   describe('realtime onMessage (seller typing-channel broadcast)', () => {
@@ -580,6 +672,46 @@ describe('pages/chat.vue', () => {
       expect(vm(wrapper).accessToken).toBe('fresh-token')
       expect(sendMessageMock).toHaveBeenCalledWith({ text: 'Will you take RM50?' })
       expect((wrapper.find('textarea').element as HTMLTextAreaElement).value).toBe('')
+    })
+
+    it('bounces to login carrying the chat URL when the session has lapsed, instead of posting an empty Bearer token', async () => {
+      userRef.value = { id: 'user-1' }
+      routeStub.query = { item_id: 'item-9' }
+      routeStub.fullPath = '/chat?item_id=item-9'
+      const wrapper = await mountPage()
+      getSessionMock.mockClear().mockResolvedValue({ data: { session: null } })
+
+      await vm(wrapper).send('Can you do RM50?')
+
+      expect(sendMessageMock).not.toHaveBeenCalled()
+      expect(signOutMock).toHaveBeenCalledTimes(1)
+      expect(navigateToMock).toHaveBeenCalledWith({
+        path: '/login',
+        query: { redirect: '/chat?item_id=item-9' }
+      })
+      expect(toastAddMock).toHaveBeenCalledWith(expect.objectContaining({ color: 'warning' }))
+    })
+
+    it('keeps the typed message in the box when the send is refused for a lapsed session', async () => {
+      userRef.value = { id: 'user-1' }
+      const wrapper = await mountPage()
+      getSessionMock.mockClear().mockResolvedValue({ data: { session: null } })
+      vm(wrapper).input = 'Can you do RM50?'
+
+      await vm(wrapper).send('Can you do RM50?')
+
+      expect(vm(wrapper).input).toBe('Can you do RM50?')
+    })
+
+    it('sends normally (no bounce) when the session is still alive', async () => {
+      userRef.value = { id: 'user-1' }
+      const wrapper = await mountPage()
+      getSessionMock.mockClear().mockResolvedValue({ data: { session: { access_token: 'still-good' } } })
+
+      await vm(wrapper).send('Deal?')
+
+      expect(navigateToMock).not.toHaveBeenCalled()
+      expect(sendMessageMock).toHaveBeenCalledWith({ text: 'Deal?' })
     })
 
     it('directly: always fetches a fresh token even if one is already cached (the stale-token 401 guard)', async () => {
@@ -693,28 +825,58 @@ describe('pages/chat.vue', () => {
     })
   })
 
-  describe('messageBlocks', () => {
-    const baseMsg = (text: string): Partial<UIMessageLike> => ({ id: 'not-typing', role: 'assistant', parts: [{ type: 'text', text }] })
+  describe('blocksFor', () => {
+    // SPEC-027: a newline means whatever the author's input method made it mean.
+    const aiMsg = (text: string): Partial<UIMessageLike> => ({ id: 'not-typing', role: 'assistant', parts: [{ type: 'text', text }] })
+    const buyerMsg = (text: string): Partial<UIMessageLike> => ({ id: 'not-typing', role: 'user', parts: [{ type: 'text', text }] })
+    const sellerMsg = (text: string): Partial<UIMessageLike> => ({
+      id: 'not-typing',
+      role: 'assistant',
+      parts: [{ type: 'text', text }, { type: 'data-source', data: 'admin' }]
+    })
 
-    it('splits multi-line text into one text block per non-empty trimmed line', async () => {
+    it('gives each of the AI\'s blank-line-separated blocks its own bubble', async () => {
       const wrapper = await mountPage()
-      const blocks = vm(wrapper).messageBlocks(baseMsg('First line\n\n  Second line  \n'))
+      const blocks = vm(wrapper).blocksFor(aiMsg('First line\n\n  Second line  \n'))
       expect(blocks).toEqual([
         { type: 'text', text: 'First line' },
         { type: 'text', text: 'Second line' }
       ])
     })
 
+    it('keeps the AI\'s single line breaks inside one bubble, so an address stays whole', async () => {
+      const wrapper = await mountPage()
+      const blocks = vm(wrapper).blocksFor(aiMsg('Shipping to:\nTerry Ong\n12 Jalan Ampang, KL'))
+      expect(blocks).toEqual([
+        { type: 'text', text: 'Shipping to:\nTerry Ong\n12 Jalan Ampang, KL' }
+      ])
+    })
+
+    it('keeps a buyer\'s Shift+Enter message in one bubble with newlines intact', async () => {
+      const wrapper = await mountPage()
+      const blocks = vm(wrapper).blocksFor(buyerMsg('First line\n\n  Second line  \n'))
+      expect(blocks).toEqual([{ type: 'text', text: 'First line\n\n  Second line' }])
+    })
+
+    it('keeps a seller takeover message in one bubble — also a human at a keyboard', async () => {
+      const wrapper = await mountPage()
+      const blocks = vm(wrapper).blocksFor(sellerMsg('Ships from KL\nUsually 2-3 days'))
+      expect(blocks).toEqual([{ type: 'text', text: 'Ships from KL\nUsually 2-3 days' }])
+    })
+
     it('renders a complete markdown payment link as a "pay" block', async () => {
       const wrapper = await mountPage()
-      const blocks = vm(wrapper).messageBlocks(baseMsg('[Pay RM50 Now](https://buy.stripe.com/abc123)'))
+      const blocks = vm(wrapper).blocksFor(aiMsg('[Pay RM50 Now](https://buy.stripe.com/abc123)'))
       expect(blocks).toEqual([{ type: 'pay', label: 'Pay RM50 Now', url: 'https://buy.stripe.com/abc123' }])
     })
 
     it('renders a still-streaming payment link fragment as a "pending" placeholder', async () => {
       const wrapper = await mountPage()
-      const blocks = vm(wrapper).messageBlocks(baseMsg('Here you go: [Pay Now](http'))
-      expect(blocks).toEqual([{ type: 'pending' }])
+      const blocks = vm(wrapper).blocksFor(aiMsg('Here you go: [Pay Now](http'))
+      expect(blocks).toEqual([
+        { type: 'text', text: 'Here you go:' },
+        { type: 'pending' }
+      ])
     })
   })
 
@@ -868,7 +1030,7 @@ describe('pages/chat.vue', () => {
       const { promise, resolve } = deferred<{ checkout_url?: string }>()
       callMock.mockImplementation((path: string) => (path === '/payment/checkout' ? promise : Promise.resolve({ messages: [] })))
 
-      const buyButton = wrapper.findAll('button').find(b => b.text() === 'Buy')
+      const buyButton = wrapper.findAll('button').find(b => b.text() === 'Buy Now')
       expect(buyButton).toBeTruthy()
       await buyButton!.trigger('click')
 
@@ -881,12 +1043,38 @@ describe('pages/chat.vue', () => {
     it('shows a "Sold" badge instead of the Buy button once the item is sold', async () => {
       const wrapper = await mountWithContextItem({ status: 'sold' })
 
-      expect(wrapper.findAll('button').find(b => b.text() === 'Buy')).toBeUndefined()
+      expect(wrapper.findAll('button').find(b => b.text() === 'Buy Now')).toBeUndefined()
       expect(wrapper.text()).toContain('Sold')
+    })
+
+    it('pins the listing under its translation for the active locale', async () => {
+      const wrapper = await mountWithContextItem({
+        name: 'Apple AirPods Max Space Gray with Box',
+        translations: { en: { name: 'AirPods Max — Full Set, Like New' } }
+      })
+
+      expect(wrapper.text()).toContain('AirPods Max — Full Set, Like New')
+      expect(wrapper.text()).not.toContain('Apple AirPods Max Space Gray with Box')
+    })
+
+    it('falls back to the seller\'s own wording when that locale has no translation', async () => {
+      const wrapper = await mountWithContextItem({
+        name: 'Apple AirPods Max Space Gray with Box',
+        translations: { ms: { name: 'Tidak berkaitan' } }
+      })
+
+      expect(wrapper.text()).toContain('Apple AirPods Max Space Gray with Box')
     })
   })
 
   describe('client-side typewriter effect', () => {
+    // These drive the typewriter through the real send() path, which now
+    // refuses to send (and bounces to login) without a live session — the
+    // suite-wide default is a logged-out one.
+    beforeEach(() => {
+      getSessionMock.mockResolvedValue({ data: { session: { access_token: 'live-token' } } })
+    })
+
     it('reveals the assistant reply one character at a time at CHAR_RATE (50/s = 20ms/char) while streaming', async () => {
       userRef.value = { id: 'user-1' }
       const wrapper = await mountPage()
@@ -1033,6 +1221,69 @@ describe('pages/chat.vue', () => {
       expect(vm(wrapper).displayMessages.at(-1)!.parts[0]!.text).toBe('Sure thing')
     })
 
+    it('never shows the AI working indicator once the seller has taken over', async () => {
+      // chat_settings.ai_enabled = false: the backend records the buyer's
+      // message and closes the stream without replying, so "Cooking…" would
+      // promise an answer that never arrives.
+      userRef.value = { id: 'user-1' }
+      callMock.mockImplementation((path: string) => {
+        if (path === '/chat/settings/user-1') return Promise.resolve({ ai_enabled: false })
+        return Promise.resolve({ messages: [] })
+      })
+
+      const wrapper = await mountPage()
+      await flushPromises()
+      expect(vm(wrapper).aiEnabled).toBe(false)
+
+      messagesRef.value = [
+        { id: 'u1', role: 'user', parts: [{ type: 'text', text: 'Hello?' }] },
+        { id: 'a1', role: 'assistant', parts: [] }
+      ]
+      statusRef.value = 'streaming'
+      await nextTick()
+
+      expect(vm(wrapper).aiWorking).toBe(false)
+      expect(vm(wrapper).effectiveStatus).toBe('ready')
+    })
+
+    it('still surfaces the seller typing indicator while the AI is paused', async () => {
+      userRef.value = { id: 'user-1' }
+      callMock.mockImplementation((path: string) => {
+        if (path === '/chat/settings/user-1') return Promise.resolve({ ai_enabled: false })
+        return Promise.resolve({ messages: [] })
+      })
+
+      const wrapper = await mountPage()
+      await flushPromises()
+
+      typingState.remoteTyping.value = true
+      await nextTick()
+      expect(vm(wrapper).effectiveStatus).toBe('submitted')
+
+      typingState.remoteTyping.value = false
+      await nextTick()
+    })
+
+    it('re-reads the AI setting when a takeover separator arrives mid-conversation', async () => {
+      userRef.value = { id: 'user-1' }
+      let aiOn = true
+      callMock.mockImplementation((path: string) => {
+        if (path === '/chat/settings/user-1') return Promise.resolve({ ai_enabled: aiOn })
+        return Promise.resolve({ messages: [] })
+      })
+
+      const wrapper = await mountPage()
+      await flushPromises()
+      expect(vm(wrapper).aiEnabled).toBe(true)
+
+      aiOn = false
+      const onMessage = typingState.join.mock.calls[0]![1].onMessage as (p: unknown) => void
+      onMessage({ role: 'system', source: 'system', content: '--- Terry has joined the chat ---' })
+      await flushPromises()
+
+      expect(vm(wrapper).aiEnabled).toBe(false)
+    })
+
     it('effectiveStatus is forced to "submitted" while the seller is typing, independent of the AI stream status', async () => {
       const wrapper = await mountPage()
       statusRef.value = 'ready'
@@ -1058,7 +1309,11 @@ describe('pages/chat.vue', () => {
       expect(vm(wrapper).aiStatusText).toBe('Drafting a counter-offer…')
     })
 
-    it('resets aiStatusText to "Thinking…" whenever status transitions to "submitted"', async () => {
+    // aiStatusText holds ONLY the agent's own [[STATUS:…]] text, which is
+    // English-only from the backend. It resets to empty (not to a hardcoded
+    // English word) so the indicator falls back to the translated
+    // `chat.thinking` key between tool calls.
+    it('resets aiStatusText to empty whenever status transitions to "submitted"', async () => {
       const wrapper = await mountPage()
 
       messagesRef.value = [{ id: 'a1', role: 'assistant', parts: [{ type: 'text', text: '[[STATUS:Searching the market…]]' }] }]
@@ -1067,7 +1322,51 @@ describe('pages/chat.vue', () => {
 
       statusRef.value = 'submitted'
       await nextTick()
-      expect(vm(wrapper).aiStatusText).toBe('Thinking…')
+      expect(vm(wrapper).aiStatusText).toBe('')
+    })
+
+    it('starts with no hardcoded status so the first frame shows the translated label', async () => {
+      const wrapper = await mountPage()
+      expect(vm(wrapper).aiStatusText).toBe('')
+    })
+  })
+
+  describe('work-process indicator', () => {
+    function findIndicator(wrapper: Awaited<ReturnType<typeof mountPage>>) {
+      return wrapper.findAllComponents({ name: 'UChatTool' })[0]
+        ?? wrapper.findAllComponents({ name: 'ChatTool' })[0]
+    }
+
+    it('shows the animated brand mark instead of Nuxt UI\'s default spinner', async () => {
+      // The page renders its empty state (not <UChatMessages>) until there is
+      // at least one message, so the #indicator slot needs a populated thread.
+      messagesRef.value = [{ id: 'u1', role: 'user', parts: [{ type: 'text', text: 'How much?' }] }]
+      statusRef.value = 'submitted'
+      const wrapper = await mountPage()
+      await nextTick()
+
+      const indicator = findIndicator(wrapper)
+      expect(indicator).toBeTruthy()
+
+      // `loading` would make ChatTool resolve appConfig.ui.icons.loading and
+      // stamp `animate-spin` on the leading icon (see .nuxt/ui/chat-tool.ts),
+      // overriding both the brand mark and its hop.
+      expect(indicator!.props('loading')).toBe(false)
+      expect(indicator!.props('icon')).toBe('i-nego-mark')
+      expect(indicator!.props('ui')?.leadingIcon).toContain('animate-brand-hop')
+      expect(indicator!.props('ui')?.leadingIcon).toContain('text-default')
+    })
+
+    it('keeps the seller-typing state on its own icon, unanimated', async () => {
+      messagesRef.value = [{ id: 'u1', role: 'user', parts: [{ type: 'text', text: 'How much?' }] }]
+      typingState.remoteTyping.value = true
+      statusRef.value = 'ready'
+      const wrapper = await mountPage()
+      await nextTick()
+
+      const indicator = findIndicator(wrapper)
+      expect(indicator!.props('icon')).toBe('i-lucide-store')
+      expect(indicator!.props('ui')?.leadingIcon ?? '').not.toContain('animate-brand-hop')
     })
   })
 

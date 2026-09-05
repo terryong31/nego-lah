@@ -22,6 +22,17 @@ class _InMemoryRedis:
             self._zset_store.pop(key, None)
             self._exp.pop(key, None)
 
+    def set(self, key: str, value: str, ex: int | None = None, nx: bool = False) -> bool:
+        self._purge(key)
+        if nx and key in self._store:
+            return False
+        self._store[key] = value
+        if ex is not None:
+            self._exp[key] = time.time() + ex
+        else:
+            self._exp.pop(key, None)
+        return True
+
     def setex(self, key: str, ttl: int, value: str):
         self._store[key] = value
         self._exp[key] = time.time() + ttl

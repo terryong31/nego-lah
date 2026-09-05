@@ -5,19 +5,23 @@ const showBorder = computed(() => route.path !== '/')
 </script>
 
 <template>
-  <div>
-    <AppHeader />
+  <div class="min-h-screen flex flex-col overflow-x-clip">
+    <AppHeader class="shrink-0" />
 
     <UMain
-      class="min-h-[80vh] py-6 max-w-(--ui-container) mx-auto px-4 sm:px-6 lg:px-8"
+      :ui="{ base: 'min-h-0' }"
+      class="flex-1 py-6 max-w-(--ui-container) w-full mx-auto px-4 sm:px-6 lg:px-8"
       :class="showBorder && 'border-x border-default'"
     >
       <slot />
     </UMain>
 
-    <USeparator />
+    <USeparator class="shrink-0" />
 
-    <UFooter>
+    <UFooter
+      class="shrink-0"
+      :ui="{ container: 'py-4 lg:py-4' }"
+    >
       <template #left>
         <p class="text-sm text-muted">
           © Nego-lah {{ new Date().getFullYear() }} • Developed by <ULink
@@ -30,27 +34,19 @@ const showBorder = computed(() => route.path !== '/')
       <div class="flex gap-4">
         <UButton
           to="/privacy"
-          label="Privacy"
+          :label="$t('footer.privacy')"
           color="neutral"
           variant="link"
         />
         <UButton
           to="/terms"
-          label="Terms"
+          :label="$t('footer.terms')"
           color="neutral"
           variant="link"
         />
       </div>
       <template #right>
-        <UButton
-          to="https://github.com/terryong31/nego-lah"
-          target="_blank"
-          icon="i-simple-icons-github"
-          aria-label="GitHub"
-          color="neutral"
-          variant="link"
-          size="xl"
-        />
+        <LanguageSelect />
         <UColorModeSelect />
       </template>
     </UFooter>

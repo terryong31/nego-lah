@@ -14,7 +14,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 
 # Install dependencies first so this layer is cached unless the manifest changes.
 COPY package.json bun.lock ./
-RUN bun install --frozen-lockfile
+RUN --mount=type=cache,target=/root/.bun/install/cache \
+    bun install --frozen-lockfile
 
 # Build the app. The Nitro `node-server` preset emits a self-contained
 # server bundle into .output/ (run with `node .output/server/index.mjs`).
@@ -40,7 +41,9 @@ ENV NODE_ENV=production \
     PORT=3000
 
 # Only the build output is needed at runtime (no node_modules, no source).
-COPY --from=build /app/.output ./.output
+COPY --chown=node:node --from=build /app/.output ./.output
+
+USER node
 
 EXPOSE 3000
 

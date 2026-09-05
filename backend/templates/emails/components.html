@@ -1,0 +1,59 @@
+{% macro status_badge(label, variant='success') %}
+  {% if variant == 'danger' %}
+    {% set bg = '#fef2f2' %}
+    {% set border = '#fecaca' %}
+    {% set text = '#b91c1c' %}
+  {% elif variant == 'warning' %}
+    {% set bg = '#fffbeb' %}
+    {% set border = '#fef3c7' %}
+    {% set text = '#92400e' %}
+  {% else %}
+    {% set bg = '#ecfdf5' %}
+    {% set border = '#a7f3d0' %}
+    {% set text = '#047857' %}
+  {% endif %}
+  <div style="display: inline-block; background-color: {{ bg }}; color: {{ text }}; border: 1px solid {{ border }}; padding: 4px 14px; border-radius: 9999px; font-size: 12px; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase;">
+    {{ label }}
+  </div>
+{% endmacro %}
+
+{% macro hero_amount(amount) %}
+  <div style="font-size: 32px; font-weight: 800; color: #059669; letter-spacing: -0.02em; margin-bottom: 24px;">
+    RM{{ "%.2f"|format(amount) }}
+  </div>
+{% endmacro %}
+
+{% macro cta_button(url, label) %}
+  <table role="presentation" border="0" cellpadding="0" cellspacing="0" style="margin: 0 auto;">
+    <tr>
+      <td align="center" style="border-radius: 8px; background-color: #10b981;">
+        <a href="{{ url }}" class="btn-primary" target="_blank" style="display: inline-block; padding: 14px 28px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 15px; font-weight: 600; color: #ffffff !important; text-decoration: none !important; border-radius: 8px; background-color: #10b981; border: 1px solid #059669;">
+          {{ label }}
+        </a>
+      </td>
+    </tr>
+  </table>
+{% endmacro %}
+
+{% macro notice_box(text, title=None, variant='success') %}
+  {% if variant == 'warning' %}
+    {% set bg = '#fffbeb' %}
+    {% set border = '#fef3c7' %}
+    {% set text_color = '#92400e' %}
+    {% set border_style = 'border: 1px solid ' ~ border ~ ';' %}
+  {% else %}
+    {% set bg = '#f0fdf4' %}
+    {% set border = '#10b981' %}
+    {% set text_color = '#166534' %}
+    {% set border_style = 'border-left: 4px solid ' ~ border ~ ';' %}
+  {% endif %}
+  <div style="background-color: {{ bg }}; {{ border_style }} border-radius: 6px; padding: 14px 16px; text-align: left; font-size: 13px; line-height: 1.5; color: {{ text_color }}; margin-bottom: 28px;">
+    {% if title %}<strong style="color: inherit;">{{ title }}:</strong> {% endif %}{{ text }}
+  </div>
+{% endmacro %}
+
+{% macro quote_box(text) %}
+  <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-left: 4px solid #10b981; border-radius: 8px; padding: 18px 20px; font-size: 15px; line-height: 1.6; color: #334155; font-style: italic; text-align: left; margin-bottom: 28px;">
+    "{{ text }}"
+  </div>
+{% endmacro %}

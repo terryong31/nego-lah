@@ -6,14 +6,13 @@ import asyncio
 
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
 from langchain_core.tools import tool
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.prebuilt import create_react_agent
 
-from env import GEMINI_API_KEY
 from logger import logger
 
 from .config import SELLER_PERSONA
 from .context import current_item_id, get_item_id, get_user_id, set_context
+from .llm_factory import get_chat_model, hybrid_llm_session
 from .memory import ConversationMemory
 
 # Import Sub-Agents
@@ -27,22 +26,7 @@ from .tools.payment import web_search
 
 conversation_memory = ConversationMemory()
 
-_model = None
 _customer_agent = None
-
-
-def _get_model():
-    global _model
-    if _model is not None:
-        return _model
-    if not GEMINI_API_KEY:
-        raise RuntimeError("Missing GEMINI_API_KEY")
-    _model = ChatGoogleGenerativeAI(
-        model="gemini-3.6-flash",
-        temperature=0.7,
-        google_api_key=GEMINI_API_KEY,
-    )
-    return _model
 
 # --- Sub-Agent Wrapper Tools ---
 
@@ -128,6 +112,78 @@ async def call_stripe_agent(request: str) -> str:
     return response['messages'][-1].content
 
 
+@tool
+async def transfer_to_human(reason: str, summary: str = "") -> str:
+    """
+    Transfer this conversation to Terry (the human seller/admin).
+    Use this tool when:
+    1. The user asks to speak with a real person, human, seller, or manager.
+    2. You cannot resolve the user's inquiry, or there is a dispute, conflict, or complaint.
+    3. Negotiation has reached an impasse and cannot continue.
+    4. You are unable to continue or handle the user's specific request.
+
+    Args:
+        reason: Why the chat is being transferred (e.g. "Customer requested human seller", "Dispute", "Unresolved inquiry").
+        summary: A brief 1-2 sentence summary of what the customer needs.
+    """
+    ctx_user_id = get_user_id()
+    if not ctx_user_id:
+        return "Unable to transfer: user context missing."
+
+    logger.info(f"🤝 Transferring chat for user {ctx_user_id} to human. Reason: {reason}")
+
+    # 1. Update chat_settings to disable AI and flag admin intervention
+    try:
+        from connector import admin_supabase
+        admin_supabase.table('chat_settings').upsert({
+            'user_id': ctx_user_id,
+            'ai_enabled': False,
+            'admin_intervening': True,
+            'updated_at': 'now()'
+        }).execute()
+    except Exception as e:
+        logger.warning(f"⚠️ Failed to update chat_settings for human transfer: {e}")
+
+    # 2. Add system notice to memory
+    system_msg = "--- The AI has transferred the chat to Terry (human seller) who will take over shortly ---"
+    try:
+        conversation_memory.add_message(ctx_user_id, "system", system_msg, source="system")
+    except Exception as e:
+        logger.warning(f"⚠️ Failed to add system transfer message to memory: {e}")
+
+    # 3. Broadcast system notice to live chat
+    try:
+        from payment.fulfillment import broadcast_to_chat
+        broadcast_to_chat(ctx_user_id, system_msg, role="system", source="system")
+    except Exception as e:
+        logger.warning(f"⚠️ Failed to broadcast transfer message: {e}")
+
+    # 4. Fetch user email & send email alert to admin
+    try:
+        from connector import admin_supabase
+        user_email = None
+        user_res = admin_supabase.auth.admin.get_user_by_id(ctx_user_id)
+        if user_res and hasattr(user_res, "user") and user_res.user:
+            user_email = user_res.user.email
+        elif user_res and isinstance(user_res, dict):
+            user_email = user_res.get("email") or (user_res.get("user") or {}).get("email")
+
+        from services.email_service import send_human_transfer_alert
+        send_human_transfer_alert(
+            user_id=ctx_user_id,
+            reason=reason,
+            user_email=user_email,
+            summary=summary,
+        )
+    except Exception as e:
+        logger.warning(f"⚠️ Failed to send human transfer email alert: {e}")
+
+    return (
+        "I have transferred our chat to Terry (our human seller) and sent him an alert. "
+        "He will reply to you directly right here in the chat shortly!"
+    )
+
+
 # --- Customer Agent (Supervisor) ---
 
 # The Customer Agent handles the conversation flow, negotiation, and personality.
@@ -138,7 +194,8 @@ customer_tools = [
     evaluate_offer,
     assess_discount_eligibility,
     web_search,
-    check_user_orders
+    check_user_orders,
+    transfer_to_human,
 ]
 
 CUSTOMER_AGENT_PROMPT = SELLER_PERSONA + """
@@ -149,6 +206,7 @@ You have a team of specialists to help you:
 1. `call_item_agent`: For finding items, checking stock, and getting item details.
 2. `call_stripe_agent`: For processing payments and cancellations.
 3. `check_user_orders`: To see what the user has purchased and if we are waiting for shipping info.
+4. `transfer_to_human`: To transfer the chat to Terry (the human seller) if requested or if you are unable to help.
 
 YOUR ROLE:
 - Talk to the user in your persona (Nego-Lah).
@@ -156,6 +214,7 @@ YOUR ROLE:
 - If the user asks about availability/items -> Ask Item Agent.
 - If the user asks about past orders or you need to check if they bought something -> Use `check_user_orders`.
 - If the deal is struck -> Ask Stripe Agent to create the link.
+- If the user asks to speak with a human or if you cannot resolve an inquiry -> Call `transfer_to_human`.
 
 IMPORTANT:
 - When calling `evaluate_offer` or `call_stripe_agent`, you MUST use the real 36-character UUID of the item. Never invent or guess an ID (like '12345' or '67890').
@@ -165,12 +224,30 @@ IMPORTANT:
 - Verify you have the IDs before calling tools.
 """
 
+def _select_customer_model(state, runtime):
+    """Resolve the model for THIS turn (SPEC-020 dynamic model).
+
+    LangGraph calls this on every LLM step, so the provider pinned by
+    `hybrid_llm_session()` is honoured without recompiling the graph. Kept
+    synchronous on purpose: with a provider already pinned it never probes, so
+    it cannot block the event loop, and a sync callable works under both
+    `.ainvoke()` and `.invoke()`.
+    """
+    return get_chat_model(temperature=0.7).bind_tools(customer_tools)
+
+
 def _get_customer_agent():
+    """The compiled supervisor graph.
+
+    Cached because compiling a LangGraph react agent is expensive; the model is
+    NOT cached with it — `_select_customer_model` re-resolves per turn, so the
+    process is never frozen to whichever provider happened to be up at boot.
+    """
     global _customer_agent
     if _customer_agent is not None:
         return _customer_agent
 
-    agent_graph = create_react_agent(_get_model(), customer_tools, prompt=CUSTOMER_AGENT_PROMPT)
+    agent_graph = create_react_agent(_select_customer_model, customer_tools, prompt=CUSTOMER_AGENT_PROMPT)
     # Allow the main agent up to 15 steps to do complex negotiation/tool chaining
     _customer_agent = agent_graph.with_config({"recursion_limit": 15})
     return _customer_agent
@@ -306,8 +383,12 @@ async def chat(user_id: str, message: str, item_id: str = None, files: list = No
     set_context(user_id=user_id, item_id=item_id)
 
     # Invoke Customer Agent (async — frees the loop while the LLM works).
+    # The hybrid session pins this turn to one provider (self-hosted M5 if its
+    # lease is free, Gemini otherwise) and releases the lease on the way out.
     logger.info(f"🤖 Customer Agent processing message for user {user_id}...")
-    result = await _get_customer_agent().ainvoke({"messages": messages})
+    async with hybrid_llm_session() as provider:
+        logger.info(f"⚡ Turn served by {provider.provider} ({provider.model})")
+        result = await _get_customer_agent().ainvoke({"messages": messages})
 
     # Extract response
     agent_response = _extract_text_from_content(result["messages"][-1].content)
@@ -354,39 +435,47 @@ async def chat_stream(user_id: str, message: str, item_id: str = None, files: li
     logger.info(f"🤖 Customer Agent streaming response for user {user_id}...")
 
     collected = []
-    async for chunk, _metadata in _get_customer_agent().astream(
-        {"messages": messages}, stream_mode="messages"
-    ):
-        # Forward only assistant text; skip tool messages and tool-call chunks.
-        if not isinstance(chunk, AIMessageChunk):
-            continue
+    # The lease is held for the whole generator body and released in the context
+    # manager's `finally` — including when the buyer disconnects mid-stream and
+    # the generator is closed, which frees the laptop for the next turn at once.
+    async with hybrid_llm_session() as provider:
+        # Announce the engine before the first token so the UI can show its
+        # hardware attribution chip while the answer is still generating.
+        yield {"provider": provider.as_metadata()}
 
-        # Detect tool calls for real-time status updates
-        if getattr(chunk, 'tool_call_chunks', None):
-            for tc in chunk.tool_call_chunks:
-                # The tool name usually arrives in the very first chunk of the tool call stream
-                if tc.get("name"):
-                    tool_name = tc["name"]
-                    status_text = "Thinking..."
-                    if tool_name == "call_item_agent":
-                        status_text = "Understanding the item..."
-                    elif tool_name == "call_stripe_agent":
-                        status_text = "Generating payment link..."
-                    elif tool_name == "check_user_orders":
-                        status_text = "Checking your orders..."
-                    elif tool_name == "evaluate_offer":
-                        status_text = "Evaluating your offer..."
-                    elif tool_name == "web_search":
-                        status_text = "Searching the market..."
-                    elif tool_name == "assess_discount_eligibility":
-                        status_text = "Checking discounts..."
+        async for chunk, _metadata in _get_customer_agent().astream(
+            {"messages": messages}, stream_mode="messages"
+        ):
+            # Forward only assistant text; skip tool messages and tool-call chunks.
+            if not isinstance(chunk, AIMessageChunk):
+                continue
 
-                    yield {"status": status_text}
+            # Detect tool calls for real-time status updates
+            if getattr(chunk, 'tool_call_chunks', None):
+                for tc in chunk.tool_call_chunks:
+                    # The tool name usually arrives in the very first chunk of the tool call stream
+                    if tc.get("name"):
+                        tool_name = tc["name"]
+                        status_text = "Cooking..."
+                        if tool_name == "call_item_agent":
+                            status_text = "Understanding the item..."
+                        elif tool_name == "call_stripe_agent":
+                            status_text = "Generating payment link..."
+                        elif tool_name == "check_user_orders":
+                            status_text = "Checking your orders..."
+                        elif tool_name == "evaluate_offer":
+                            status_text = "Evaluating your offer..."
+                        elif tool_name == "web_search":
+                            status_text = "Searching the market..."
+                        elif tool_name == "assess_discount_eligibility":
+                            status_text = "Checking discounts..."
 
-        text = _extract_text_from_content(chunk.content)
-        if text:
-            collected.append(text)
-            yield text
+                        yield {"status": status_text}
+
+            text = _extract_text_from_content(chunk.content)
+            if text:
+                collected.append(text)
+                yield text
 
     # Persist the assembled response once the stream is done.
     agent_response = "".join(collected)

@@ -2,26 +2,20 @@
     email terryong30@gmail.com
 }
 
+api.negolah.my {
+    request_body {
+        max_size 10MB
+    }
+
+    reverse_proxy backend:8000
+}
+
 negolah.my {
     request_body {
         max_size 10MB
     }
 
-    # API traffic → FastAPI backend. handle_path strips the /api prefix, so the
-    # backend sees its unprefixed routes (e.g. /api/chat/stream → /chat/stream).
     handle_path /api/* {
         reverse_proxy backend:8000
-    }
-
-    # Everything else → Nuxt SSR server (Nitro node-server on :3000).
-    handle {
-        header {
-            Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://*.sentry.io; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.supabase.co; font-src 'self'; connect-src 'self' https://negolah.my https://*.supabase.co https://*.sentry.io wss://*.supabase.co; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self' https://checkout.stripe.com; upgrade-insecure-requests"
-            X-Content-Type-Options "nosniff"
-            X-Frame-Options "DENY"
-            Referrer-Policy "strict-origin-when-cross-origin"
-            Permissions-Policy "camera=(), microphone=(), geolocation=()"
-        }
-        reverse_proxy frontend:3000
     }
 }

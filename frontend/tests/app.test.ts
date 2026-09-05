@@ -45,17 +45,37 @@ describe('app.vue', () => {
     // nextTick()/flushPromises() is not enough to observe them here), so
     // poll for the expected <title> instead of asserting immediately.
     await vi.waitFor(() => {
-      expect(document.title).toBe('Nego-lah')
+      expect(document.title).toBe('Nego-Lah')
     })
 
     const description = document.head.querySelector('meta[name="description"]')
     expect(description?.getAttribute('content')).toBe('AI powered e-commerce site. From image to sales.')
 
     const ogTitle = document.head.querySelector('meta[property="og:title"]')
-    expect(ogTitle?.getAttribute('content')).toBe('Nego-lah')
+    expect(ogTitle?.getAttribute('content')).toBe('Nego-Lah · Autonomous AI Price Negotiation Marketplace')
 
     const ogDescription = document.head.querySelector('meta[property="og:description"]')
     expect(ogDescription?.getAttribute('content')).toBe('AI powered e-commerce site. From image to sales.')
+
+    const ogSiteName = document.head.querySelector('meta[property="og:site_name"]')
+    expect(ogSiteName?.getAttribute('content')).toBe('Nego-Lah')
+
+    const twitterTitle = document.head.querySelector('meta[name="twitter:title"]')
+    expect(twitterTitle?.getAttribute('content')).toBe('Nego-Lah · Autonomous AI Price Negotiation Marketplace')
+
+    const twitterDescription = document.head.querySelector('meta[name="twitter:description"]')
+    expect(twitterDescription?.getAttribute('content')).toBe('AI powered e-commerce site. From image to sales.')
+
+    const ogImage = document.head.querySelector('meta[property="og:image"]')
+    expect(ogImage?.getAttribute('content')).toBe('https://negolah.my/og-image.png')
+
+    const twitterCard = document.head.querySelector('meta[name="twitter:card"]')
+    expect(twitterCard?.getAttribute('content')).toBe('summary_large_image')
+
+    const twitterImage = document.head.querySelector('meta[name="twitter:image"]')
+    expect(twitterImage?.getAttribute('content')).toBe('https://negolah.my/og-image.png')
+
+    expect(document.documentElement.getAttribute('lang')).toBe('en')
   })
 
   it('mounts without throwing and produces a non-empty root element', async () => {

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useChat } from '@ai-sdk/vue'
 import { DefaultChatTransport } from 'ai'
+import { loginRedirect } from '~/utils/auth'
 
 definePageMeta({
   layout: 'chat',
@@ -15,6 +16,7 @@ const config = useRuntimeConfig()
 const user = useSupabaseUser()
 const supabase = useSupabaseClient()
 const toast = useToast()
+const { locale, t } = useI18n()
 
 const accessToken = ref('')
 
@@ -27,10 +29,24 @@ interface ChatItem {
   item_id: string
   name: string
   price: number
+  discounted_price?: number
   status: string
   images?: string
+  translations?: Record<string, ItemTranslation>
 }
 const contextItem = ref<ChatItem | null>(null)
+
+// The pinned item shows the listing in the reader's language, same as the
+// item page — the raw `name` is whatever the seller typed.
+const contextItemName = computed(() =>
+  localizedItemField(contextItem.value, locale.value, 'name')
+)
+
+// Whether the AI still answers this conversation. When the seller takes over
+// (chat_settings.ai_enabled = false) the backend saves the buyer's message and
+// closes the stream without a reply, so showing "Cooking…" promises an answer
+// that is never coming.
+const aiEnabled = ref(true)
 
 const input = ref('')
 const loadingHistory = ref(true)
@@ -71,11 +87,14 @@ const { messages, status, stop, sendMessage } = useChat({
   })
 })
 
-const aiStatusText = ref('Thinking…')
+// Holds ONLY the agent's own [[STATUS:…]] text, which the backend emits in
+// English. Empty means "no tool running", and the indicator then falls back to
+// the translated `chat.thinking` label rather than a hardcoded English word.
+const aiStatusText = ref('')
 
 watch(status, (newStatus) => {
   if (newStatus === 'submitted') {
-    aiStatusText.value = 'Thinking…'
+    aiStatusText.value = ''
   }
 })
 
@@ -100,7 +119,7 @@ interface ChatHistoryResponse {
 interface UIMessageLike {
   id?: string
   role?: string
-  parts?: { type: string, text?: string }[]
+  parts?: { type: string, text?: string, data?: unknown }[]
 }
 
 // Map stored history messages → SDK UI messages, dropping empties.
@@ -113,9 +132,14 @@ function mapMessages(list?: StoredMessage[]) {
         : (m.role === 'system' || m.source === 'system')
             ? ('system' as const)
             : ('assistant' as const),
-      parts: [{ type: 'text' as const, text: m.content ?? m.message ?? '' }]
+      parts: [
+        { type: 'text' as const, text: m.content ?? m.message ?? '' },
+        // SPEC-027: 'admin' (seller takeover) vs 'ai' decides whether this
+        // message's newlines are bubble boundaries or just line breaks.
+        ...(m.source ? [{ type: 'data-source' as const, data: m.source }] : [])
+      ]
     }))
-    .filter(m => m.parts[0]!.text.trim().length > 0)
+    .filter(m => (m.parts[0] as { text: string }).text.trim().length > 0)
 }
 
 function scrollToBottom() {
@@ -127,6 +151,7 @@ function scrollToBottom() {
 // True while the agent is mid-stream but has only emitted [[STATUS:…]] markers
 // and no real reply text yet — i.e. it's still running tools.
 const aiWorking = computed(() => {
+  if (!aiEnabled.value) return false
   if (status.value !== 'streaming') return false
   const last = messages.value[messages.value.length - 1]
   if (!last || last.role !== 'assistant') return false
@@ -153,7 +178,12 @@ const displayMessages = computed(() => {
 // indicator renders on the assistant (left/seller) side, exactly where we want
 // "the seller is typing…" to appear — while leaving the AI's own streaming
 // status untouched the rest of the time.
-const effectiveStatus = computed(() => (sellerTyping.value ? 'submitted' : status.value))
+const effectiveStatus = computed(() => {
+  if (sellerTyping.value) return 'submitted'
+  // With the AI paused there is nothing to wait on but the seller.
+  if (!aiEnabled.value) return 'ready'
+  return status.value
+})
 
 // Surface the seller's typing the moment it starts.
 watch(sellerTyping, (typing) => {
@@ -235,21 +265,60 @@ onMounted(async () => {
         // Drop any empty messages just to be safe
         if (!msg || !msg.content) return
 
+        // Customer already has their own message rendered locally
+        if (msg.source === 'human' || msg.role === 'user') return
+
+        // If useChat is actively streaming an AI turn, ignore AI broadcast to prevent double bubble
+        if (msg.source === 'ai' && (status.value === 'streaming' || status.value === 'submitted')) return
+
+        // A system separator means the AI was just handed over or handed back.
+        if (msg.role === 'system' || msg.source === 'system') {
+          loadChatSettings()
+        }
+
         // Push the new message into the view
         messages.value.push({
           id: globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2),
           role: (msg.role === 'system' || msg.source === 'system') ? 'system' : (msg.role as 'user' | 'assistant'),
-          parts: [{ type: 'text', text: msg.content }]
+          parts: [
+            { type: 'text', text: msg.content },
+            ...(msg.source ? [{ type: 'data-source' as const, data: msg.source }] : [])
+          ]
         })
         scrollToBottom()
       }
     })
   }
 
-  if (contextItemId.value) {
-    try {
-      contextItem.value = await call<ChatItem>(`/items/${contextItemId.value}`)
-    } catch { /* item may be gone — context header just won't show */ }
+  await Promise.all([loadContextItem(), loadChatSettings()])
+})
+
+// The header price mirrors what the buyer would actually pay right now. The
+// backend derives `discounted_price` from the negotiated offer it caches per
+// (user, item), so every finished agent turn can move it — refetch once the
+// stream settles instead of leaving a stale listed price on screen.
+// Reflects a takeover the moment it happens: the backend broadcasts a system
+// separator ("Terry has joined the chat…") on both sides of the toggle, so any
+// system message is the cue to re-read the setting.
+async function loadChatSettings() {
+  const uid = await currentUserId()
+  if (!uid) return
+  try {
+    const res = await call<{ ai_enabled?: boolean }>(`/chat/settings/${uid}`)
+    aiEnabled.value = res?.ai_enabled !== false
+  } catch { /* leave the AI assumed on — the worst case is a stale indicator */ }
+}
+
+async function loadContextItem() {
+  if (!contextItemId.value) return
+  try {
+    contextItem.value = await call<ChatItem>(`/items/${contextItemId.value}`)
+  } catch { /* item may be gone — context header just won't show */ }
+}
+
+watch(status, (now, before) => {
+  if ((before === 'streaming' || before === 'submitted') && now !== 'streaming' && now !== 'submitted') {
+    loadContextItem()
   }
 })
 
@@ -260,7 +329,23 @@ async function send(text: string) {
   // Always send a fresh, valid token (the cached ref can be empty/expired,
   // which makes the stream endpoint return 401).
   const { data: { session } } = await supabase.auth.getSession()
-  accessToken.value = session?.access_token || ''
+
+  // No session left to refresh: the buyer was logged out by inactivity while
+  // sitting on this page. Posting anyway would just 401 the stream and look
+  // like the message vanished, so bounce to login carrying this chat's URL
+  // (item_id included) — they come straight back here after signing in.
+  if (!session?.access_token) {
+    toast.add({
+      title: t('auth.sessionExpired'),
+      description: t('auth.sessionExpiredDesc'),
+      color: 'warning'
+    })
+    await supabase.auth.signOut()
+    await navigateTo(loginRedirect(route.fullPath))
+    return
+  }
+
+  accessToken.value = session.access_token
 
   input.value = ''
   startTyping()
@@ -355,15 +440,6 @@ function stopTyping() {
 
 onUnmounted(stopTyping)
 
-// Detects a markdown link the agent emits for payment, e.g.
-// "[Pay RM71.50 Now](https://buy.stripe.com/...)".
-const PAY_LINK = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/
-
-type Block
-  = | { type: 'text', text: string }
-    | { type: 'pay', label: string, url: string }
-    | { type: 'pending' }
-
 // The assistant bubble the typewriter is (or is about to be) revealing. While
 // the stream is live this is ALWAYS the last assistant message, so the bubble
 // shows the progressively-typed text from its very first frame — otherwise the
@@ -378,23 +454,28 @@ const typingMessageId = computed(() => {
   return typingId.value
 })
 
-// Carousell-style: each line break becomes its own block. While a reply is
-// being typed out, the active message shows its progressively-revealed text.
-// Markdown payment links render as a dedicated "pay" box instead of raw text.
-function messageBlocks(message: UIMessageLike): Block[] {
-  const text = message.id === typingMessageId.value ? shownText.value : getMessageText(message)
-  return text
-    .split('\n')
-    .map((l: string) => l.trim())
-    .filter((l: string) => l.length > 0)
-    .map((line: string): Block => {
-      const m = line.match(PAY_LINK)
-      if (m) return { type: 'pay', label: m[1]!, url: m[2]! }
-      // Link still being typed out — hold a placeholder until it's complete.
-      if (line.includes('](http')) return { type: 'pending' }
-      return { type: 'text', text: line }
-    })
+// SPEC-027: which engine authored this message's newlines. History rows and
+// realtime pushes carry the stored `source`; a live-streamed turn has none,
+// which `shouldSplit` reads as the AI.
+function messageSource(message: UIMessageLike): string | undefined {
+  const part = (message.parts ?? []).find(p => p.type === 'data-source')
+  return typeof part?.data === 'string' ? part.data : undefined
 }
+
+// The bubbles one message renders as. Passing the typewriter's partial text
+// means bubbles pop into existence one at a time as newlines are uncovered.
+function blocksFor(message: UIMessageLike) {
+  const text = message.id === typingMessageId.value ? shownText.value : getMessageText(message)
+  return messageBlocks(text, shouldSplit(message.role, messageSource(message)))
+}
+
+const isPaidDeal = computed(() => {
+  if (contextItem.value?.status === 'sold') return true
+  return messages.value.some((m) => {
+    const txt = getMessageText(m)
+    return txt.includes('Payment Confirmed') || txt.includes('Thank you for purchasing')
+  })
+})
 
 const contextImage = computed(() => {
   if (!contextItem.value?.images) return null
@@ -430,7 +511,7 @@ async function handleBuyNow() {
     <!-- Item header (Carousell-style) -->
     <div
       v-if="contextItem"
-      class="flex items-center gap-3 px-4 py-3 border-b border-default bg-default"
+      class="flex items-center gap-2.5 sm:gap-3 px-3 sm:px-4 py-2.5 sm:py-3 border-b border-default bg-default"
     >
       <NuxtLink
         :to="`/items/${contextItem.item_id}`"
@@ -439,7 +520,7 @@ async function handleBuyNow() {
         <img
           v-if="contextImage"
           :src="contextImage"
-          :alt="contextItem.name"
+          :alt="contextItemName"
           class="size-14 rounded-lg object-cover bg-muted"
         >
         <div
@@ -459,17 +540,37 @@ async function handleBuyNow() {
           class="block"
         >
           <p class="text-sm font-semibold text-highlighted truncate hover:text-primary transition-colors">
-            {{ contextItem.name }}
+            {{ contextItemName }}
           </p>
         </NuxtLink>
-        <p class="text-base font-bold text-highlighted">
-          RM {{ contextItem.price?.toFixed(2) }}
+        <div
+          v-if="hasDiscount(contextItem)"
+          class="flex items-baseline gap-1.5 flex-wrap"
+        >
+          <p class="text-base font-bold text-primary">
+            {{ formatPrice(effectivePrice(contextItem)) }}
+          </p>
+          <p class="text-xs line-through text-muted">
+            {{ formatPrice(contextItem.price) }}
+          </p>
+          <UBadge
+            color="primary"
+            variant="subtle"
+            size="sm"
+            :label="`-${discountPercent(contextItem)}%`"
+          />
+        </div>
+        <p
+          v-else
+          class="text-base font-bold text-highlighted"
+        >
+          {{ formatPrice(contextItem.price) }}
         </p>
       </div>
 
       <UButton
         v-if="contextItem.status !== 'sold'"
-        label="Buy"
+        :label="$t('items.buyNow')"
         color="primary"
         :loading="buyLoading"
         class="shrink-0"
@@ -479,15 +580,16 @@ async function handleBuyNow() {
         v-else
         color="neutral"
         variant="subtle"
-        label="Sold"
-        class="shrink-0"
+        size="lg"
+        :label="$t('items.status.sold')"
+        class="shrink-0 font-semibold"
       />
     </div>
 
     <!-- Messages -->
     <div
       ref="scroller"
-      class="flex-1 min-h-0 overflow-y-auto px-4 py-5"
+      class="flex-1 min-h-0 overflow-y-auto px-2.5 sm:px-4 py-3 sm:py-5"
     >
       <!-- Loading skeletons -->
       <div
@@ -503,18 +605,13 @@ async function handleBuyNow() {
       </div>
 
       <!-- Empty state -->
-      <div
+      <UEmpty
         v-else-if="!messages.length"
-        class="h-full flex flex-col items-center justify-center text-center text-muted gap-3 px-6"
-      >
-        <UIcon
-          name="i-lucide-messages-square"
-          class="size-10"
-        />
-        <p class="text-sm max-w-xs">
-          Send a message to start negotiating. Make an offer or ask about the item — the AI will haggle with you.
-        </p>
-      </div>
+        icon="i-lucide-messages-square"
+        :description="$t('chat.emptyDesc')"
+        variant="naked"
+        class="h-full justify-center px-6"
+      />
 
       <!-- Conversation (official Nuxt UI chat components) -->
       <div v-else>
@@ -523,7 +620,7 @@ async function handleBuyNow() {
           class="flex justify-center pb-4"
         >
           <UButton
-            label="Load older messages"
+            :label="$t('chat.loadOlder')"
             icon="i-lucide-chevron-up"
             color="neutral"
             variant="ghost"
@@ -543,14 +640,19 @@ async function handleBuyNow() {
         >
           <!-- Work-process indicator: a single, fixed-height ChatTool row that
                shimmers and just swaps its (truncated) label as the agent moves
-               from "Thinking…" to "Searching the market…" etc. Because the label
+               from "Cooking…" to "Searching the market…" etc. Because the label
                truncates on one line, changing status never reflows the height or
-               spawns a scrollbar, and it never hops between DOM nodes. -->
+               spawns a scrollbar, and it never hops between DOM nodes.
+
+               No `loading` prop: that swaps in appConfig.ui.icons.loading and
+               stamps `animate-spin` on the leading icon, which would clobber
+               both the brand mark and its hop. The icon + `ui` props are the
+               supported way to restyle it — ChatTool exposes no leading slot. -->
           <template #indicator>
             <UChatTool
-              :text="sellerTyping ? 'Seller is typing…' : aiStatusText"
-              :icon="sellerTyping ? 'i-lucide-store' : 'i-lucide-sparkles'"
-              loading
+              :text="sellerTyping ? $t('chat.sellerTyping') : (aiStatusText || $t('chat.thinking'))"
+              :icon="sellerTyping ? 'i-lucide-store' : 'i-nego-mark'"
+              :ui="sellerTyping ? undefined : { leadingIcon: 'animate-brand-hop text-default' }"
               streaming
             />
           </template>
@@ -570,56 +672,31 @@ async function handleBuyNow() {
               :class="message.role === 'user' ? 'items-end' : 'items-start'"
             >
               <template
-                v-for="(block, i) in messageBlocks(message)"
+                v-for="(block, i) in blocksFor(message)"
                 :key="i"
               >
-                <!-- Payment link → call-to-action box -->
-                <div
+                <!-- Payment link → checkout hand-off card -->
+                <ChatPayCard
                   v-if="block.type === 'pay'"
-                  class="w-fit max-w-[90%] rounded-2xl rounded-bl-sm border border-secondary/30 bg-secondary/5 p-4 flex flex-col gap-3"
-                >
-                  <div class="flex items-center gap-2.5">
-                    <span class="flex items-center justify-center size-9 rounded-lg bg-secondary/10 shrink-0">
-                      <UIcon
-                        name="i-simple-icons-stripe"
-                        class="size-4.5 text-secondary"
-                      />
-                    </span>
-                    <div class="min-w-0">
-                      <p class="text-sm font-semibold text-highlighted leading-tight">
-                        Payment ready
-                      </p>
-                      <p class="text-xs text-muted leading-tight">
-                        Complete your purchase securely via Stripe
-                      </p>
-                    </div>
-                  </div>
-                  <UButton
-                    :to="block.url"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    :label="block.label || 'Pay now'"
-                    color="secondary"
-                    icon="i-lucide-external-link"
-                    trailing
-                    block
-                  />
-                </div>
+                  :url="block.url"
+                  :label="block.label"
+                  :paid="isPaidDeal"
+                />
 
                 <!-- Payment link still streaming in -->
                 <div
                   v-else-if="block.type === 'pending'"
                   class="w-fit max-w-[85%] px-3.5 py-2 text-sm italic text-muted bg-elevated rounded-2xl rounded-bl-sm"
                 >
-                  Preparing payment link…
+                  {{ $t('chat.preparingPayment') }}
                 </div>
 
-                <!-- Normal text bubble -->
+                <!-- Normal text bubble with line-breaks preserved -->
                 <div
                   v-else
-                  class="w-fit max-w-[85%] px-3.5 py-2 text-sm leading-relaxed rounded-2xl"
+                  class="w-fit max-w-[85%] px-3.5 py-2 text-sm leading-relaxed rounded-2xl break-words whitespace-pre-wrap"
                   :class="message.role === 'user'
-                    ? 'bg-secondary text-inverted rounded-br-sm'
+                    ? 'bg-primary text-inverted rounded-br-sm'
                     : 'bg-elevated text-highlighted rounded-bl-sm'"
                 >
                   {{ block.text }}
@@ -632,10 +709,10 @@ async function handleBuyNow() {
     </div>
 
     <!-- Input -->
-    <div class="px-4 py-3 border-t border-default bg-default">
+    <div class="px-2.5 sm:px-4 py-2 sm:py-3 bg-default">
       <UChatPrompt
         v-model="input"
-        placeholder="Type here..."
+        :placeholder="$t('chat.placeholder')"
         variant="subtle"
         class="rounded-xl"
         @submit="onSubmit"

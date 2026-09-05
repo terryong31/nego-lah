@@ -27,3 +27,4 @@ logs
 
 # Test coverage
 coverage/
+*.tsbuildinfo

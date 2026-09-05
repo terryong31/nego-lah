@@ -1,16 +1,19 @@
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.prebuilt import create_react_agent
 
-from env import GEMINI_API_KEY
-
+from ..llm_factory import get_chat_model
 from ..tools.items import get_item_info, list_all_items, search_items
 
-# Initialize the model
-model = ChatGoogleGenerativeAI(
-    model="gemini-3.6-flash",
-    temperature=0.3, # Low temperature for factual retrieval
-    google_api_key=GEMINI_API_KEY
-)
+ITEM_AGENT_TOOLS = [get_item_info, search_items, list_all_items]
+
+
+def _select_item_model(state, runtime):
+    """Resolve this sub-agent's model per invocation (SPEC-020).
+
+    Runs inside the supervisor's turn, so `hybrid_llm_session()` has already
+    pinned the provider — the sub-agent lands on the same engine as the rest of
+    the conversation, and takes no lease of its own.
+    """
+    return get_chat_model(temperature=0.3).bind_tools(ITEM_AGENT_TOOLS)
 
 # Define the system prompt for the Item Agent
 ITEM_AGENT_PROMPT = """You are an Inventory Specialist Agent for 'Nego-Lah'.
@@ -30,8 +33,8 @@ RULES:
 """
 
 item_agent_graph = create_react_agent(
-    model,
-    tools=[get_item_info, search_items, list_all_items],
+    _select_item_model,
+    tools=ITEM_AGENT_TOOLS,
     prompt=ITEM_AGENT_PROMPT
 )
 

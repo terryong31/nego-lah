@@ -3,6 +3,7 @@
 *.env
 .env.local
 .env.production
+backend/.env
 
 # ===== Python Virtual Environment =====
 venv/
@@ -53,5 +54,10 @@ backend/data/
 # ===== Redis =====
 dump.rdb
 *.rdb
+
+# ===== Mise & Infisical =====
+.mise.local.toml
+.mise.*.local.toml
+.infisical/
 
 .agent/

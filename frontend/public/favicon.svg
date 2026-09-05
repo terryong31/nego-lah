@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40">
+  <defs>
+    <linearGradient id="fav-grad" x1="4" y1="4" x2="36" y2="36" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#10b981"/>
+      <stop offset="100%" stop-color="#059669"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Tag with Negotiation Dialogue Notch -->
+  <path
+    d="M6 14C6 8.477 10.477 4 16 4h10c5.523 0 10 4.477 10 10v10c0 5.523-4.477 10-10 10H17l-7 4v-4.6C7.5 31.8 6 28.5 6 24V14z"
+    fill="url(#fav-grad)"
+  />
+
+  <!-- Tag Eyelet -->
+  <circle cx="13" cy="11" r="2.5" fill="#064e3b" opacity="0.3"/>
+  <circle cx="13" cy="11" r="1.75" fill="#ffffff" opacity="0.95"/>
+
+  <!-- Stylized 'N' & Negotiation Bargain Arrow -->
+  <path
+    d="M16 26V15l8 10V14"
+    stroke="#ffffff"
+    stroke-width="2.75"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+
+  <!-- Fair-Price Sparkle Star -->
+  <path
+    d="M28 10l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"
+    fill="#fbbf24"
+  />
+</svg>

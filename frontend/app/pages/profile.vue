@@ -1,11 +1,17 @@
 <script setup lang="ts">
-import * as z from 'zod'
 import type { FormSubmitEvent } from '@nuxt/ui'
+import {
+  emailChangeSchema,
+  passwordChangeSchema,
+  type EmailChangeForm,
+  type PasswordChangeForm
+} from '~/utils/schemas'
 
 definePageMeta({
   middleware: 'auth'
 })
 
+const { t } = useI18n()
 const { call } = useApi()
 const user = useSupabaseUser()
 const supabase = useSupabaseClient()
@@ -45,7 +51,7 @@ function onAvatarChange(e: Event) {
   const file = (e.target as HTMLInputElement).files?.[0]
   if (!file) return
   if (file.size > 2 * 1024 * 1024) {
-    toast.add({ title: 'Image too large', description: 'Please choose an image under 2MB.', color: 'error' })
+    toast.add({ title: t('profile.imageTooLarge'), description: t('profile.imageTooLargeDesc'), color: 'error' })
     return
   }
   avatarFile.value = file
@@ -74,25 +80,22 @@ async function onProfileSave() {
     avatarUrl.value = res.avatar_url || avatarUrl.value
     avatarFile.value = null
     avatarPreview.value = ''
-    toast.add({ title: 'Profile updated', description: 'Your profile settings have been saved.', color: 'success' })
+    toast.add({ title: t('profile.profileUpdated'), description: t('profile.profileUpdatedDesc'), color: 'success' })
   } catch (err) {
     const e = err as { data?: { detail?: string }, message?: string }
-    toast.add({ title: 'Failed to update profile', description: e.data?.detail || e.message, color: 'error' })
+    toast.add({ title: t('profile.updateProfileFailed'), description: e.data?.detail || e.message, color: 'error' })
   } finally {
     profileLoading.value = false
   }
 }
 
 // Change Email
-const emailSchema = z.object({
-  email: z.string().email('Invalid email address')
-})
-type EmailSchema = z.output<typeof emailSchema>
+const emailSchema = emailChangeSchema
 const emailLoading = ref(false)
 // UForm validates against `state`; without it the form never emits `submit`.
 const emailState = reactive<{ email: string | undefined }>({ email: undefined })
 
-async function onEmailSubmit(payload: FormSubmitEvent<EmailSchema>) {
+async function onEmailSubmit(payload: FormSubmitEvent<EmailChangeForm>) {
   const userId = await getUserId()
   if (!userId) return
   emailLoading.value = true
@@ -104,24 +107,16 @@ async function onEmailSubmit(payload: FormSubmitEvent<EmailSchema>) {
       }
     })
     emailState.email = undefined
-    toast.add({ title: 'Email change requested', description: 'Please check your inbox for verification links.', color: 'success' })
+    toast.add({ title: t('profile.emailChangeRequested'), description: t('profile.emailChangeRequestedDesc'), color: 'success' })
   } catch (err) {
-    toast.add({ title: 'Failed to update email', description: err instanceof Error ? err.message : 'Something went wrong', color: 'error' })
+    toast.add({ title: t('profile.updateEmailFailed'), description: err instanceof Error ? err.message : t('profile.somethingWentWrong'), color: 'error' })
   } finally {
     emailLoading.value = false
   }
 }
 
 // Change Password
-const passwordSchema = z.object({
-  currentPassword: z.string().min(8, 'Must be at least 8 characters'),
-  newPassword: z.string().min(8, 'Must be at least 8 characters'),
-  confirmPassword: z.string().min(8, 'Must be at least 8 characters')
-}).refine(data => data.newPassword === data.confirmPassword, {
-  message: 'Passwords don\'t match',
-  path: ['confirmPassword']
-})
-type PasswordSchema = z.output<typeof passwordSchema>
+const passwordSchema = passwordChangeSchema
 const passwordLoading = ref(false)
 // UForm validates against `state`; without it the form never emits `submit`.
 const passwordState = reactive<{ currentPassword: string | undefined, newPassword: string | undefined, confirmPassword: string | undefined }>({
@@ -130,7 +125,7 @@ const passwordState = reactive<{ currentPassword: string | undefined, newPasswor
   confirmPassword: undefined
 })
 
-async function onPasswordSubmit(payload: FormSubmitEvent<PasswordSchema>) {
+async function onPasswordSubmit(payload: FormSubmitEvent<PasswordChangeForm>) {
   const userId = await getUserId()
   if (!userId) return
   passwordLoading.value = true
@@ -145,9 +140,9 @@ async function onPasswordSubmit(payload: FormSubmitEvent<PasswordSchema>) {
     passwordState.currentPassword = undefined
     passwordState.newPassword = undefined
     passwordState.confirmPassword = undefined
-    toast.add({ title: 'Password updated', description: 'Your password was changed successfully.', color: 'success' })
+    toast.add({ title: t('profile.passwordUpdated'), description: t('profile.passwordUpdatedDesc'), color: 'success' })
   } catch (err) {
-    toast.add({ title: 'Failed to update password', description: err instanceof Error ? err.message : 'Something went wrong', color: 'error' })
+    toast.add({ title: t('profile.updatePasswordFailed'), description: err instanceof Error ? err.message : t('profile.somethingWentWrong'), color: 'error' })
   } finally {
     passwordLoading.value = false
   }
@@ -164,10 +159,10 @@ async function handleDeleteAccount() {
   try {
     await call(`/user/${userId}`, { method: 'DELETE' })
     await supabase.auth.signOut()
-    toast.add({ title: 'Account deleted', description: 'Your account and data have been permanently removed.', color: 'success' })
+    toast.add({ title: t('profile.accountDeleted'), description: t('profile.accountDeletedDesc'), color: 'success' })
     router.push('/')
   } catch (err) {
-    toast.add({ title: 'Failed to delete account', description: err instanceof Error ? err.message : 'Something went wrong', color: 'error' })
+    toast.add({ title: t('profile.deleteAccountFailed'), description: err instanceof Error ? err.message : t('profile.somethingWentWrong'), color: 'error' })
   } finally {
     deleteLoading.value = false
     deleteModalOpen.value = false
@@ -179,7 +174,7 @@ async function handleDeleteAccount() {
   <div class="max-w-2xl mx-auto space-y-8">
     <div>
       <h1 class="text-2xl font-bold text-highlighted">
-        Profile Settings
+        {{ $t('profile.title') }}
       </h1>
     </div>
 
@@ -187,10 +182,10 @@ async function handleDeleteAccount() {
     <UCard>
       <template #header>
         <h3 class="font-bold text-highlighted">
-          General
+          {{ $t('profile.general') }}
         </h3>
         <p class="text-xs text-muted">
-          Update your display name and profile picture.
+          {{ $t('profile.generalDesc') }}
         </p>
       </template>
 
@@ -205,7 +200,7 @@ async function handleDeleteAccount() {
           />
           <div class="space-y-1.5">
             <UButton
-              label="Change photo"
+              :label="$t('profile.changePhoto')"
               icon="i-lucide-upload"
               variant="outline"
               color="neutral"
@@ -213,7 +208,7 @@ async function handleDeleteAccount() {
               @click="fileInput?.click()"
             />
             <p class="text-xs text-muted">
-              JPG, PNG or GIF. Max 2MB.
+              {{ $t('profile.photoHint') }}
             </p>
           </div>
           <input
@@ -226,21 +221,28 @@ async function handleDeleteAccount() {
         </div>
 
         <UFormField
-          label="Display Name"
+          :label="$t('profile.displayName')"
           name="displayName"
         >
           <UInput
             v-model="displayName"
-            placeholder="Enter your display name"
+            :placeholder="$t('profile.displayNamePlaceholder')"
             class="w-full"
           />
+        </UFormField>
+
+        <UFormField
+          :label="$t('profile.languagePreference')"
+          name="language"
+        >
+          <LanguageSelect />
         </UFormField>
 
         <UButton
           :loading="profileLoading"
           @click="onProfileSave"
         >
-          Save Changes
+          {{ $t('profile.saveChanges') }}
         </UButton>
       </div>
     </UCard>
@@ -249,10 +251,10 @@ async function handleDeleteAccount() {
     <UCard>
       <template #header>
         <h3 class="font-bold text-highlighted">
-          Email Address
+          {{ $t('profile.emailAddress') }}
         </h3>
         <p class="text-xs text-muted">
-          Update the email associated with your account.
+          {{ $t('profile.emailDesc') }}
         </p>
       </template>
 
@@ -263,7 +265,7 @@ async function handleDeleteAccount() {
         @submit="onEmailSubmit"
       >
         <UFormField
-          label="Current Email"
+          :label="$t('profile.currentEmail')"
           name="currentEmail"
         >
           <UInput
@@ -274,13 +276,13 @@ async function handleDeleteAccount() {
         </UFormField>
 
         <UFormField
-          label="New Email Address"
+          :label="$t('profile.newEmail')"
           name="email"
         >
           <UInput
             v-model="emailState.email"
             type="email"
-            placeholder="Enter new email"
+            :placeholder="$t('profile.newEmailPlaceholder')"
             class="w-full"
           />
         </UFormField>
@@ -289,7 +291,7 @@ async function handleDeleteAccount() {
           type="submit"
           :loading="emailLoading"
         >
-          Update Email
+          {{ $t('profile.updateEmail') }}
         </UButton>
       </UForm>
     </UCard>
@@ -298,10 +300,10 @@ async function handleDeleteAccount() {
     <UCard>
       <template #header>
         <h3 class="font-bold text-highlighted">
-          Security Settings
+          {{ $t('profile.security') }}
         </h3>
         <p class="text-xs text-muted">
-          Change your current login credentials.
+          {{ $t('profile.securityDesc') }}
         </p>
       </template>
 
@@ -312,37 +314,37 @@ async function handleDeleteAccount() {
         @submit="onPasswordSubmit"
       >
         <UFormField
-          label="Current Password"
+          :label="$t('profile.currentPassword')"
           name="currentPassword"
         >
           <UInput
             v-model="passwordState.currentPassword"
             type="password"
-            placeholder="Enter current password"
+            :placeholder="$t('profile.currentPasswordPlaceholder')"
             class="w-full"
           />
         </UFormField>
 
         <UFormField
-          label="New Password"
+          :label="$t('profile.newPassword')"
           name="newPassword"
         >
           <UInput
             v-model="passwordState.newPassword"
             type="password"
-            placeholder="Create new password"
+            :placeholder="$t('profile.newPasswordPlaceholder')"
             class="w-full"
           />
         </UFormField>
 
         <UFormField
-          label="Confirm New Password"
+          :label="$t('profile.confirmPassword')"
           name="confirmPassword"
         >
           <UInput
             v-model="passwordState.confirmPassword"
             type="password"
-            placeholder="Confirm new password"
+            :placeholder="$t('profile.confirmPasswordPlaceholder')"
             class="w-full"
           />
         </UFormField>
@@ -351,7 +353,7 @@ async function handleDeleteAccount() {
           type="submit"
           :loading="passwordLoading"
         >
-          Update Password
+          {{ $t('profile.updatePassword') }}
         </UButton>
       </UForm>
     </UCard>
@@ -360,64 +362,60 @@ async function handleDeleteAccount() {
     <UCard class="border-red-500/20">
       <template #header>
         <h3 class="font-bold text-red-500">
-          Danger Zone
+          {{ $t('profile.dangerZone') }}
         </h3>
       </template>
 
       <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div class="space-y-1">
           <h4 class="text-sm font-semibold text-highlighted">
-            Delete Account
+            {{ $t('profile.deleteAccount') }}
           </h4>
           <p class="text-xs text-muted max-w-md">
-            This action cannot be undone. All active chat settings and rooms will be erased. Past orders and receipts are kept for business records.
+            {{ $t('profile.deleteAccountDesc') }}
           </p>
         </div>
         <UButton
           color="error"
-          variant="outline"
+          variant="solid"
           class="w-fit"
-          @click="deleteModalOpen = true"
+          @click="() => { deleteModalOpen = true }"
         >
-          Delete Account
+          {{ $t('profile.deleteAccount') }}
         </UButton>
       </div>
     </UCard>
 
     <!-- Account Delete Confirmation Modal -->
     <UModal v-model:open="deleteModalOpen">
-      <template #content>
-        <div class="p-6 space-y-4">
-          <div class="flex items-start gap-4">
-            <div class="p-2 bg-red-100 dark:bg-red-950 text-red-500 rounded-full shrink-0">
-              <UIcon
-                name="i-lucide-alert-triangle"
-                class="size-6"
-              />
-            </div>
-            <div>
-              <h3 class="text-lg font-bold text-highlighted">
-                Are you absolutely sure?
-              </h3>
-              <p class="text-sm text-muted mt-1">
-                This action is permanent and cannot be undone. You will lose access to all bargain history rooms instantly.
-              </p>
-            </div>
-          </div>
-          <div class="flex justify-end gap-3 pt-4">
-            <UButton
-              label="Cancel"
-              variant="outline"
-              color="neutral"
-              @click="deleteModalOpen = false"
-            />
-            <UButton
-              label="Delete Account"
-              color="error"
-              :loading="deleteLoading"
-              @click="handleDeleteAccount"
-            />
-          </div>
+      <template #title>
+        <div class="flex items-center justify-center gap-3">
+          <UIcon
+            name="i-lucide-alert-triangle"
+            class="size-6 text-red-500"
+          />
+          <span class="font-semibold text-highlighted text-xl">{{ $t('profile.deleteConfirmTitle') }}</span>
+        </div>
+      </template>
+      <template #body>
+        <p class="text-sm text-muted">
+          {{ $t('profile.deleteConfirmDesc') }}
+        </p>
+      </template>
+      <template #footer>
+        <div class="flex w-full justify-end gap-2">
+          <UButton
+            :label="$t('profile.cancel')"
+            variant="outline"
+            color="neutral"
+            @click="() => { deleteModalOpen = false }"
+          />
+          <UButton
+            :label="$t('profile.deleteAccount')"
+            color="error"
+            :loading="deleteLoading"
+            @click="handleDeleteAccount"
+          />
         </div>
       </template>
     </UModal>

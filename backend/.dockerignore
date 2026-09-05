@@ -4,14 +4,27 @@ venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.ruff_cache/
+
+# Test artifacts & coverage reports
+tests/
+htmlcov/
+.coverage
+coverage.xml
 
 # Secrets — injected at runtime via compose env_file, never baked into the image
 .env
 *.env
 !.env.example
 
-# Local data / misc
+# Local data & databases
 data/
-.git
+dump.rdb
 *.log
 .DS_Store
+
+# Version control & documentation
+.git/
+.gitignore
+docs/
+*.md

@@ -12,6 +12,10 @@ dist
 .env.*
 !.env.example
 
+# Tests & coverage
+tests/
+coverage/
+
 # Misc
 .git
 *.log

@@ -1,4 +1,4 @@
-name: Deploy to Lightsail
+name: CI/CD Pipeline
 
 on:
   push:
@@ -6,51 +6,69 @@ on:
     paths-ignore:
       - 'README.md'
       - 'docs/**'
+      - 'specs/**'
+      - '.claude/**'
+      - '.gitignore'
+  pull_request:
+    branches: [ main ]
+    paths-ignore:
+      - 'README.md'
+      - 'docs/**'
+      - 'specs/**'
+      - '.claude/**'
+      - '.gitignore'
 
-# Images are published to GitHub Container Registry (GHCR) under the repo owner.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 env:
   BACKEND_IMAGE: ghcr.io/terryong31/nego-lah-backend
-  FRONTEND_IMAGE: ghcr.io/terryong31/nego-lah-frontend
 
 jobs:
-  # Backend and frontend test suites run as two independent jobs so they
-  # execute in parallel on separate runners (previously one sequential job).
-  # build-and-push waits for BOTH via `needs`.
-  backend-test:
-    name: Backend tests (ruff + pytest)
+  backend-ci:
+    name: Backend CI (ruff, pytest & pip-audit)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+          enable-cache: true
+          cache-dependency-glob: "backend/uv.lock"
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'   # matches backend/Dockerfile (python:3.12-slim)
-          cache: 'pip'
-          # Bust the cache when either the runtime or the dev/test pin set changes.
-          cache-dependency-path: |
-            backend/requirements.txt
-            backend/requirements-dev.txt
+          python-version: '3.12'
 
-      - name: Install backend dependencies
+      - name: Install dependencies
         run: |
           cd backend
-          python -m pip install --upgrade pip
-          pip install -r requirements-dev.txt
+          uv sync --frozen
 
-      - name: Ruff (lint + bandit-equivalent security rules)
+      - name: Ruff check
         run: |
           cd backend
-          ruff check .
+          uv run ruff check .
 
-      - name: Pytest (with coverage)
+      - name: Pytest with coverage
         run: |
           cd backend
-          pytest
+          uv run pytest
 
-  frontend-test:
-    name: Frontend tests (lint + typecheck + vitest)
+      - name: Dependency vulnerability audit (pip-audit)
+        run: |
+          cd backend
+          uv run pip-audit
+
+  frontend-ci:
+    name: Frontend CI (lint, typecheck, vitest & audit)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -59,30 +77,91 @@ jobs:
         with:
           bun-version: latest
 
+      - name: Cache Bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('frontend/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+
       - name: Install frontend dependencies
         run: |
           cd frontend
           bun install --frozen-lockfile
 
-      - name: Lint & Typecheck
+      - name: Lint
         run: |
           cd frontend
           bun run lint
+
+      - name: Typecheck
+        run: |
+          cd frontend
           bun run typecheck
 
-      - name: Unit tests (Vitest)
+      - name: Unit & i18n tests (Vitest)
         run: |
           cd frontend
           bun run test
 
-  # Build the images on GitHub's runners (plenty of RAM) and push to GHCR, so
-  # the 2 GB Lightsail box never has to build (it used to OOM/take ~16 min).
-  # The two images build in parallel as separate jobs (they used to build
-  # sequentially in one job — the ~3m bottleneck of the ~6m pipeline). Both
-  # are gated on BOTH test suites, so a failing test still blocks any push.
-  build-backend:
-    needs: [backend-test, frontend-test]
+      - name: Dependency security audit (bun pm untrusted)
+        run: |
+          cd frontend
+          bun pm untrusted
+
+  deploy-frontend:
+    name: Deploy frontend to Cloudflare Pages
+    needs: [frontend-ci]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Cache Bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('frontend/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+
+      - name: Install frontend dependencies
+        run: |
+          cd frontend
+          bun install --frozen-lockfile
+
+      - name: Install Infisical CLI
+        run: |
+          curl -1sLf 'https://artifacts-cli.infisical.com/setup.deb.sh' | sudo -E bash
+          sudo apt-get update && sudo apt-get install -y infisical
+
+      - name: Generate static SPA with Infisical secrets
+        env:
+          INFISICAL_TOKEN: ${{ secrets.INFISICAL_TOKEN }}
+        run: |
+          cd frontend
+          infisical run --env=prod --path=/Frontend -- bun run generate
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy frontend/.output/public --project-name=nego-lah
+
+  build-backend:
+    name: Build & push backend image
+    needs: [backend-ci]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
       packages: write
@@ -110,65 +189,40 @@ jobs:
           cache-from: type=gha,scope=backend
           cache-to: type=gha,mode=max,scope=backend
 
-  build-frontend:
-    needs: [backend-test, frontend-test]
+  deploy-backend:
+    name: Deploy backend to Lightsail
+    needs: [build-backend]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build & push frontend
-        uses: docker/build-push-action@v6
-        with:
-          context: ./frontend
-          push: true
-          tags: |
-            ${{ env.FRONTEND_IMAGE }}:latest
-            ${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
-          # org/project aren't secret; the auth token is passed as a BuildKit
-          # secret (see frontend/Dockerfile) so it's never written to an image
-          # layer or the GHA build cache.
-          build-args: |
-            SENTRY_ORG=${{ secrets.SENTRY_ORG }}
-            SENTRY_PROJECT=${{ secrets.SENTRY_PROJECT }}
-          secrets: |
-            sentry_auth_token=${{ secrets.SENTRY_AUTH_TOKEN }}
-          cache-from: type=gha,scope=frontend
-          cache-to: type=gha,mode=max,scope=frontend
-
-  # Ship only the runtime config to the server, then pull the freshly built
-  # images and restart. No source is copied and nothing is built on the server.
-  deploy:
-    needs: [build-backend, build-frontend]
-    runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
       packages: read
     steps:
       - uses: actions/checkout@v4
 
-      - name: Copy compose + Caddyfile to server
+      - name: Install Infisical CLI
+        run: |
+          curl -1sLf 'https://artifacts-cli.infisical.com/setup.deb.sh' | sudo -E bash
+          sudo apt-get update && sudo apt-get install -y infisical
+
+      - name: Export Backend Production Secrets
+        env:
+          INFISICAL_TOKEN: ${{ secrets.INFISICAL_TOKEN }}
+        run: |
+          mkdir -p backend
+          infisical export --env=prod --path=/Backend --format=dotenv > backend/.env.production
+
+      - name: Copy compose, Caddyfile, and env to server
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.HOST }}
           username: ${{ secrets.USERNAME }}
           key: ${{ secrets.SSH_KEY }}
-          source: "docker-compose.yml,Caddyfile"
+          source: "docker-compose.yml,Caddyfile,backend/.env.production"
           target: "~/nego-lah"
 
-      - name: Pull images & restart on server
+      - name: Pull image, update env & restart on server
         uses: appleboy/ssh-action@v1.0.3
         env:
           GHCR_ACTOR: ${{ github.actor }}
@@ -180,9 +234,13 @@ jobs:
           envs: GHCR_ACTOR,GHCR_TOKEN
           script: |
             cd ~/nego-lah
-            # Ephemeral, run-scoped token — valid only for this workflow run.
+            mkdir -p backend
+            if [ -f backend/.env.production ]; then
+              mv backend/.env.production backend/.env
+              chmod 600 backend/.env
+            fi
             echo "$GHCR_TOKEN" | sudo docker login ghcr.io -u "$GHCR_ACTOR" --password-stdin
             sudo docker compose pull
             sudo docker compose up -d --remove-orphans
             sudo docker logout ghcr.io
-            sudo docker image prune -f   # Clean up dangling images
+            sudo docker image prune -f

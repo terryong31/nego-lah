@@ -1,3 +1,5 @@
+import asyncio
+
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 
 from admin_session import verify_admin
@@ -93,7 +95,10 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None))
     logger.info(f"Stripe-Signature header present: {stripe_signature is not None}")
     logger.info(f"Payload size: {len(payload)} bytes")
 
-    event = verify_webhook(payload, stripe_signature)
+    # Signature verification and fulfilment are synchronous: Supabase writes, an
+    # email send and possibly a Stripe refund. Stripe retries on timeout, so a
+    # stalled loop here compounds into duplicate deliveries.
+    event = await asyncio.to_thread(verify_webhook, payload, stripe_signature)
 
     if not event:
         logger.error("❌ Webhook signature verification FAILED")
@@ -105,7 +110,7 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None))
     # Handle different event types
     if event_type in ('checkout.session.completed', 'payment_link.completed'):
         logger.info(f"📦 Processing {event_type}")
-        result = handle_checkout_completed(event)
+        result = await asyncio.to_thread(handle_checkout_completed, event)
         logger.info(f"📦 Result: {result}")
 
         # If fulfilment hit a transient error, return 5xx so Stripe retries.
@@ -200,6 +205,7 @@ def confirm_payment(
 
     from env import STRIPE_API_KEY
     from payment.fulfillment import fulfill_purchase
+    from payment.stripe_compat import stripe_get
 
     # Enforce the authenticated user; cannot confirm on behalf of another user.
     user_id = get_user_id_from_body_or_token(user_id, token_user_id)
@@ -227,14 +233,15 @@ def confirm_payment(
         logger.error(f"❌ Could not verify session {session_id}")
         raise HTTPException(status_code=400, detail="Invalid Stripe session") from None
 
-    if session.payment_status != 'paid':
-        logger.error(f"❌ Session not paid: {session.payment_status}")
+    payment_status = stripe_get(session, 'payment_status')
+    if payment_status != 'paid':
+        logger.error(f"❌ Session not paid: {payment_status}")
         raise HTTPException(status_code=400, detail="Payment not completed")
 
-    metadata = session.metadata or {}
+    metadata = stripe_get(session, 'metadata') or {}
     # Trust Stripe's metadata for item/user, falling back to the request.
-    item_id = metadata.get('item_id') or item_id
-    session_user_id = metadata.get('user_id')
+    item_id = stripe_get(metadata, 'item_id') or item_id
+    session_user_id = stripe_get(metadata, 'user_id')
 
     # The authenticated caller must match the buyer recorded on the session.
     if session_user_id and session_user_id != user_id:
@@ -245,9 +252,17 @@ def confirm_payment(
     if not item_id:
         raise HTTPException(status_code=400, detail="item_id is required")
 
-    payment_intent = session.payment_intent
-    amount = (session.amount_total or 0) / 100
-    item_name = (metadata.get('item_name')) or 'Item'
+    payment_intent = stripe_get(session, 'payment_intent')
+    amount = (stripe_get(session, 'amount_total') or 0) / 100
+    item_name = stripe_get(metadata, 'item_name')
+    if (not item_name or item_name.strip().lower() == "item") and item_id:
+        try:
+            row = admin_supabase.table('items').select('name').eq('id', item_id).execute()
+            if row and row.data and row.data[0].get('name'):
+                item_name = row.data[0]['name']
+        except Exception as e:
+            logger.warning(f"⚠️ Confirm route item lookup error: {e}")
+    item_name = item_name or 'Item'
 
     result = fulfill_purchase(
         item_id=item_id,
@@ -255,7 +270,7 @@ def confirm_payment(
         payment_intent=payment_intent,
         amount=amount,
         item_name=item_name,
-        buyer_email=(session.get('customer_details') or {}).get('email'),
+        buyer_email=stripe_get(stripe_get(session, 'customer_details'), 'email'),
     )
 
     status_map = {

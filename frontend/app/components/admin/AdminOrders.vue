@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { h, resolveComponent } from 'vue'
+import { computed, h, ref, resolveComponent } from 'vue'
 import type { TableColumn } from '@nuxt/ui'
 
 const UButton = resolveComponent('UButton')
 
+const { t } = useI18n()
 const { call } = useAdminApi()
 const toast = useToast()
 
@@ -33,8 +34,14 @@ const { data, pending, refresh } = useAsyncData<OrdersResponse>(
 
 const orders = computed(() => data.value.orders)
 
-const STATUSES = ['pending_info', 'confirmed', 'shipped', 'delivered', 'cancelled', 'refunded']
-const statusItems = STATUSES.map(s => ({ label: s.replace('_', ' '), value: s }))
+const statusItems = computed(() => [
+  { label: t('admin.ordersSection.statusPendingInfo'), value: 'pending_info' },
+  { label: t('admin.ordersSection.statusConfirmed'), value: 'confirmed' },
+  { label: t('admin.ordersSection.statusShipped'), value: 'shipped' },
+  { label: t('admin.ordersSection.statusDelivered'), value: 'delivered' },
+  { label: t('admin.ordersSection.statusCancelled'), value: 'cancelled' },
+  { label: t('admin.ordersSection.statusRefunded'), value: 'refunded' }
+])
 const busy = ref<string | null>(null)
 
 // Native Nuxt UI Expanded row tracking
@@ -54,25 +61,25 @@ async function changeStatus(o: Order, status: string) {
   try {
     await call(`/orders/${o.id}/status`, { method: 'PUT', body: { status } })
     o.status = status
-    toast.add({ title: `Order marked ${status.replace('_', ' ')}`, color: 'success' })
+    toast.add({ title: t('admin.ordersSection.markedSuccess', { status: status.replace('_', ' ') }), color: 'success' })
   } catch (err) {
     const e = err as { data?: { detail?: string }, message?: string }
-    toast.add({ title: 'Update failed', description: e.data?.detail || e.message, color: 'error' })
+    toast.add({ title: t('admin.ordersSection.updateFailed'), description: e.data?.detail || e.message, color: 'error' })
   } finally {
     busy.value = null
   }
 }
 
 async function remove(o: Order) {
-  if (!confirm(`Delete this order for "${o.item_name || 'Untitled'}"?`)) return
+  if (!confirm(t('admin.ordersSection.deleteConfirm', { name: o.item_name || 'Untitled' }))) return
   busy.value = o.id
   try {
     await call(`/orders/${o.id}`, { method: 'DELETE' })
-    toast.add({ title: 'Order deleted', color: 'success' })
+    toast.add({ title: t('admin.ordersSection.deletedSuccess'), color: 'success' })
     await refresh()
   } catch (err) {
     const e = err as { data?: { detail?: string }, message?: string }
-    toast.add({ title: 'Delete failed', description: e.data?.detail || e.message, color: 'error' })
+    toast.add({ title: t('admin.ordersSection.deleteFailed'), description: e.data?.detail || e.message, color: 'error' })
   } finally {
     busy.value = null
   }
@@ -86,7 +93,7 @@ function hasShippingInfo(o: Order) {
   return o.recipient_name || o.address || o.phone
 }
 
-const columns: TableColumn<Order>[] = [
+const columns = computed<TableColumn<Order>[]>(() => [
   {
     id: 'expand',
     cell: ({ row }) => h(UButton, {
@@ -101,45 +108,26 @@ const columns: TableColumn<Order>[] = [
       'onClick': () => row.toggleExpanded()
     })
   },
-  { accessorKey: 'item_name', header: 'Order' },
-  { accessorKey: 'buyer_name', header: 'Buyer' },
-  { accessorKey: 'amount', header: 'Amount' },
-  { accessorKey: 'status', header: 'Status' },
-  { accessorKey: 'created_at', header: 'Date' },
+  { accessorKey: 'item_name', header: t('admin.ordersSection.colOrder') },
+  { accessorKey: 'buyer_name', header: t('admin.ordersSection.colBuyer') },
+  { accessorKey: 'amount', header: t('admin.ordersSection.colAmount') },
+  { accessorKey: 'status', header: t('admin.ordersSection.colStatus') },
+  { accessorKey: 'created_at', header: t('admin.ordersSection.colDate') },
   { id: 'actions', header: '' }
-]
+])
 </script>
 
 <template>
   <div class="space-y-4">
-    <div class="grid grid-cols-2 gap-4">
-      <UCard :ui="{ body: 'p-4' }">
-        <p class="text-xs text-muted">
-          Total Orders
-        </p>
-        <p class="text-2xl font-bold text-highlighted">
-          {{ data.stats.total_orders }}
-        </p>
-      </UCard>
-      <UCard :ui="{ body: 'p-4' }">
-        <p class="text-xs text-muted">
-          Total Sales
-        </p>
-        <p class="text-2xl font-bold text-highlighted">
-          RM {{ (data.stats.total_sales || 0).toFixed(2) }}
-        </p>
-      </UCard>
-    </div>
-
     <div class="flex items-center justify-between">
       <p class="text-sm text-muted">
-        {{ orders.length }} order(s)
+        {{ $t('admin.ordersSection.count', { n: orders.length }) }}
       </p>
       <UButton
         size="xs"
         variant="ghost"
         icon="i-lucide-refresh-cw"
-        label="Refresh"
+        :label="$t('admin.ordersSection.refresh')"
         :loading="pending"
         @click="refresh()"
       />
@@ -152,6 +140,16 @@ const columns: TableColumn<Order>[] = [
       :loading="pending"
       :ui="{ td: 'py-2', tr: 'data-[expanded=true]:bg-elevated/50' }"
     >
+      <template #empty>
+        <UEmpty
+          icon="i-lucide-package"
+          :title="$t('admin.ordersSection.emptyTitle')"
+          :description="$t('admin.ordersSection.emptyDesc')"
+          variant="naked"
+          class="py-6"
+        />
+      </template>
+
       <template #item_name-cell="{ row }">
         <p class="font-medium text-highlighted truncate max-w-50">
           {{ row.original.item_name || 'Untitled' }}
@@ -215,11 +213,11 @@ const columns: TableColumn<Order>[] = [
             Shipping Details
           </p>
           <div class="flex flex-col text-sm text-default space-y-1">
-            <div><span class="text-muted">Recipient:</span> {{ row.original.recipient_name || '—' }}</div>
-            <div><span class="text-muted">Address:</span> <span class="whitespace-pre-line">{{ row.original.address || '—' }}</span></div>
-            <div><span class="text-muted">Phone:</span> {{ row.original.phone || '—' }}</div>
+            <div><span class="text-muted">{{ $t('admin.ordersSection.recipient') }}:</span> {{ row.original.recipient_name || '—' }}</div>
+            <div><span class="text-muted">{{ $t('admin.ordersSection.address') }}:</span> <span class="whitespace-pre-line">{{ row.original.address || '—' }}</span></div>
+            <div><span class="text-muted">{{ $t('admin.ordersSection.phone') }}:</span> {{ row.original.phone || '—' }}</div>
             <div v-if="row.original.notes">
-              <span class="text-muted">notes:</span> {{ row.original.notes }}
+              <span class="text-muted">{{ $t('admin.ordersSection.notes') }}:</span> {{ row.original.notes }}
             </div>
           </div>
           <p

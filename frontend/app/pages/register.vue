@@ -1,49 +1,56 @@
 <script setup lang="ts">
-import * as z from 'zod'
 import type { FormSubmitEvent } from '@nuxt/ui'
+import { registerSchema, type RegisterForm } from '~/utils/schemas'
+import { loginRedirect } from '~/utils/auth'
 
+const { t } = useI18n()
 const supabase = useSupabaseClient()
 const router = useRouter()
+const route = useRoute()
 const toast = useToast()
 
-const fields = [{
+function goToLogin() {
+  router.push(loginRedirect(route.query.redirect as string))
+}
+
+const fields = computed(() => [{
   name: 'email',
   type: 'email',
-  label: 'Email',
-  placeholder: 'Enter your email',
+  label: t('auth.emailLabel'),
+  placeholder: t('auth.emailPlaceholder'),
   required: true
 }, {
   name: 'password',
-  label: 'Password',
+  label: t('auth.passwordLabel'),
   type: 'password',
-  placeholder: 'Create a password',
+  placeholder: t('auth.passwordPlaceholder'),
   required: true
 }, {
   name: 'confirmPassword',
-  label: 'Confirm Password',
+  label: t('auth.confirmPasswordLabel'),
   type: 'password',
-  placeholder: 'Confirm your password',
+  placeholder: t('auth.confirmPasswordPlaceholder'),
   required: true
-}]
+}])
 
-const schema = z.object({
-  email: z.string().email('Invalid email address'),
-  password: z.string().min(8, 'Must be at least 8 characters'),
-  confirmPassword: z.string().min(8, 'Must be at least 8 characters')
-}).refine(data => data.password === data.confirmPassword, {
-  message: 'Passwords don\'t match',
-  path: ['confirmPassword']
-})
-
-type Schema = z.output<typeof schema>
 const loading = ref(false)
+const { token: turnstileToken, isEnabled: isTurnstileEnabled } = useTurnstileToken()
 
-async function onSubmit(payload: FormSubmitEvent<Schema>) {
+async function onSubmit(payload: FormSubmitEvent<RegisterForm>) {
+  if (isTurnstileEnabled.value && !turnstileToken.value) {
+    toast.add({
+      title: t('auth.securityCheckRequired'),
+      description: t('auth.securityCheckRequiredDesc'),
+      color: 'warning'
+    })
+    return
+  }
   loading.value = true
   try {
     const { data, error } = await supabase.auth.signUp({
       email: payload.data.email,
-      password: payload.data.password
+      password: payload.data.password,
+      options: turnstileToken.value ? { captchaToken: turnstileToken.value } : undefined
     })
     if (error) throw error
 
@@ -56,14 +63,22 @@ async function onSubmit(payload: FormSubmitEvent<Schema>) {
         description: 'This email already has an account. If you signed up with Google, use the Google button.',
         color: 'warning'
       })
-      router.push('/login')
+      goToLogin()
       return
     }
 
-    toast.add({ title: 'Registration successful', description: 'Please check your email to verify your account.', color: 'success' })
-    router.push('/login')
+    toast.add({
+      title: t('auth.registerSuccess'),
+      description: t('auth.registerSuccessDesc'),
+      color: 'success'
+    })
+    goToLogin()
   } catch (err) {
-    toast.add({ title: 'Registration failed', description: err instanceof Error ? err.message : 'Something went wrong', color: 'error' })
+    toast.add({
+      title: 'Registration failed',
+      description: err instanceof Error ? err.message : 'Something went wrong',
+      color: 'error'
+    })
   } finally {
     loading.value = false
   }
@@ -74,21 +89,33 @@ async function onSubmit(payload: FormSubmitEvent<Schema>) {
   <div class="flex flex-col items-center justify-center min-h-[70vh] gap-4 p-4">
     <UCard class="w-full max-w-md">
       <UAuthForm
-        :schema="schema"
-        title="Register"
-        description="Create a new account to start buying and negotiating."
+        :schema="registerSchema"
+        :title="$t('auth.registerTitle')"
+        :description="$t('auth.registerDesc')"
         icon="i-lucide-user-plus"
         :fields="fields"
         :loading="loading"
         @submit="onSubmit"
       >
+        <template #validation>
+          <div
+            v-if="isTurnstileEnabled"
+            class="flex justify-center my-3 min-h-[65px]"
+          >
+            <NuxtTurnstile
+              v-model="turnstileToken"
+              :options="{ action: 'register' }"
+            />
+          </div>
+        </template>
+
         <template #footer>
           <div class="text-sm text-center text-muted">
-            Already have an account?
+            {{ $t('auth.haveAccount') }}
             <ULink
-              to="/login"
+              :to="loginRedirect(route.query.redirect as string)"
               class="text-primary font-medium"
-            >Login</ULink>
+            >{{ $t('auth.loginTitle') }}</ULink>
           </div>
         </template>
       </UAuthForm>

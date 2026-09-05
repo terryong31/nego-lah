@@ -9,20 +9,25 @@ import AppHeader from '~/components/AppHeader.vue'
 const { userRef } = vi.hoisted(() => ({
   userRef: { __v_isRef: true, value: null as Record<string, unknown> | null }
 }))
-const { signOutMock, toastAddMock } = vi.hoisted(() => ({
+const { signOutMock, toastAddMock, isAuthGuardedMock } = vi.hoisted(() => ({
   signOutMock: vi.fn(),
-  toastAddMock: vi.fn()
+  toastAddMock: vi.fn(),
+  isAuthGuardedMock: vi.fn()
 }))
 
 mockNuxtImport('useSupabaseUser', () => () => userRef)
 mockNuxtImport('useSupabaseClient', () => () => ({
   auth: {
-    signOut: signOutMock
+    signOut: signOutMock,
+    getSession: vi.fn().mockImplementation(async () => ({
+      data: { session: userRef.value ? { user: userRef.value } : null }
+    }))
   }
 }))
 mockNuxtImport('useToast', () => () => ({
   add: toastAddMock
 }))
+mockNuxtImport('isAuthGuarded', () => isAuthGuardedMock)
 
 // Note: useRouter/useRoute are deliberately left un-mocked. Nuxt's own
 // internal client plugins (chunk-reload, navigation-repaint, page view sync,
@@ -37,6 +42,7 @@ describe('components/AppHeader.vue', () => {
     userRef.value = null
     signOutMock.mockReset().mockResolvedValue({ error: null })
     toastAddMock.mockReset()
+    isAuthGuardedMock.mockReset().mockReturnValue(false)
   })
 
   describe('isAuthPage', () => {
@@ -123,12 +129,14 @@ describe('components/AppHeader.vue', () => {
       return { onSelect: items[2][0].onSelect, pushSpy }
     }
 
-    it('shows a success toast and redirects home when signOut succeeds', async () => {
+    it('shows a success toast and redirects home when signOut succeeds on an auth-guarded route', async () => {
+      isAuthGuardedMock.mockReturnValue(true)
       signOutMock.mockResolvedValue({ error: null })
       const { onSelect, pushSpy } = await mountAndGetSignOut()
 
       await onSelect()
 
+      expect(isAuthGuardedMock).toHaveBeenCalled()
       expect(signOutMock).toHaveBeenCalledTimes(1)
       expect(toastAddMock).toHaveBeenCalledWith({
         title: 'Signed out',
@@ -138,7 +146,25 @@ describe('components/AppHeader.vue', () => {
       expect(pushSpy).toHaveBeenCalledWith('/')
     })
 
+    it('shows a success toast and does NOT redirect when signOut succeeds on a public route', async () => {
+      isAuthGuardedMock.mockReturnValue(false)
+      signOutMock.mockResolvedValue({ error: null })
+      const { onSelect, pushSpy } = await mountAndGetSignOut()
+
+      await onSelect()
+
+      expect(isAuthGuardedMock).toHaveBeenCalled()
+      expect(signOutMock).toHaveBeenCalledTimes(1)
+      expect(toastAddMock).toHaveBeenCalledWith({
+        title: 'Signed out',
+        description: 'See you again!',
+        color: 'success'
+      })
+      expect(pushSpy).not.toHaveBeenCalled()
+    })
+
     it('shows an error toast and does not redirect when signOut fails', async () => {
+      isAuthGuardedMock.mockReturnValue(true)
       signOutMock.mockResolvedValue({ error: { message: 'network down' } })
       const { onSelect, pushSpy } = await mountAndGetSignOut()
 
@@ -160,6 +186,16 @@ describe('components/AppHeader.vue', () => {
       expect(wrapper.text()).toContain('Login')
     })
 
+    it('points Login button to loginRedirect carrying current route when logged out', async () => {
+      userRef.value = null
+      const wrapper = await mountSuspended(AppHeader, { route: '/items/item-1' })
+      const loginBtn = wrapper.findAllComponents({ name: 'UButton' }).find(b => b.text().includes('Login'))
+      expect(loginBtn?.props('to')).toEqual({
+        path: '/login',
+        query: { redirect: '/items/item-1' }
+      })
+    })
+
     it('hides the Login button when logged out on an auth page', async () => {
       userRef.value = null
       const wrapper = await mountSuspended(AppHeader, { route: '/login' })
@@ -176,6 +212,63 @@ describe('components/AppHeader.vue', () => {
       userRef.value = { email: 'hello@example.com', user_metadata: {} }
       const wrapper = await mountSuspended(AppHeader)
       expect(wrapper.text()).toContain('Hello, hello@example.com')
+    })
+  })
+
+  describe('notifications badging', () => {
+    it('renders UChip on avatar trigger and configures chat dropdown item with chat slot', async () => {
+      userRef.value = { email: 'hello@example.com', user_metadata: {} }
+      const wrapper = await mountSuspended(AppHeader)
+      const chips = wrapper.findAllComponents({ name: 'UChip' })
+      expect(chips.length).toBeGreaterThanOrEqual(1)
+
+      const items = wrapper.vm.dropdownItems as { label: string, slot?: string }[][]
+      const chatItem = items[1][0]
+      expect(chatItem.slot).toBe('chat')
+    })
+
+    it('centres dropdown rows so the unread chip sits level with its label', async () => {
+      // Nuxt UI's menu item is `flex items-start`, which parks the trailing
+      // chip against the top edge of the row instead of beside the label.
+      userRef.value = { email: 'hello@example.com', user_metadata: {} }
+      const wrapper = await mountSuspended(AppHeader)
+
+      const menu = wrapper.findComponent({ name: 'UDropdownMenu' })
+      expect((menu.props('ui') as { item?: string })?.item).toContain('items-center')
+    })
+
+    it('clears unread when clearUnread is called or chat item is selected', async () => {
+      userRef.value = { email: 'hello@example.com', user_metadata: {} }
+      const wrapper = await mountSuspended(AppHeader)
+      wrapper.vm.hasUnread = true
+      wrapper.vm.clearUnread()
+      expect(wrapper.vm.hasUnread).toBe(false)
+
+      wrapper.vm.hasUnread = true
+      const items = wrapper.vm.dropdownItems as { label: string, onSelect: () => void }[][]
+      items[1][0].onSelect()
+      expect(wrapper.vm.hasUnread).toBe(false)
+    })
+  })
+
+  describe('dropdown configuration', () => {
+    it('configures UDropdownMenu with modal=false to prevent sticky header scroll snapping', async () => {
+      userRef.value = { email: 'hello@example.com', user_metadata: {} }
+      const wrapper = await mountSuspended(AppHeader)
+      const dropdown = wrapper.findComponent({ name: 'UDropdownMenu' })
+      expect(dropdown.exists()).toBe(true)
+      expect(dropdown.props('modal')).toBe(false)
+      expect(dropdown.props('content')).toEqual({ align: 'end' })
+    })
+  })
+
+  describe('brand logo', () => {
+    it('renders the AppLogo component within the left template slot', async () => {
+      const wrapper = await mountSuspended(AppHeader)
+      const logo = wrapper.findComponent({ name: 'AppLogo' })
+      expect(logo.exists()).toBe(true)
+      expect(logo.text()).toContain('Nego')
+      expect(logo.text()).toMatch(/lah/i)
     })
   })
 })

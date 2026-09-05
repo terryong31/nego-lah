@@ -5,12 +5,13 @@ import contextlib
 import json
 import os
 
-import sentry_sdk
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
+from core.defense_middleware import RequestDefenseMiddleware, SecurityHeadersMiddleware
+from core.telemetry import init_sentry
 from limiter import limiter
 from logger import logger
 from routes.admin import router as admin_router
@@ -28,25 +29,9 @@ from routes.webhooks import router as webhooks_router
 # /docs stays available.
 IS_PROD = os.environ.get("ENV", "development").lower() in ("production", "prod")
 
-# Initialize Sentry for error tracking. environment lets prod vs local errors
-# be filtered/alerted on separately in the Sentry dashboard.
-sentry_dsn = os.environ.get("SENTRY_DSN")
-if sentry_dsn:
-    sentry_sdk.init(
-        dsn=sentry_dsn,
-        environment="production" if IS_PROD else "development",
-        # Sends request headers/cookies and the client IP with every event
-        # (Sentry's default header scrubbing is off with this enabled).
-        send_default_pii=True,
-        # Forwards application logs (see logger.py) to Sentry as a
-        # separate, searchable stream in addition to error events.
-        enable_logs=True,
-        traces_sample_rate=1.0,
-        # Continuous profiling (replaces the old profiles_sample_rate):
-        # profile for the lifetime of every trace.
-        profile_session_sample_rate=1.0,
-        profile_lifecycle="trace",
-    )
+# Initialize Sentry for error tracking. In development Sentry is disabled;
+# in production it is strictly enforced (raises RuntimeError if SENTRY_DSN is missing).
+init_sentry(is_prod=IS_PROD)
 
 # How often the abandoned-payment cleanup runs (seconds). Default hourly.
 CLEANUP_INTERVAL_SECONDS = int(os.environ.get("CLEANUP_INTERVAL_SECONDS", "3600"))
@@ -93,16 +78,29 @@ async def lifespan(_app: FastAPI):
     # only start the worker on a long-running server. Opt out with
     # DISABLE_PAYMENT_CLEANUP=1 if you run cleanup via an external scheduler.
     task = None
-    if not os.environ.get("VERCEL") and os.environ.get("DISABLE_PAYMENT_CLEANUP") != "1":
-        task = asyncio.create_task(_payment_cleanup_loop())
-        logger.info("🧹 Payment cleanup worker started")
+    from notifications import notification_broker
+
+    # One Redis pub/sub connection per worker, so a notification published by
+    # any worker reaches the SSE streams held by all of them.
+    await notification_broker.start()
+
+    if not os.environ.get("VERCEL"):
+        from core.database import close_db_pool, init_db_pool
+        await init_db_pool()
+        if os.environ.get("DISABLE_PAYMENT_CLEANUP") != "1":
+            task = asyncio.create_task(_payment_cleanup_loop())
+            logger.info("🧹 Payment cleanup worker started")
     try:
         yield
     finally:
+        await notification_broker.stop()
         if task:
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await task
+        if not os.environ.get("VERCEL"):
+            from core.database import close_db_pool
+            await close_db_pool()
 
 
 app = FastAPI(
@@ -126,6 +124,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 _PROD_ORIGINS = [
     "https://negolah.my",
     "https://www.negolah.my",
+    "https://api.negolah.my",
 ]
 
 _DEV_ORIGINS = [
@@ -139,6 +138,11 @@ _DEV_ORIGINS = [
     "http://127.0.0.1:8000",
 ]
 
+_ORIGIN_REGEX = (
+    r"^https://([a-zA-Z0-9_-]+\.)*pages\.dev$|"
+    r"^https://([a-zA-Z0-9_-]+\.)*negolah\.my$"
+)
+
 cors_origins_str = os.environ.get("CORS_ORIGINS")
 if cors_origins_str:
     try:
@@ -151,6 +155,7 @@ else:
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
+    allow_origin_regex=_ORIGIN_REGEX,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=[
@@ -160,9 +165,15 @@ app.add_middleware(
         "X-CSRF-Token",
         "sentry-trace",
         "baggage",
+        "X-Turnstile-Token",
+        "cf-turnstile-response",
     ],
-    expose_headers=["X-CSRF-Token"],
+    expose_headers=["X-CSRF-Token", "sentry-trace", "baggage"],
 )
+
+# Defense middleware — OWASP security headers & request body / path guards
+app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(RequestDefenseMiddleware)
 
 # Include routers
 app.include_router(user_router)

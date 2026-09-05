@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import type { TableColumn } from '@nuxt/ui'
 import type { AnalyzePatch, AnalyzeResult } from '~/composables/useItemAnalysis'
+import { adminItemSchema } from '~/utils/schemas'
 
+const { t } = useI18n()
 const { call } = useAdminApi()
 const toast = useToast()
 const { analyze, isAnalyzing, progress, stageMessage } = useItemAnalysis()
@@ -16,15 +18,15 @@ interface Item {
   image_path: string | null
   status: string
   created_at: string
+  translations?: Record<string, { name?: string, description?: string, condition?: string }>
 }
 
-// A photo staged for upload. `url` is an object URL for the preview and must be
-// revoked when the image leaves the list.
-interface PendingImage {
-  id: string
-  file: File
-  url: string
-}
+// A photo staged in the grid. A `new` one carries the File to upload and an
+// object URL for the preview, which must be revoked when it leaves the list; an
+// `existing` one carries the listing's stored public URL, which must not be.
+type PendingImage
+  = | { id: string, kind: 'new', file: File, url: string }
+    | { id: string, kind: 'existing', url: string }
 
 const { data: items, pending, refresh } = useAsyncData<Item[]>(
   'admin-items',
@@ -32,15 +34,21 @@ const { data: items, pending, refresh } = useAsyncData<Item[]>(
   { default: () => [] }
 )
 
-function firstImage(item: Item): string | undefined {
-  if (!item.image_path) return undefined
+// `image_path` is a {storage filename: public url} map whose insertion order is
+// the display order, so the first value is the thumbnail.
+function imageUrls(item: Item): string[] {
+  if (!item.image_path) return []
   try {
     const map = JSON.parse(item.image_path)
-    const urls = Object.values(map) as string[]
-    return urls[0]
+    if (!map || typeof map !== 'object') return []
+    return (Object.values(map) as string[]).filter(url => typeof url === 'string')
   } catch {
-    return undefined
+    return []
   }
+}
+
+function firstImage(item: Item): string | undefined {
+  return imageUrls(item)[0]
 }
 
 function formatDate(d: string) {
@@ -70,12 +78,65 @@ const conditionMap: Record<string, string> = {
   'fair': 'Fair',
   'poor': 'Poor'
 }
+const activeLang = ref<'en' | 'ms' | 'zh'>('en')
+const langTabs = [
+  { label: 'English', value: 'en' as const },
+  { label: 'Bahasa Melayu', value: 'ms' as const },
+  { label: '简体中文', value: 'zh' as const }
+]
+const langLabels: Record<'en' | 'ms' | 'zh', string> = {
+  en: 'English',
+  ms: 'Bahasa Melayu',
+  zh: '简体中文'
+}
+
 const form = reactive({
   name: '',
   description: '',
   condition: 'Good',
   price: undefined as number | undefined,
-  min_price: undefined as number | undefined
+  min_price: undefined as number | undefined,
+  translations: {
+    en: { name: '', description: '', condition: '' },
+    ms: { name: '', description: '', condition: '' },
+    zh: { name: '', description: '', condition: '' }
+  } as Record<'en' | 'ms' | 'zh', { name: string, description: string, condition: string }>
+})
+
+const currentName = computed({
+  get: () => {
+    if (activeLang.value === 'en') return form.name
+    return form.translations[activeLang.value]?.name || ''
+  },
+  set: (val: string) => {
+    if (activeLang.value === 'en') {
+      form.name = val
+      form.translations.en.name = val
+    } else {
+      if (!form.translations[activeLang.value]) {
+        form.translations[activeLang.value] = { name: '', description: '', condition: '' }
+      }
+      form.translations[activeLang.value].name = val
+    }
+  }
+})
+
+const currentDescription = computed({
+  get: () => {
+    if (activeLang.value === 'en') return form.description
+    return form.translations[activeLang.value]?.description || ''
+  },
+  set: (val: string) => {
+    if (activeLang.value === 'en') {
+      form.description = val
+      form.translations.en.description = val
+    } else {
+      if (!form.translations[activeLang.value]) {
+        form.translations[activeLang.value] = { name: '', description: '', condition: '' }
+      }
+      form.translations[activeLang.value].description = val
+    }
+  }
 })
 
 // The AI step holds the raw picker selection; the details step owns the ordered
@@ -89,16 +150,26 @@ const addInput = useTemplateRef<HTMLInputElement>('addInput')
 function makePending(file: File): PendingImage {
   return {
     id: `${file.name}-${file.size}-${file.lastModified}-${Math.random().toString(36).slice(2, 8)}`,
+    kind: 'new',
     file,
     // Guard for non-browser environments (SSR, test harnesses without the API).
     url: typeof URL.createObjectURL === 'function' ? URL.createObjectURL(file) : ''
   }
 }
 
-function releaseImages() {
-  for (const img of images.value) {
-    if (img.url && typeof URL.revokeObjectURL === 'function') URL.revokeObjectURL(img.url)
+function makeExisting(url: string): PendingImage {
+  return { id: `existing-${url}`, kind: 'existing', url }
+}
+
+/** Revoke a preview URL — only ever the object URLs we created ourselves. */
+function release(img: PendingImage) {
+  if (img.kind === 'new' && img.url && typeof URL.revokeObjectURL === 'function') {
+    URL.revokeObjectURL(img.url)
   }
+}
+
+function releaseImages() {
+  for (const img of images.value) release(img)
   images.value = []
 }
 
@@ -113,7 +184,7 @@ function moveImage(from: number, to: number) {
 function removeImage(index: number) {
   const img = images.value[index]
   if (!img) return
-  if (img.url && typeof URL.revokeObjectURL === 'function') URL.revokeObjectURL(img.url)
+  release(img)
   images.value = images.value.filter((_, i) => i !== index)
 }
 
@@ -175,13 +246,93 @@ function startAi() {
 
 // ---- AI detect ----
 
+function extractTrilingualData(raw: string | undefined): Record<string, { name?: string, description?: string, condition?: string }> | null {
+  if (!raw || typeof raw !== 'string') return null
+  const clean = raw.trim()
+  const start = clean.indexOf('{')
+  const end = clean.lastIndexOf('}')
+  if (start === -1 || end <= start) return null
+  const candidate = clean.slice(start, end + 1)
+  try {
+    const parsed = JSON.parse(candidate)
+    if (parsed && typeof parsed === 'object' && (parsed.en || parsed.ms || parsed.zh)) {
+      return parsed
+    }
+  } catch {
+    try {
+      const result: Record<string, { name?: string, description?: string, condition?: string }> = {}
+      for (const lang of ['en', 'ms', 'zh']) {
+        const langRegex = new RegExp(`"${lang}"\\s*:\\s*\\{([\\s\\S]*?)\\}(?=\\s*,\\s*"[a-z]{2}"|\\s*\\})`, 'i')
+        const langMatch = langRegex.exec(candidate)
+        if (langMatch && langMatch[1]) {
+          const block = langMatch[1]
+          const nameM = /"name"\s*:\s*"([\s\S]*?)"(?=\s*,\s*"\w+"|\s*$)/.exec(block)
+          const descM = /"description"\s*:\s*"([\s\S]*?)"(?=\s*,\s*"\w+"|\s*$)/.exec(block)
+          const condM = /"condition"\s*:\s*"([\s\S]*?)"(?=\s*,\s*"\w+"|\s*$)/.exec(block)
+          result[lang] = {
+            name: nameM ? nameM[1]?.replace(/\\"/g, '"').replace(/\\n/g, '\n') : '',
+            description: descM ? descM[1]?.replace(/\\"/g, '"').replace(/\\n/g, '\n') : '',
+            condition: condM ? condM[1]?.replace(/\\"/g, '"') : ''
+          }
+        }
+      }
+      if (Object.keys(result).length > 0) return result
+    } catch {
+      // Fallback regex extraction failed
+    }
+  }
+  return null
+}
+
 function applyPatch(patch: AnalyzePatch) {
+  let translations = patch.translations
+  let directDescription = patch.description
+
+  if (!translations && patch.description) {
+    const extracted = extractTrilingualData(patch.description)
+    if (extracted) {
+      translations = extracted
+      directDescription = extracted.en?.description || ''
+    }
+  }
+
+  if (translations) {
+    for (const lang of ['en', 'ms', 'zh'] as const) {
+      if (translations[lang]) {
+        form.translations[lang] = {
+          name: translations[lang]?.name || '',
+          description: translations[lang]?.description || '',
+          condition: translations[lang]?.condition || ''
+        }
+      }
+    }
+    if (translations.en?.name && !form.name) {
+      form.name = translations.en.name
+    }
+    if (translations.en?.description && !form.description) {
+      form.description = translations.en.description
+    }
+    if (translations.en?.condition) {
+      const mapped = conditionMap[translations.en.condition.toLowerCase()]
+      if (mapped) form.condition = mapped
+    }
+  }
+
   // Only ever fills blanks — anything the admin already typed wins.
-  if (patch.name && !form.name) form.name = patch.name
-  if (patch.description && !form.description) form.description = patch.description
+  if (patch.name && !form.name) {
+    form.name = patch.name
+    if (!form.translations.en.name) form.translations.en.name = patch.name
+  }
+  if (directDescription && !form.description) {
+    form.description = directDescription
+    if (!form.translations.en.description) form.translations.en.description = directDescription
+  }
   if (patch.condition) {
     const mapped = conditionMap[patch.condition.toLowerCase()]
-    if (mapped) form.condition = mapped
+    if (mapped) {
+      form.condition = mapped
+      if (!form.translations.en.condition) form.translations.en.condition = mapped
+    }
   }
   if (patch.price != null && !form.price) form.price = patch.price
 }
@@ -191,7 +342,8 @@ function applyResult(res: AnalyzeResult) {
     name: res.name,
     description: res.description,
     condition: res.condition,
-    price: res.market_data?.suggested_listing
+    price: res.market_data?.suggested_listing,
+    translations: res.translations
   })
 }
 
@@ -213,6 +365,16 @@ async function detectAndContinue() {
   }
 }
 
+// When photos are uploaded in the photos step, immediately trigger AI detection
+function onPhotosUploaded(uploadedFiles?: File[] | File | null) {
+  if (Array.isArray(uploadedFiles)) {
+    files.value = uploadedFiles
+  }
+  if (step.value === 'photos' && files.value.length > 0 && !isAnalyzing.value) {
+    detectAndContinue()
+  }
+}
+
 function skipToManual() {
   releaseImages()
   images.value = files.value.map(makePending)
@@ -223,7 +385,8 @@ function skipToManual() {
 /** Back out of the current step: details -> photos (AI) or the choice screen. */
 function goBack() {
   if (step.value === 'details' && mode.value === 'ai') {
-    files.value = images.value.map(img => img.file)
+    // The AI path is create-only, so every tile here is a newly picked file.
+    files.value = images.value.flatMap(img => (img.kind === 'new' ? [img.file] : []))
     step.value = 'photos'
     return
   }
@@ -238,6 +401,12 @@ function resetForm() {
   form.condition = 'Good'
   form.price = undefined
   form.min_price = undefined
+  form.translations = {
+    en: { name: '', description: '', condition: '' },
+    ms: { name: '', description: '', condition: '' },
+    zh: { name: '', description: '', condition: '' }
+  }
+  activeLang.value = 'en'
   files.value = []
   releaseImages()
   editingId.value = null
@@ -262,43 +431,82 @@ function openEdit(item: Item) {
   editingId.value = item.id
   form.name = item.name
   form.description = item.description || ''
-  form.condition = item.condition || 'Good'
+  form.condition = conditionMap[item.condition?.toLowerCase() ?? ''] || 'Good'
   form.price = item.price
   form.min_price = item.min_price ?? undefined
+  if (item.translations) {
+    for (const lang of ['en', 'ms', 'zh'] as const) {
+      if (item.translations[lang]) {
+        form.translations[lang] = {
+          name: item.translations[lang]?.name || '',
+          description: item.translations[lang]?.description || '',
+          condition: item.translations[lang]?.condition || ''
+        }
+      }
+    }
+  }
+  if (!form.translations.en.name) form.translations.en.name = form.name
+  if (!form.translations.en.description) form.translations.en.description = form.description
+  if (!form.translations.en.condition) form.translations.en.condition = form.condition
+  images.value = imageUrls(item).map(makeExisting)
+  step.value = 'details'
+  mode.value = 'manual'
   open.value = true
 }
 
-// New images are only required when creating; editing keeps existing images.
 const canSubmit = computed(() =>
-  !isAnalyzing.value && !!form.name.trim() && form.price != null && (isEditing.value || images.value.length > 0)
+  !isAnalyzing.value && !!form.name.trim() && form.price != null && images.value.length > 0
 )
 
 async function submitItem() {
+  const validation = adminItemSchema.safeParse(form)
+  if (!validation.success) {
+    toast.add({
+      title: 'Validation Error',
+      description: validation.error.issues[0]?.message,
+      color: 'error'
+    })
+    return
+  }
   if (!canSubmit.value) return
   saving.value = true
   try {
+    form.translations.en.name = form.name
+    form.translations.en.description = form.description
+    form.translations.en.condition = form.condition
+
+    const fd = new FormData()
+    fd.append('name', form.name)
+    fd.append('description', form.description)
+    fd.append('condition', form.condition)
+    fd.append('price', String(form.price))
+    if (form.min_price != null) fd.append('min_price', String(form.min_price))
+    fd.append('translations', JSON.stringify(form.translations))
+
     if (isEditing.value) {
-      await call(`/items/${editingId.value}`, {
-        method: 'PUT',
-        body: {
-          name: form.name,
-          description: form.description,
-          condition: form.condition,
-          price: form.price,
-          min_price: form.min_price ?? null
+      // One token per photo in display order: a kept photo's stored URL, or
+      // "new:<n>" pointing at the nth file appended below. Photos left out are
+      // dropped from the listing (and from storage) by the backend.
+      const order: string[] = []
+      let added = 0
+      for (const img of images.value) {
+        if (img.kind === 'new') {
+          order.push(`new:${added++}`)
+          fd.append('new_images', img.file)
+        } else {
+          order.push(img.url)
         }
-      })
+      }
+      fd.append('images_order', JSON.stringify(order))
+
+      await call(`/items/${editingId.value}`, { method: 'PUT', body: fd })
       toast.add({ title: 'Item updated', color: 'success' })
     } else {
-      const fd = new FormData()
-      fd.append('name', form.name)
-      fd.append('description', form.description)
-      fd.append('condition', form.condition)
-      fd.append('price', String(form.price))
-      if (form.min_price != null) fd.append('min_price', String(form.min_price))
       // Order matters: the backend keys images by position, and the storefront
       // shows the first one as the thumbnail.
-      for (const img of images.value) fd.append('images', img.file)
+      for (const img of images.value) {
+        if (img.kind === 'new') fd.append('images', img.file)
+      }
 
       await call('/items', { method: 'POST', body: fd })
       toast.add({ title: 'Item created', color: 'success' })
@@ -329,14 +537,18 @@ async function remove(item: Item) {
   }
 }
 
-const columns: TableColumn<Item>[] = [
-  { accessorKey: 'name', header: 'Item' },
-  { accessorKey: 'price', header: 'Price' },
-  { accessorKey: 'condition', header: 'Condition' },
-  { accessorKey: 'status', header: 'Status' },
-  { accessorKey: 'created_at', header: 'Listed' },
+const columns = computed<TableColumn<Item>[]>(() => [
+  { accessorKey: 'name', header: t('admin.itemsSection.colName') },
+  { accessorKey: 'price', header: t('admin.itemsSection.colPrice') },
+  { accessorKey: 'condition', header: t('admin.itemsSection.colStatus') },
+  { accessorKey: 'status', header: t('admin.itemsSection.colStatus') },
+  { accessorKey: 'created_at', header: t('admin.itemsSection.colCreated') },
   { id: 'actions', header: '' }
-]
+])
+
+defineExpose({
+  skipToManual
+})
 </script>
 
 <template>
@@ -347,17 +559,17 @@ const columns: TableColumn<Item>[] = [
       </p>
       <div class="flex items-center gap-2">
         <UButton
-          size="xs"
+          size="sm"
           variant="ghost"
           icon="i-lucide-refresh-cw"
-          label="Refresh"
+          :label="$t('admin.ordersSection.refresh')"
           :loading="pending"
           @click="refresh()"
         />
         <UButton
-          size="xs"
+          size="sm"
           icon="i-lucide-plus"
-          label="Upload item"
+          :label="$t('admin.itemsSection.uploadItem')"
           @click="openCreate"
         />
       </div>
@@ -369,6 +581,24 @@ const columns: TableColumn<Item>[] = [
       :loading="pending"
       :ui="{ td: 'py-2' }"
     >
+      <template #empty>
+        <UEmpty
+          icon="i-lucide-tag"
+          :title="$t('admin.itemsSection.emptyTitle')"
+          :description="$t('admin.itemsSection.emptyDesc')"
+          variant="naked"
+          :actions="[
+            {
+              icon: 'i-lucide-plus',
+              label: t('admin.itemsSection.uploadItem'),
+              color: 'primary',
+              onClick: openCreate
+            }
+          ]"
+          class="py-6"
+        />
+      </template>
+
       <template #name-cell="{ row }">
         <div class="flex items-center gap-3">
           <img
@@ -445,10 +675,26 @@ const columns: TableColumn<Item>[] = [
     <!-- Create / edit modal -->
     <UModal
       v-model:open="open"
-      :title="isEditing ? 'Edit item' : 'Upload item'"
       :description="modalDescription"
       :ui="{ content: 'max-w-lg' }"
     >
+      <template #title>
+        <div class="flex items-center gap-2">
+          <UButton
+            v-if="!isEditing && step !== 'choose'"
+            icon="i-lucide-arrow-left"
+            color="neutral"
+            variant="ghost"
+            size="sm"
+            class="-ms-1.5"
+            aria-label="Back"
+            :disabled="saving || isAnalyzing"
+            @click="goBack"
+          />
+          <span>{{ isEditing ? 'Edit item' : 'Upload item' }}</span>
+        </div>
+      </template>
+
       <template #body>
         <div class="space-y-4">
           <!-- ===== Choose how to create ===== -->
@@ -492,6 +738,7 @@ const columns: TableColumn<Item>[] = [
                 label="Drop images here"
                 description="PNG, JPG up to a few MB each"
                 class="w-full min-h-32"
+                @update:model-value="onPhotosUploaded"
               />
             </UFormField>
 
@@ -505,7 +752,7 @@ const columns: TableColumn<Item>[] = [
                   <span>{{ progress }}%</span>
                 </div>
                 <UProgress
-                  :value="progress"
+                  :model-value="progress"
                   :max="100"
                 />
               </div>
@@ -531,7 +778,6 @@ const columns: TableColumn<Item>[] = [
           <!-- ===== Details + photo order ===== -->
           <template v-else>
             <UFormField
-              v-if="!isEditing"
               label="Photos"
               required
               :hint="images.length ? `${images.length} photo(s) — drag to reorder` : 'First photo is the thumbnail'"
@@ -599,29 +845,6 @@ const columns: TableColumn<Item>[] = [
                     class="absolute right-1 top-1 rounded-full p-0.5 opacity-80"
                     @click="removeImage(i)"
                   />
-
-                  <div class="absolute inset-x-1 bottom-1 flex justify-between">
-                    <UButton
-                      icon="i-lucide-chevron-left"
-                      size="xs"
-                      color="neutral"
-                      variant="solid"
-                      aria-label="Move photo earlier"
-                      class="rounded-full p-0.5 opacity-80"
-                      :disabled="i === 0"
-                      @click="moveImage(i, i - 1)"
-                    />
-                    <UButton
-                      icon="i-lucide-chevron-right"
-                      size="xs"
-                      color="neutral"
-                      variant="solid"
-                      aria-label="Move photo later"
-                      class="rounded-full p-0.5 opacity-80"
-                      :disabled="i === images.length - 1"
-                      @click="moveImage(i, i + 1)"
-                    />
-                  </div>
                 </div>
 
                 <button
@@ -647,31 +870,40 @@ const columns: TableColumn<Item>[] = [
               >
             </UFormField>
 
-            <UAlert
-              v-if="autofilled"
-              icon="i-lucide-sparkles"
-              color="primary"
-              variant="subtle"
-              title="Auto-filled by AI"
-              description="Double-check the details and price before publishing."
-            />
+            <!-- Translation language tabs -->
+            <div class="space-y-1.5">
+              <div class="text-xs font-semibold text-muted uppercase tracking-wider">
+                Listing Language
+              </div>
+              <UTabs
+                v-model="activeLang"
+                :items="langTabs"
+                variant="link"
+                color="primary"
+                :content="false"
+                class="w-full"
+                :ui="{
+                  list: 'border-b border-default'
+                }"
+              />
+            </div>
 
             <UFormField
-              label="Name"
-              required
+              :label="activeLang === 'en' ? 'Name' : `Name (${langLabels[activeLang]})`"
+              :required="activeLang === 'en'"
             >
               <UInput
-                v-model="form.name"
-                placeholder="e.g. Fender Stratocaster"
+                v-model="currentName"
+                :placeholder="activeLang === 'en' ? 'e.g. Fender Stratocaster' : 'Translated item name'"
                 class="w-full"
               />
             </UFormField>
 
-            <UFormField label="Description">
+            <UFormField :label="activeLang === 'en' ? 'Description' : `Description (${langLabels[activeLang]})`">
               <UTextarea
-                v-model="form.description"
+                v-model="currentDescription"
                 :rows="3"
-                placeholder="Condition notes, specs, what's included…"
+                :placeholder="activeLang === 'en' ? 'Condition notes, specs, what\'s included…' : 'Translated description…'"
                 class="w-full"
               />
             </UFormField>
@@ -713,56 +945,21 @@ const columns: TableColumn<Item>[] = [
               />
             </UFormField>
           </template>
-
-          <p
-            v-if="isEditing"
-            class="text-xs text-muted"
-          >
-            Image editing isn't supported here — existing images are kept.
-          </p>
         </div>
       </template>
 
       <template #footer>
         <div class="flex w-full justify-end gap-2">
-          <!-- The choice screen has nothing to submit — picking a card moves on. -->
           <UButton
-            v-if="isEditing || step === 'choose'"
             color="neutral"
             variant="ghost"
             label="Cancel"
             :disabled="saving"
-            @click="open = false"
-          />
-          <UButton
-            v-else
-            color="neutral"
-            variant="ghost"
-            icon="i-lucide-arrow-left"
-            label="Back"
-            :disabled="saving || isAnalyzing"
-            @click="goBack"
+            @click="() => { open = false }"
           />
 
-          <template v-if="!isEditing && step === 'photos'">
-            <UButton
-              color="neutral"
-              variant="subtle"
-              label="Skip, fill in manually"
-              :disabled="isAnalyzing"
-              @click="skipToManual"
-            />
-            <UButton
-              icon="i-lucide-sparkles"
-              label="Detect with AI"
-              :loading="isAnalyzing"
-              :disabled="files.length === 0"
-              @click="detectAndContinue"
-            />
-          </template>
-
           <UButton
-            v-else-if="isEditing || step === 'details'"
+            v-if="isEditing || step === 'details'"
             :label="isEditing ? 'Save changes' : 'Create item'"
             :loading="saving"
             :disabled="!canSubmit"

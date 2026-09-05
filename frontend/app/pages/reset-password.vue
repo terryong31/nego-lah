@@ -1,47 +1,47 @@
 <script setup lang="ts">
-import * as z from 'zod'
 import type { FormSubmitEvent } from '@nuxt/ui'
+import { resetPasswordSchema, type ResetPasswordForm } from '~/utils/schemas'
 
+const { t } = useI18n()
 const supabase = useSupabaseClient()
 const router = useRouter()
 const toast = useToast()
 
-useSeoMeta({ title: 'Reset Password' })
+useSeoMeta({ title: () => t('auth.resetPasswordTitle') })
 
-const fields = [{
+const fields = computed(() => [{
   name: 'password',
-  label: 'New password',
+  label: t('auth.newPasswordLabel'),
   type: 'password',
-  placeholder: 'Enter a new password',
+  placeholder: t('auth.newPasswordPlaceholder'),
   required: true
 }, {
   name: 'confirmPassword',
-  label: 'Confirm password',
+  label: t('auth.confirmPasswordLabel'),
   type: 'password',
-  placeholder: 'Confirm your new password',
+  placeholder: t('auth.confirmPasswordPlaceholder'),
   required: true
-}]
+}])
 
-const schema = z.object({
-  password: z.string().min(8, 'Must be at least 8 characters'),
-  confirmPassword: z.string().min(8, 'Must be at least 8 characters')
-}).refine(data => data.password === data.confirmPassword, {
-  message: 'Passwords don\'t match',
-  path: ['confirmPassword']
-})
-
-type Schema = z.output<typeof schema>
 const loading = ref(false)
 
-async function onSubmit(payload: FormSubmitEvent<Schema>) {
+async function onSubmit(payload: FormSubmitEvent<ResetPasswordForm>) {
   loading.value = true
   try {
     const { error } = await supabase.auth.updateUser({ password: payload.data.password })
     if (error) throw error
-    toast.add({ title: 'Password updated', description: 'You can now log in with your new password.', color: 'success' })
+    toast.add({
+      title: t('auth.passwordResetSuccess'),
+      description: t('auth.passwordResetSuccessDesc'),
+      color: 'success'
+    })
     router.push('/login')
   } catch (err) {
-    toast.add({ title: 'Update failed', description: err instanceof Error ? err.message : 'Something went wrong', color: 'error' })
+    toast.add({
+      title: 'Update failed',
+      description: err instanceof Error ? err.message : 'Something went wrong',
+      color: 'error'
+    })
   } finally {
     loading.value = false
   }
@@ -52,13 +52,13 @@ async function onSubmit(payload: FormSubmitEvent<Schema>) {
   <div class="flex flex-col items-center justify-center min-h-[70vh] gap-4 p-4">
     <UCard class="w-full max-w-md">
       <UAuthForm
-        :schema="schema"
-        title="Reset password"
-        description="Choose a new password for your account."
+        :schema="resetPasswordSchema"
+        :title="$t('auth.resetPasswordTitle')"
+        :description="$t('auth.resetPasswordDesc')"
         icon="i-lucide-lock"
         :fields="fields"
         :loading="loading"
-        :submit="{ label: 'Update password' }"
+        :submit="{ label: $t('common.save') }"
         @submit="onSubmit"
       />
     </UCard>

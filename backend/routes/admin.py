@@ -1,3 +1,4 @@
+import asyncio
 import json
 from typing import Annotated
 
@@ -25,7 +26,6 @@ from schemas import (
     MarketValuationRequest,
     OrderStatusUpdate,
     OrderUpdate,
-    UpdateItemSchema,
     UserProfileUpdateRequest,
 )
 
@@ -70,8 +70,13 @@ def admin_logout(req: Request, response: Response, admin: dict = Depends(verify_
 
 
 @router.get("/auth/session")
-def admin_session(admin: dict = Depends(verify_admin)):
+def admin_session(req: Request, response: Response, admin: dict = Depends(verify_admin)):
     """Lightweight check used by the frontend route middleware."""
+    from env import ADMIN_COOKIE_NAME
+    sid = req.cookies.get(ADMIN_COOKIE_NAME, "")
+    if sid:
+        token = generate_csrf_token(sid)
+        set_csrf_cookie(response, token)
     return {"valid": True, "email": admin.get("email")}
 
 
@@ -176,6 +181,9 @@ async def upload_user_avatar(
 
     contents = await avatar.read()
 
+    # Supabase's client is synchronous and this handler must stay `async def`
+    # (it awaits the upload), so the storage round trip goes through a thread —
+    # on the event loop it would stall every buyer this worker is serving.
     # Try to use storage first
     try:
         unique_id = str(uuid.uuid4())[:8]
@@ -183,19 +191,21 @@ async def upload_user_avatar(
         # Store avatars under an 'avatars/' folder in the shared storage bucket
         file_path = f"avatars/{filename}"
 
-        admin_supabase.storage.from_(STORAGE_BUCKET).upload(
-            file_path,
-            contents,
-            {"content-type": avatar.content_type}
-        )
-        public_url = admin_supabase.storage.from_(STORAGE_BUCKET).get_public_url(file_path)
+        def _store() -> str:
+            admin_supabase.storage.from_(STORAGE_BUCKET).upload(
+                file_path,
+                contents,
+                {"content-type": avatar.content_type}
+            )
+            url = admin_supabase.storage.from_(STORAGE_BUCKET).get_public_url(file_path)
+            admin_supabase.table('user_profiles').upsert({
+                'id': user_id,
+                'avatar_url': url,
+                'updated_at': 'now()'
+            }).execute()
+            return url
 
-        # Update profile with URL
-        admin_supabase.table('user_profiles').upsert({
-            'id': user_id,
-            'avatar_url': public_url,
-            'updated_at': 'now()'
-        }).execute()
+        public_url = await asyncio.to_thread(_store)
 
         write_audit(admin.get("user_id"), admin.get("email"), "user.avatar_upload", user_id, admin.get("ip"))
         return {"message": "Avatar uploaded successfully", "avatar_url": public_url}
@@ -205,11 +215,13 @@ async def upload_user_avatar(
         base64_image = base64.b64encode(contents).decode('utf-8')
         data_url = f"data:{avatar.content_type};base64,{base64_image}"
 
-        admin_supabase.table('user_profiles').upsert({
-            'id': user_id,
-            'avatar_url': data_url,
-            'updated_at': 'now()'
-        }).execute()
+        await asyncio.to_thread(
+            lambda: admin_supabase.table('user_profiles').upsert({
+                'id': user_id,
+                'avatar_url': data_url,
+                'updated_at': 'now()'
+            }).execute()
+        )
 
         write_audit(admin.get("user_id"), admin.get("email"), "user.avatar_upload", user_id, admin.get("ip"))
         return {"message": "Avatar uploaded (base64)", "avatar_url": data_url}
@@ -264,6 +276,20 @@ def ban_user(user_id: str, request: BanRequest, admin: dict = Depends(verify_adm
     return {"message": f"User {'banned' if request.is_banned else 'unbanned'} successfully"}
 
 
+@protected.get("/users/{user_id}/ai")
+def get_user_ai_status(user_id: str, admin: dict = Depends(verify_admin)):
+    """Get the current AI status for a user."""
+    from connector import admin_supabase
+    ai_enabled = True
+    try:
+        settings = admin_supabase.table('chat_settings').select('ai_enabled').eq('user_id', user_id).execute()
+        if settings.data:
+            ai_enabled = settings.data[0].get('ai_enabled', True)
+    except Exception as e:
+        logger.debug(f"Could not check ai_enabled for {user_id}: {e}")
+    return {"user_id": user_id, "ai_enabled": ai_enabled}
+
+
 @protected.put("/users/{user_id}/ai")
 def toggle_user_ai(user_id: str, request: AIToggleRequest, admin: dict = Depends(verify_admin)):
     """Enable or disable AI for a specific user."""
@@ -300,18 +326,15 @@ def toggle_user_ai(user_id: str, request: AIToggleRequest, admin: dict = Depends
             "Authorization": f"Bearer {ADMIN_SUPABASE_KEY}",
             "Content-Type": "application/json"
         }
-        # Supabase broadcast API expects messages array with channel, event, payload
+        # Supabase broadcast API expects messages array with topic, event, payload
         payload = {
             "messages": [{
                 "topic": f"chat:{user_id}",
-                "event": "broadcast",
+                "event": "new_message",
                 "payload": {
-                    "event": "new_message",
-                    "payload": {
-                        "role": "system",
-                        "content": system_msg,
-                        "source": "system"
-                    }
+                    "role": "system",
+                    "content": system_msg,
+                    "source": "system"
                 }
             }]
         }
@@ -429,6 +452,35 @@ def admin_send_message(user_id: str, request: AdminMessageRequest, admin: dict =
 
     # Add the admin's message with source='admin' to differentiate from AI
     conversation_memory.add_message(user_id, "ai", request.message, source="admin")
+
+    # Broadcast to live chat via Supabase Realtime
+    try:
+        from payment.fulfillment import broadcast_to_chat
+        broadcast_to_chat(user_id, request.message, role="ai", source="admin")
+    except Exception as e:
+        logger.warning(f"⚠️ Broadcast to chat failed: {e}")
+
+    # Fall back to email if the buyer has no live SSE stream. The stream itself
+    # was already fed by broadcast_to_chat above (source="admin") -- publishing
+    # again here delivered every seller message to the buyer twice.
+    try:
+        from notifications import notification_broker
+        is_live = notification_broker.has_subscribers(user_id)
+
+        if not is_live:
+            from connector import admin_supabase
+            user_res = admin_supabase.auth.admin.get_user_by_id(user_id)
+            buyer_email = None
+            if user_res and hasattr(user_res, "user") and user_res.user:
+                buyer_email = user_res.user.email
+            elif user_res and isinstance(user_res, dict):
+                buyer_email = user_res.get("email") or (user_res.get("user") or {}).get("email")
+
+            if buyer_email:
+                from services.email_service import send_unread_message_email
+                send_unread_message_email(buyer_email, request.message)
+    except Exception as e:
+        logger.warning(f"⚠️ Notification delivery error: {e}")
 
     write_audit(admin.get("user_id"), admin.get("email"), "chat.message", user_id, admin.get("ip"))
     return {"message": "Message sent successfully"}
@@ -622,7 +674,8 @@ async def _encode_images(images: list[UploadFile]) -> list[dict]:
 
 @protected.post("/analyze-image/stream")
 async def analyze_item_image_stream(
-    images: list[UploadFile] = File(...)
+    images: list[UploadFile] = File(...),
+    language: str = Form("all")
 ):
     """Streaming twin of /analyze-image.
 
@@ -647,7 +700,10 @@ async def analyze_item_image_stream(
 
         async def run():
             try:
-                data = await analyze_listing(images_data, on_progress)
+                try:
+                    data = await analyze_listing(images_data, on_progress, language=language)
+                except TypeError:
+                    data = await analyze_listing(images_data, on_progress)
                 await queue.put({"stage": "done", "progress": 100, "message": "Done", "result": data})
             except Exception as e:
                 logger.error(f"Error analyzing image: {e}")
@@ -682,7 +738,8 @@ async def analyze_item_image_stream(
 
 @protected.post("/analyze-image")
 async def analyze_item_image(
-    images: list[UploadFile] = File(...)
+    images: list[UploadFile] = File(...),
+    language: str = Form("en")
 ):
     """
     Analyze uploaded images to generate item details (Name, Description, Condition).
@@ -697,14 +754,20 @@ async def analyze_item_image(
         images_data = await _encode_images(images)
 
         # --- Custom Image Analyzer (Gemini Vision) ---
-        logger.info(f"Analyzing {len(images_data)} image(s) with custom Image Analyzer...")
-        data = await image_analyzer.analyze(images_data)
+        logger.info(f"Analyzing {len(images_data)} image(s) with custom Image Analyzer in language={language}...")
+        try:
+            data = await image_analyzer.analyze(images_data, language=language)
+        except TypeError:
+            data = await image_analyzer.analyze(images_data)
         logger.info(f"Image analysis result: {data}")
 
         # --- Market Valuation ---
         try:
             logger.info(f"Fetching market data for: {data.get('name')}")
-            market_data = market_service.get_market_valuation(
+            # Market valuation scrapes the web synchronously — seconds, not
+            # milliseconds — so it cannot run on the event loop.
+            market_data = await asyncio.to_thread(
+                market_service.get_market_valuation,
                 query=data.get('name', ''),
                 condition=data.get('condition', 'good'),
                 category=data.get('category')
@@ -806,11 +869,18 @@ async def admin_create_item(
     price: Annotated[float, Form()],
     images: Annotated[list[UploadFile], File()],
     min_price: Annotated[float | None, Form()] = None,
+    translations: Annotated[str | None, Form()] = None,
     admin: dict = Depends(verify_admin),
 ):
     """Create a new listing with one or more images."""
     from items import upload_item
-    ok = await upload_item(name, description, condition, images, price, min_price)
+    parsed_translations = None
+    if translations:
+        try:
+            parsed_translations = json.loads(translations)
+        except Exception:
+            parsed_translations = None
+    ok = await upload_item(name, description, condition, images, price, min_price, translations=parsed_translations)
     if not ok:
         raise HTTPException(status_code=500, detail="Failed to create item")
     write_audit(admin.get("user_id"), admin.get("email"), "item.create", name, admin.get("ip"))
@@ -818,17 +888,59 @@ async def admin_create_item(
 
 
 @protected.put("/items/{item_id}")
-def admin_update_item(item_id: str, body: UpdateItemSchema, admin: dict = Depends(verify_admin)):
-    """Update a listing's fields."""
-    from items import update_item
-    ok = update_item(
+async def admin_update_item(
+    item_id: str,
+    name: Annotated[str | None, Form()] = None,
+    description: Annotated[str | None, Form()] = None,
+    condition: Annotated[str | None, Form()] = None,
+    price: Annotated[float | None, Form()] = None,
+    min_price: Annotated[float | None, Form()] = None,
+    translations: Annotated[str | None, Form()] = None,
+    images_order: Annotated[str | None, Form()] = None,
+    new_images: Annotated[list[UploadFile] | None, File()] = None,
+    admin: dict = Depends(verify_admin),
+):
+    """Update a listing's fields and, optionally, its photos.
+
+    Multipart rather than JSON because photos ride along with the fields: a
+    browser cannot send files as JSON, and splitting them across two requests
+    would let an edit half-apply.
+
+    `images_order` is a JSON array with one token per photo in display order
+    (see `items.sync_item_images`); omitting it leaves the photos untouched.
+    """
+    from items import sync_item_images, update_item
+    parsed_translations = None
+    if translations:
+        try:
+            parsed_translations = json.loads(translations)
+        except Exception:
+            parsed_translations = None
+
+    images = None
+    if images_order is not None:
+        try:
+            ordered = json.loads(images_order)
+            if not isinstance(ordered, list):
+                raise ValueError("images_order must be a list")
+        except Exception as e:
+            raise HTTPException(status_code=400, detail="Invalid images_order") from e
+        # Sync first: if the photos can't be written, the row stays as it was
+        # rather than pointing at a half-built image set.
+        images = await sync_item_images(item_id, ordered, new_images or [])
+        if images is None:
+            raise HTTPException(status_code=500, detail="Failed to update item images")
+
+    ok = await asyncio.to_thread(
+        update_item,
         item_id=item_id,
-        name=body.name,
-        description=body.description,
-        condition=body.condition,
-        price=body.price,
-        min_price=body.min_price,
-        images=body.images,
+        name=name,
+        description=description,
+        condition=condition,
+        price=price,
+        min_price=min_price,
+        images=images,
+        translations=parsed_translations,
     )
     if not ok:
         raise HTTPException(status_code=404, detail="Item not found or update failed")

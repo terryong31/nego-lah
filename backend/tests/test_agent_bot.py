@@ -2,9 +2,11 @@
 Tests for agent/bot.py — the customer-facing orchestrator (supervisor) agent.
 
 bot.py owns its OWN `conversation_memory` singleton (a separate instance from
-agent.memory.conversation_memory), and lazily builds `_model` / `_customer_agent`
-via `_get_model()` / `_get_customer_agent()`. Per the file-specific notes, tests
-here:
+agent.memory.conversation_memory), and lazily builds `_customer_agent` via
+`_get_customer_agent()`. Since SPEC-020 there is no `_model` singleton: the
+compiled graph is cached but its model is resolved per turn by
+`_select_customer_model`, so the process is never pinned to one provider. Per
+the file-specific notes, tests here:
   - monkeypatch `agent.bot._get_customer_agent` to return a fake object with an
     async `.ainvoke(...)` and an async-generator `.astream(...)` shaped like the
     real LangGraph "messages" stream_mode output (AIMessageChunk instances,
@@ -370,8 +372,18 @@ async def test_chat_sets_request_scoped_context_for_agent_run(fake_memory, monke
 # ---------------------------------------------------------------------------
 
 async def _collect_stream(agen):
+    """Collect a chat_stream(), dropping the SPEC-020 provider attribution event.
+
+    `chat_stream` always opens with `{"provider": {...}}` naming the engine
+    serving the turn (self-hosted M5 vs Gemini overflow). The tests below are
+    about text/status forwarding, so that leading event is stripped here rather
+    than restated in every assertion. Its own contract — that it is emitted, and
+    emitted FIRST — is covered in test_hybrid_llm_load_balancer.py.
+    """
     out = []
     async for item in agen:
+        if isinstance(item, dict) and "provider" in item:
+            continue
         out.append(item)
     return out
 
@@ -385,7 +397,7 @@ async def _collect_stream(agen):
         ("evaluate_offer", "Evaluating your offer..."),
         ("web_search", "Searching the market..."),
         ("assess_discount_eligibility", "Checking discounts..."),
-        ("some_unmapped_tool", "Thinking..."),
+        ("some_unmapped_tool", "Cooking..."),
     ],
 )
 async def test_chat_stream_yields_status_for_each_tool_call_chunk(
@@ -698,3 +710,38 @@ async def test_call_stripe_agent_skips_resolution_when_no_user_id_in_context(mon
     assert result == "ok"
     assert fake_item_agent.ainvoke_calls == []
     assert get_item_id() is None
+
+
+async def test_transfer_to_human_success(fake_memory, monkeypatch):
+    set_context(user_id="user_transfer_1", item_id="item-1")
+
+    # Mock admin_supabase chat_settings upsert
+    fake_supabase = MagicMock()
+    monkeypatch.setattr("connector.admin_supabase", fake_supabase)
+
+    # Mock broadcast_to_chat
+    fake_broadcast = MagicMock()
+    monkeypatch.setattr("payment.fulfillment.broadcast_to_chat", fake_broadcast)
+
+    # Mock send_human_transfer_alert
+    fake_email_alert = MagicMock(return_value=True)
+    monkeypatch.setattr("services.email_service.send_human_transfer_alert", fake_email_alert)
+
+    result = await bot.transfer_to_human.ainvoke({
+        "reason": "Customer requested human seller",
+        "summary": "Need help with pickup schedule"
+    })
+
+    assert "transferred" in result.lower()
+    assert fake_supabase.table.called
+    assert fake_broadcast.called
+    assert fake_email_alert.called
+    assert fake_email_alert.call_args.kwargs["user_id"] == "user_transfer_1"
+    assert fake_email_alert.call_args.kwargs["reason"] == "Customer requested human seller"
+    assert fake_memory.add_message.called
+
+
+async def test_transfer_to_human_missing_user_context():
+    set_context(user_id=None, item_id=None)
+    result = await bot.transfer_to_human.ainvoke({"reason": "Test"})
+    assert "user context missing" in result.lower()

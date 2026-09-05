@@ -1,0 +1,283 @@
+<div id="__nuxt-loader" role="status" aria-label="Loading Nego-Lah" aria-live="polite">
+  <style>
+    :root {
+      --loader-bg: #ffffff;
+      --loader-text: #09090b;
+      --loader-brand: #10b981;
+      --loader-brand-dark: #059669;
+    }
+
+    /* 1. Default: follow system color scheme */
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --loader-bg: #09090b;
+        --loader-text: #fafafa;
+        --loader-brand: #10b981;
+        --loader-brand-dark: #059669;
+      }
+
+      /* In dark system mode, if site is explicitly declared light mode */
+      html.light,
+      html.light :root,
+      html.light body,
+      html.light #__nuxt-loader,
+      html.light-mode,
+      html[data-theme="light"],
+      html[data-color-mode="light"] {
+        --loader-bg: #ffffff !important;
+        --loader-text: #09090b !important;
+        background-color: #ffffff !important;
+        color: #09090b !important;
+      }
+    }
+
+    /* 2. Site declared light mode overrides */
+    html.light,
+    html.light :root,
+    html.light body,
+    html.light #__nuxt-loader,
+    html.light-mode,
+    html[data-theme="light"],
+    html[data-color-mode="light"] {
+      --loader-bg: #ffffff !important;
+      --loader-text: #09090b !important;
+      background-color: #ffffff !important;
+      color: #09090b !important;
+    }
+
+    html.light .loader-title,
+    html.light-mode .loader-title,
+    html[data-theme="light"] .loader-title,
+    html[data-color-mode="light"] .loader-title {
+      color: #09090b !important;
+    }
+
+    /* 3. Site declared dark mode overrides */
+    html.dark,
+    html.dark :root,
+    html.dark body,
+    html.dark #__nuxt-loader,
+    html.dark-mode,
+    html[data-theme="dark"],
+    html[data-color-mode="dark"] {
+      --loader-bg: #09090b !important;
+      --loader-text: #fafafa !important;
+      background-color: #09090b !important;
+      color: #fafafa !important;
+    }
+
+    html.dark .loader-title,
+    html.dark-mode .loader-title,
+    html[data-theme="dark"] .loader-title,
+    html[data-color-mode="dark"] .loader-title {
+      color: #fafafa !important;
+    }
+
+    html,
+    body {
+      background-color: var(--loader-bg);
+      margin: 0;
+      padding: 0;
+    }
+
+    #__nuxt-loader {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      min-height: 100vh;
+      min-height: 100dvh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background-color: var(--loader-bg);
+      color: var(--loader-text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      z-index: 999999;
+      overflow: hidden;
+      margin: 0;
+      padding: 1.5rem;
+      box-sizing: border-box;
+      transition: background-color 0.3s ease;
+    }
+
+    .loader-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      padding: 0;
+      background: transparent;
+      border: none;
+      box-shadow: none;
+      max-width: 22rem;
+      width: 100%;
+      animation: loaderFadeIn 0.35s ease-out forwards;
+    }
+
+    .loader-icon-wrap {
+      perspective: 900px;
+      margin-bottom: 1.5rem;
+      height: 4.5rem;
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+    }
+
+    .loader-jumper {
+      transform-origin: center bottom;
+      animation: loaderJump 1.8s cubic-bezier(0.25, 1, 0.5, 1) infinite;
+      will-change: transform;
+    }
+
+    .loader-logo {
+      width: 4.25rem;
+      height: 4.25rem;
+      transform-style: preserve-3d;
+      animation: loaderSpin 1.8s cubic-bezier(0.35, 0.05, 0.55, 1) infinite;
+      will-change: transform;
+    }
+
+    .loader-title {
+      font-size: 1.5rem;
+      font-weight: 800;
+      letter-spacing: -0.025em;
+      color: var(--loader-text);
+      margin: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.125rem;
+    }
+
+    .loader-title-highlight {
+      color: var(--loader-brand);
+    }
+
+    .loader-sparkle {
+      animation: loaderTwinkle 1.8s ease-in-out infinite;
+      transform-origin: 28px 13px;
+    }
+
+    @keyframes loaderFadeIn {
+      from {
+        opacity: 0;
+        transform: translateY(6px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    @keyframes loaderJump {
+      0%,
+      8% {
+        transform: translateY(0) scale(1);
+        animation-timing-function: cubic-bezier(0.35, 0, 0.7, 0.2);
+      }
+
+      14% {
+        /* Plié prep dip */
+        transform: translateY(6px) scale(1.1, 0.9);
+        animation-timing-function: cubic-bezier(0.1, 0.9, 0.25, 1);
+      }
+
+      33% {
+        /* Apex of jump */
+        transform: translateY(-56px) scale(0.96, 1.04);
+        animation-timing-function: cubic-bezier(0.7, 0.1, 0.85, 0.7);
+      }
+
+      52% {
+        /* Touchdown on floor */
+        transform: translateY(5px) scale(1.14, 0.86);
+        animation-timing-function: cubic-bezier(0.2, 0.8, 0.3, 1);
+      }
+
+      60% {
+        /* Micro rebound */
+        transform: translateY(-3px) scale(0.98, 1.02);
+      }
+
+      66%,
+      100% {
+        /* Landed, stopped still on floor */
+        transform: translateY(0) scale(1);
+      }
+    }
+
+    @keyframes loaderSpin {
+      0%,
+      14% {
+        /* On floor, facing front */
+        transform: perspective(900px) rotateY(0deg);
+      }
+
+      52% {
+        /* Continuous fast spin during entire flight, lands facing front */
+        transform: perspective(900px) rotateY(720deg);
+      }
+
+      52.1%,
+      100% {
+        /* Landed on floor, paused at front */
+        transform: perspective(900px) rotateY(720deg);
+      }
+    }
+
+    @keyframes loaderTwinkle {
+      0%,
+      100% {
+        opacity: 0.6;
+        transform: scale(0.9);
+      }
+
+      50% {
+        opacity: 1;
+        transform: scale(1.2);
+      }
+    }
+  </style>
+
+  <div class="loader-container">
+    <div class="loader-icon-wrap">
+      <div class="loader-jumper">
+        <svg class="loader-logo" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <defs>
+            <linearGradient id="spa-logo-grad" x1="4" y1="4" x2="36" y2="36" gradientUnits="userSpaceOnUse">
+              <stop offset="0%" stop-color="#10b981" />
+              <stop offset="100%" stop-color="#059669" />
+            </linearGradient>
+            <linearGradient id="spa-logo-accent" x1="12" y1="12" x2="28" y2="28" gradientUnits="userSpaceOnUse">
+              <stop offset="0%" stop-color="#ffffff" />
+              <stop offset="100%" stop-color="#ecfdf5" />
+            </linearGradient>
+          </defs>
+
+          <!-- Outer Squircle Tag with Dialogue Notch -->
+          <path
+            d="M6 14C6 8.47715 10.4772 4 16 4H26C31.5228 4 36 8.47715 36 14V24C36 29.5228 31.5228 34 26 34H17L10 38V33.4C7.5 31.8 6 28.5 6 24V14Z"
+            fill="url(#spa-logo-grad)" />
+
+          <!-- Tag Eyelet -->
+          <circle cx="13" cy="11" r="2.5" fill="#064e3b" opacity="0.3" />
+          <circle cx="13" cy="11" r="1.75" fill="#ffffff" opacity="0.9" />
+
+          <!-- Stylized 'N' & Negotiation Bargain Arrow -->
+          <path d="M16 26V15L24 25V14" stroke="url(#spa-logo-accent)" stroke-width="2.75" stroke-linecap="round"
+            stroke-linejoin="round" />
+
+          <!-- Sparkle / Deal Star -->
+          <path class="loader-sparkle" d="M28 10L28.8 12.2L31 13L28.8 13.8L28 16L27.2 13.8L25 13L27.2 12.2L28 10Z"
+            fill="#fbbf24" />
+        </svg>
+      </div>
+    </div>
+
+    <h1 class="loader-title">
+      <span>Nego</span><span class="loader-title-highlight">-Lah</span>
+    </h1>
+  </div>
+</div>

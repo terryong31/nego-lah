@@ -217,6 +217,7 @@ def test_create_checkout_success(patch_supabase, fake_supabase, fake_stripe, mon
     fake_stripe.Product.create.assert_called_once()
     fake_stripe.Price.create.assert_called_once()
     fake_stripe.PaymentLink.create.assert_called_once()
+    assert fake_stripe.PaymentLink.create.call_args.kwargs["metadata"]["item_name"] == "Cool Widget"
     # Confirm the unit_amount conversion to cents was performed correctly.
     assert fake_stripe.Price.create.call_args.kwargs["unit_amount"] == 8000
 

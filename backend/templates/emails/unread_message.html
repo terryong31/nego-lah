@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% import "components.html" as components %}
+
+{% block preheader %}
+The seller sent you a message on Nego-Lah: "{{ message_snippet[:60] }}...". Reply in chat.
+{% endblock %}
+
+{% block content %}
+  {{ components.status_badge("New Message", "success") }}
+
+  <h1 style="margin: 16px 0 6px; font-size: 22px; font-weight: 700; letter-spacing: -0.02em; color: #0f172a;">
+    You received a message!
+  </h1>
+  <p style="margin: 0 0 24px; font-size: 14px; line-height: 1.5; color: #64748b;">
+    The seller sent you a message regarding your negotiation on Nego-Lah:
+  </p>
+
+  {{ components.quote_box(message_snippet) }}
+
+  {{ components.cta_button(chat_url, "Reply in Chat") }}
+{% endblock %}
+
+{% block footer %}
+  <p style="margin: 0; font-size: 12px; color: #94a3b8; line-height: 1.5;">
+    © Nego-Lah · Autonomous Second-Hand Marketplace with AI Negotiations
+  </p>
+{% endblock %}

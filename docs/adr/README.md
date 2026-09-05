@@ -8,3 +8,9 @@ changes an earlier one, add a new ADR and mark the old one's status.
 | ADR | Title | Status |
 |-----|-------|--------|
 | [0001](0001-payment-concurrency-optimistic-claim.md) | Optimistic claim-at-payment over pessimistic inventory locking | Accepted |
+| [0002](0002-modular-monolith-over-grpc-microservices.md) | Modular Monolith over Distributed gRPC Microservices | Accepted |
+| [0003](0003-dual-provider-multimodal-llm-failover.md) | Dual-Provider Multimodal LLM Factory with Dynamic Failover | Accepted |
+| [0004](0004-nuxt-spa-cloudflare-pages-and-turnstile.md) | Nuxt SPA on Cloudflare Pages with Universal Turnstile Bot Protection | Accepted |
+| [0005](0005-infisical-secrets-management-and-api-domain.md) | Multi-Folder Infisical Secrets, Dedicated API Domain, and Google Analytics | Accepted |
+| [0006](0006-sentry-session-replay-and-distributed-tracing.md) | Sentry Session Replay and Distributed Tracing Architecture | Accepted |
+| [0007](0007-hybrid-edge-cloud-llm-load-balancer.md) | Hybrid Edge-Cloud LLM Load Balancer with Atomic Concurrency Leases | Accepted |

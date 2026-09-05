@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { loginRedirect } from '~/utils/auth'
+
 interface Item {
   item_id: string
   name: string
@@ -6,13 +8,16 @@ interface Item {
   condition: string
   images: string
   price?: number
+  discounted_price?: number
   min_price?: number
   status?: string
+  translations?: Record<string, ItemTranslation>
 }
 
 const { call } = useApi()
 const route = useRoute()
 const toast = useToast()
+const { t, locale } = useI18n()
 
 const id = computed(() => route.params.id as string)
 
@@ -20,6 +25,10 @@ const { data: item, pending, error, refresh } = useAsyncData(
   `item-detail-${id.value}`,
   () => call<Item>(`/items/${id.value}`)
 )
+
+const localizedTitle = computed(() => localizedItemField(item.value, locale.value, 'name'))
+const localizedCondition = computed(() => localizedItemField(item.value, locale.value, 'condition'))
+const localizedDescription = computed(() => localizedItemField(item.value, locale.value, 'description'))
 
 const imagesList = computed<string[]>(() => {
   if (!item.value?.images) return []
@@ -38,7 +47,7 @@ const user = useSupabaseUser()
 
 async function handleBuyNow() {
   if (!user.value) {
-    navigateTo('/login')
+    navigateTo(loginRedirect(route.fullPath))
     return
   }
 
@@ -53,7 +62,7 @@ async function handleBuyNow() {
     })
 
     if (res?.checkout_url) {
-      toast.add({ title: 'Redirecting to checkout', description: 'Opening Stripe billing screen...', color: 'success' })
+      toast.add({ title: t('items.redirectingCheckout'), description: t('items.openingStripe'), color: 'success' })
       window.location.href = res.checkout_url
     } else {
       throw new Error('No checkout URL returned')
@@ -64,10 +73,10 @@ async function handleBuyNow() {
     const status = (err as { statusCode?: number, status?: number })?.statusCode
       ?? (err as { status?: number })?.status
     if (status === 409) {
-      toast.add({ title: 'No longer available', description: 'Sorry, this item has just been sold.', color: 'warning' })
+      toast.add({ title: t('items.noLongerAvailable'), description: t('items.justSold'), color: 'warning' })
       await refresh()
     } else {
-      toast.add({ title: 'Checkout failed', description: err instanceof Error ? err.message : 'Unable to start transaction', color: 'error' })
+      toast.add({ title: t('items.checkoutFailed'), description: err instanceof Error ? err.message : t('items.unableToStart'), color: 'error' })
     }
   } finally {
     buyLoading.value = false
@@ -94,26 +103,18 @@ async function handleBuyNow() {
       </div>
     </div>
 
-    <div
+    <UEmpty
       v-else-if="error || !item"
-      class="flex flex-col items-center justify-center py-20"
-    >
-      <UIcon
-        name="i-lucide-alert-triangle"
-        class="size-16 text-danger mb-4"
-      />
-      <h2 class="text-xl font-bold">
-        Item Not Found
-      </h2>
-      <p class="text-sm text-muted mt-2">
-        The listing might have been removed or deleted.
-      </p>
-      <UButton
-        label="Back to Storefront"
-        to="/"
-        class="mt-4"
-      />
-    </div>
+      icon="i-lucide-alert-triangle"
+      :title="$t('items.itemNotFound')"
+      :description="$t('items.itemNotFoundDesc')"
+      :actions="[{
+        label: $t('items.backToStorefront'),
+        to: '/'
+      }]"
+      variant="naked"
+      class="py-20"
+    />
 
     <div
       v-else
@@ -153,7 +154,7 @@ async function handleBuyNow() {
             v-else
             class="w-full aspect-[4/3] flex items-center justify-center text-muted rounded-xl overflow-hidden"
           >
-            No Images Available
+            {{ $t('items.noImages') }}
           </div>
         </div>
       </div>
@@ -163,24 +164,44 @@ async function handleBuyNow() {
         <!-- Title + price -->
         <div class="shrink-0 space-y-3">
           <h1 class="text-3xl font-extrabold text-highlighted tracking-tight">
-            {{ item.name }}
+            {{ localizedTitle }}
           </h1>
-          <div class="text-2xl font-extrabold text-highlighted tracking-tight">
-            RM {{ item.price?.toFixed(2) }}
+          <div
+            v-if="hasDiscount(item)"
+            class="flex items-center gap-3 flex-wrap"
+          >
+            <span class="text-3xl font-extrabold text-primary tracking-tight">
+              {{ formatPrice(effectivePrice(item)) }}
+            </span>
+            <span class="text-xl line-through text-muted font-medium">
+              {{ formatPrice(item.price) }}
+            </span>
+            <UBadge
+              color="primary"
+              variant="subtle"
+              size="md"
+              :label="`-${discountPercent(item)}%`"
+            />
+          </div>
+          <div
+            v-else
+            class="text-2xl font-extrabold text-highlighted tracking-tight"
+          >
+            {{ formatPrice(item.price) }}
           </div>
         </div>
 
         <!-- Compact description: reduced height, scrolls internally only if long -->
         <div class="mt-3 space-y-2 flex-1 min-h-0 flex flex-col">
           <h3 class="font-semibold text-highlighted shrink-0">
-            Product Description
+            {{ $t('items.productDesc') }}
           </h3>
           <div class="flex items-center gap-2 shrink-0">
-            <span class="text-sm text-muted">Condition:</span>
-            <span class="text-sm font-semibold capitalize">{{ item.condition }}</span>
+            <span class="text-sm text-muted">{{ $t('items.conditionColon') }}</span>
+            <span class="text-sm font-semibold capitalize">{{ localizedCondition }}</span>
           </div>
           <div class="text-muted text-sm leading-relaxed flex-1 min-h-0 overflow-y-auto pr-2 pb-4 prose prose-sm dark:prose-invert max-w-none">
-            <MDC :value="item.description" />
+            <MDC :value="localizedDescription" />
           </div>
         </div>
 
@@ -190,7 +211,7 @@ async function handleBuyNow() {
             v-if="item.status === 'sold'"
             color="neutral"
             variant="subtle"
-            title="Item Sold"
+            :title="$t('items.itemSold')"
             icon="i-lucide-info"
           />
 
@@ -208,7 +229,7 @@ async function handleBuyNow() {
               icon="i-lucide-credit-card"
               @click="handleBuyNow"
             >
-              Buy Now
+              {{ $t('items.buyNow') }}
             </UButton>
 
             <!-- Bargain / Chat -->
@@ -218,9 +239,9 @@ async function handleBuyNow() {
               variant="outline"
               class="flex-1 justify-center"
               icon="i-lucide-message-square"
-              :to="user ? `/chat?item_id=${item.item_id}` : '/login'"
+              :to="user ? `/chat?item_id=${item.item_id}` : loginRedirect(`/chat?item_id=${item.item_id}`)"
             >
-              Negotiate Price
+              {{ $t('items.negotiatePrice') }}
             </UButton>
           </div>
         </div>

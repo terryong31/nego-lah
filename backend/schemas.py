@@ -12,16 +12,7 @@ class CreateItemSchema(BaseModel):
     images: str
     price: float | None = None
     min_price: float | None = None
-
-
-class UpdateItemSchema(BaseModel):
-    """All fields optional - only provided fields are updated."""
-    name: str | None = None
-    description: str | None = None
-    condition: str | None = None
-    images: str | None = None
-    price: float | None = None
-    min_price: float | None = None
+    translations: dict | None = None
 
 
 class ImageReorderRequest(BaseModel):
@@ -58,6 +49,10 @@ class PasswordUpdateSchema(BaseModel):
 
 class EmailUpdateSchema(BaseModel):
     new_email: str
+
+
+class LanguageUpdateSchema(BaseModel):
+    language: str
 
 
 # ============================================

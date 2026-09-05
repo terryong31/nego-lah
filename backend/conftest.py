@@ -73,6 +73,14 @@ _TEST_ENV = {
     "USER_SUPABASE_KEY": "test-user-anon-key",
     "DATABASE_URL": "postgresql://test:test@localhost:5432/test",
     "GEMINI_API_KEY": "test-gemini-api-key",
+    # SPEC-020 hybrid router. Pinned to "gemini" so the suite is hermetic: with
+    # "auto" (the production default) the health probe would fire a real HTTP
+    # request at LOCAL_LLM_BASE_URL, and on a machine where the local-llm MLX
+    # server IS running (this is that machine) tests would silently start
+    # routing at, and generating from, the real 35B model. Tests that exercise
+    # local routing opt back in explicitly via monkeypatch.setenv + a patched probe.
+    "LLM_PROVIDER": "gemini",
+    "LOCAL_LLM_BASE_URL": "http://127.0.0.1:8001/v1",
     "STRIPE_API_KEY": "sk_test_dummy",
     "STRIPE_WEBHOOK_SECRET": "whsec_dummy",
     "RESEND_API_KEY": "re_test_dummy",
@@ -114,6 +122,8 @@ _TEST_ENV = {
     "REDIS_SSL": "",
     "SENTRY_DSN": "",
     "CORS_ORIGINS": "",
+    "TURNSTILE_SECRET_KEY": "",
+    "TURNSTILE_SECRET": "",
 }
 os.environ.update(_TEST_ENV)
 

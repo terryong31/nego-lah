@@ -14,6 +14,7 @@ names *on the pipeline module* rather than on the singletons themselves.
 """
 
 import asyncio
+import json
 
 import pytest
 
@@ -298,3 +299,59 @@ async def test_a_none_description_is_normalized_to_an_empty_string(monkeypatch):
     assert result["description"] == ""
     described = next(e for e in events if e["stage"] == "described")
     assert "patch" not in described
+
+
+async def test_pipeline_parses_trilingual_translations_when_json(monkeypatch):
+    trilingual_json = json.dumps({
+        "en": {"name": "Lamp", "description": "English desc", "condition": "Good"},
+        "ms": {"name": "Lampu", "description": "Penerangan BM", "condition": "Elok"},
+        "zh": {"name": "台灯", "description": "中文描述", "condition": "良好"},
+    })
+    monkeypatch.setattr(pipeline_module, "image_analyzer", _FakeAnalyzer(description=trilingual_json))
+    monkeypatch.setattr(pipeline_module, "market_service", _FakeMarket())
+
+    result, events = await collect()
+
+    assert result["description"] == "English desc"
+    assert result["translations"]["ms"]["name"] == "Lampu"
+    assert result["translations"]["zh"]["description"] == "中文描述"
+
+    described = next(e for e in events if e["stage"] == "described")
+    assert described["patch"]["translations"]["zh"]["name"] == "台灯"
+
+
+async def test_pipeline_parses_trilingual_translations_with_raw_newlines_and_commentary(monkeypatch):
+    raw_llm_response = """Here is the listing:
+```json
+{
+  "en": {
+    "name": "Apple AirPods Max",
+    "description": "Line 1 of English description.\nLine 2.\n- Feature 1\n- Feature 2",
+    "condition": "Like New"
+  },
+  "ms": {
+    "name": "Apple AirPods Max BM",
+    "description": "Penerangan dalam Bahasa Melayu.
+Baris kedua dengan newline sebenar.
+- Ciri 1
+- Ciri 2",
+    "condition": "Seperti Baru"
+  },
+  "zh": {
+    "name": "Apple AirPods Max 中文",
+    "description": "中文描述。\n第二行。\n- 特点 1",
+    "condition": "良好"
+  }
+}
+```
+Hope this is helpful!"""
+    monkeypatch.setattr(pipeline_module, "image_analyzer", _FakeAnalyzer(description=raw_llm_response))
+    monkeypatch.setattr(pipeline_module, "market_service", _FakeMarket())
+
+    result, events = await collect()
+
+    assert "Line 1 of English description" in result["description"]
+    assert "Line 2" in result["description"]
+    assert result["translations"]["ms"]["name"] == "Apple AirPods Max BM"
+    assert "Baris kedua dengan newline sebenar" in result["translations"]["ms"]["description"]
+    assert result["translations"]["zh"]["name"] == "Apple AirPods Max 中文"

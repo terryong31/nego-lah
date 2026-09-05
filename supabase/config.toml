@@ -23,7 +23,7 @@ pool_mode = "transaction"
 enabled = true
 port = 54323
 
-[inbucket]
+[local_smtp]
 enabled = true
 port = 54324
 
@@ -31,6 +31,9 @@ port = 54324
 enabled = true
 # Keep the cap aligned with the 2MB avatar limit enforced in the API.
 file_size_limit = "50MiB"
+
+[storage.vector]
+enabled = false
 
 [storage.buckets.images]
 public = true
@@ -50,6 +53,18 @@ enable_signup = true
 [auth.email]
 enable_signup = true
 enable_confirmations = true
+
+[auth.email.template.magic_link]
+subject = "Your Nego-lah Verification Code: {{ .Token }}"
+content_path = "./supabase/templates/magic_link.html"
+
+[auth.email.template.recovery]
+subject = "Reset your Nego-lah password"
+content_path = "./supabase/templates/recovery.html"
+
+[auth.email.template.confirmation]
+subject = "Confirm your Nego-lah account"
+content_path = "./supabase/templates/confirmation.html"
 
 [analytics]
 enabled = false

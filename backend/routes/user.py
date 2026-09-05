@@ -14,6 +14,7 @@ Every endpoint requires a valid JWT and enforces that the caller can only act
 on their own account (token user id must match the path user id).
 """
 
+import asyncio
 import uuid
 from typing import Annotated
 
@@ -24,7 +25,9 @@ from cache import invalidate_token
 from connector import admin_supabase, user_supabase
 from env import STORAGE_BUCKET
 from logger import logger
-from schemas import EmailUpdateSchema, PasswordUpdateSchema
+from schemas import EmailUpdateSchema, LanguageUpdateSchema, PasswordUpdateSchema
+
+SUPPORTED_LANGUAGES = {"en", "ms", "zh"}
 
 router = APIRouter(prefix="/user", tags=["User"])
 
@@ -98,6 +101,42 @@ def change_email(
     return {"message": "Email changed successfully", "email": payload.new_email}
 
 
+@router.put("/{user_id}/language")
+def update_language(
+    user_id: str,
+    payload: LanguageUpdateSchema,
+    token_user_id: str = Depends(verify_user_token)
+):
+    """
+    Update the authenticated user's preferred language in Supabase auth user_metadata.
+    Supported languages: 'en' (English), 'ms' (Bahasa Melayu), 'zh' (Simplified Chinese).
+    """
+    get_user_id_from_body_or_token(user_id, token_user_id)
+    lang = payload.language.lower().strip()
+    if lang not in SUPPORTED_LANGUAGES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported language '{payload.language}'. Supported languages: {', '.join(sorted(SUPPORTED_LANGUAGES))}"
+        )
+
+    existing = admin_supabase.auth.admin.get_user_by_id(user_id)
+    if not existing or not existing.user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    metadata = dict(existing.user.user_metadata or {})
+    metadata["preferred_language"] = lang
+
+    try:
+        admin_supabase.auth.admin.update_user_by_id(
+            user_id, {"user_metadata": metadata}
+        )
+    except Exception as e:
+        logger.error(f"Error updating language for user {user_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to update language") from e
+
+    return {"message": "Language updated", "preferred_language": lang}
+
+
 @router.put("/{user_id}/profile")
 async def update_profile(
     user_id: str,
@@ -114,8 +153,10 @@ async def update_profile(
     """
     get_user_id_from_body_or_token(user_id, token_user_id)
 
-    # Load existing metadata so we only patch the fields that changed
-    existing = admin_supabase.auth.admin.get_user_by_id(user_id)
+    # Supabase's client is synchronous. This handler has to stay `async def`
+    # (it awaits the upload), so every call below goes through a thread —
+    # otherwise a 2MB avatar upload freezes the worker for every other user.
+    existing = await asyncio.to_thread(admin_supabase.auth.admin.get_user_by_id, user_id)
     if not existing or not existing.user:
         raise HTTPException(status_code=404, detail="User not found")
     metadata = dict(existing.user.user_metadata or {})
@@ -127,17 +168,18 @@ async def update_profile(
         ext = (avatar.filename or "png").rsplit(".", 1)[-1].lower()
         file_path = f"avatars/{user_id}/{uuid.uuid4().hex}.{ext}"
         try:
-            admin_supabase.storage.from_(STORAGE_BUCKET).upload(
-                file_path,
-                contents,
-                {
-                    "content-type": avatar.content_type or "application/octet-stream",
-                    "upsert": "true",
-                },
-            )
-            metadata["avatar_url"] = admin_supabase.storage.from_(
-                STORAGE_BUCKET
-            ).get_public_url(file_path)
+            def _upload() -> str:
+                admin_supabase.storage.from_(STORAGE_BUCKET).upload(
+                    file_path,
+                    contents,
+                    {
+                        "content-type": avatar.content_type or "application/octet-stream",
+                        "upsert": "true",
+                    },
+                )
+                return admin_supabase.storage.from_(STORAGE_BUCKET).get_public_url(file_path)
+
+            metadata["avatar_url"] = await asyncio.to_thread(_upload)
         except Exception as e:
             logger.error(f"Avatar upload failed for {user_id}: {e}")
             raise HTTPException(status_code=500, detail="Failed to upload avatar") from e
@@ -146,8 +188,10 @@ async def update_profile(
         metadata["display_name"] = display_name
 
     try:
-        admin_supabase.auth.admin.update_user_by_id(
-            user_id, {"user_metadata": metadata}
+        await asyncio.to_thread(
+            admin_supabase.auth.admin.update_user_by_id,
+            user_id,
+            {"user_metadata": metadata},
         )
     except Exception as e:
         logger.error(f"Profile update failed for {user_id}: {e}")

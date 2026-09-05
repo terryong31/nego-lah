@@ -12,6 +12,7 @@ interface Item {
   price?: number
   min_price?: number
   status?: string
+  translations?: Record<string, { name?: string, description?: string, condition?: string }>
 }
 
 function makeItem(overrides: Partial<Item> = {}): Item {
@@ -112,6 +113,34 @@ describe('pages/items/[id].vue', () => {
 
       expect(callMock).toHaveBeenCalledWith('/items/abc-123')
     })
+
+    it('renders localized title and condition when translation is available for the current locale', async () => {
+      callMock.mockResolvedValue(makeItem({
+        name: 'Vintage Camera',
+        condition: 'Used - Good',
+        translations: {
+          en: { name: 'Vintage Camera (EN)', condition: 'Used - Mint' }
+        }
+      }))
+
+      const wrapper = await mountAtItem()
+
+      expect(wrapper.find('h1').text()).toBe('Vintage Camera (EN)')
+      expect(wrapper.text()).toContain('Used - Mint')
+    })
+
+    it('falls back to default item name and condition when translation is not available', async () => {
+      callMock.mockResolvedValue(makeItem({
+        name: 'Vintage Camera',
+        condition: 'Used - Good',
+        translations: {}
+      }))
+
+      const wrapper = await mountAtItem()
+
+      expect(wrapper.find('h1').text()).toBe('Vintage Camera')
+      expect(wrapper.text()).toContain('Used - Good')
+    })
   })
 
   describe('imagesList (JSON-parse-then-comma-fallback, matching ItemCard)', () => {
@@ -187,15 +216,18 @@ describe('pages/items/[id].vue', () => {
   })
 
   describe('Negotiate Price link target', () => {
-    it('points at /login when logged out', async () => {
+    it('points at /login with redirect query when logged out', async () => {
       userRef.value = null
-      callMock.mockResolvedValue(makeItem())
+      callMock.mockResolvedValue(makeItem({ item_id: 'item-1' }))
 
       const wrapper = await mountAtItem()
       const buttons = wrapper.findAllComponents({ name: 'UButton' })
       const negotiate = buttons.find(b => b.text().includes('Negotiate Price'))
 
-      expect(negotiate?.props('to')).toBe('/login')
+      expect(negotiate?.props('to')).toEqual({
+        path: '/login',
+        query: { redirect: '/chat?item_id=item-1' }
+      })
     })
 
     it('points at /chat?item_id=<id> when logged in', async () => {
@@ -220,7 +252,10 @@ describe('pages/items/[id].vue', () => {
 
       await wrapper.vm.handleBuyNow()
 
-      expect(navigateToMock).toHaveBeenCalledWith('/login')
+      expect(navigateToMock).toHaveBeenCalledWith({
+        path: '/login',
+        query: { redirect: '/items/item-1' }
+      })
       expect(callMock).not.toHaveBeenCalled()
     })
 
@@ -395,7 +430,37 @@ describe('pages/items/[id].vue', () => {
       await buyNow?.trigger('click')
       await flushPromises()
 
-      expect(navigateToMock).toHaveBeenCalledWith('/login')
+      expect(navigateToMock).toHaveBeenCalledWith({
+        path: '/login',
+        query: { redirect: '/items/item-1' }
+      })
+    })
+
+    it('renders strikethrough price and the discount percentage badge when discounted_price is present', async () => {
+      callMock.mockResolvedValue(makeItem({
+        price: 200,
+        discounted_price: 150
+      }))
+
+      const wrapper = await mountAtItem()
+
+      expect(wrapper.text()).toContain('RM 150.00')
+      expect(wrapper.text()).toContain('RM 200.00')
+      expect(wrapper.text()).toContain('-25%')
+      expect(wrapper.find('.line-through').text()).toContain('RM 200.00')
+    })
+
+    it('shows only the listed price when the discount is not below it', async () => {
+      callMock.mockResolvedValue(makeItem({
+        price: 200,
+        discounted_price: 200
+      }))
+
+      const wrapper = await mountAtItem()
+
+      expect(wrapper.text()).toContain('RM 200.00')
+      expect(wrapper.text()).not.toContain('%')
+      expect(wrapper.find('.line-through').exists()).toBe(false)
     })
   })
 })

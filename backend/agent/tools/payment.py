@@ -143,6 +143,7 @@ Please continue negotiating with the seller for a fair price."""
             metadata={
                 "item_id": item_id,
                 "user_id": user_id,
+                "item_name": item_name,
             },
             after_completion={
                 "type": "redirect",

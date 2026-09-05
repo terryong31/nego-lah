@@ -36,6 +36,10 @@ interface Item {
   created_at: string
 }
 
+// The stored photo map on a listing: {storage filename: public url}, whose
+// insertion order is the display order (first = thumbnail).
+const STORED = { '0.jpg': 'https://cdn.test/a.jpg', '1.jpg': 'https://cdn.test/b.jpg' }
+
 function makeItem(overrides: Partial<Item> = {}): Item {
   return {
     id: 'item-1',
@@ -44,7 +48,7 @@ function makeItem(overrides: Partial<Item> = {}): Item {
     condition: 'Good',
     price: 120,
     min_price: null,
-    image_path: null,
+    image_path: JSON.stringify(STORED),
     status: 'available',
     created_at: '2026-01-15T00:00:00Z',
     ...overrides
@@ -69,7 +73,7 @@ const UModalStub = {
   name: 'UModalStub',
   props: ['open'],
   emits: ['update:open'],
-  template: '<div><slot v-if="open" name="body" /><slot v-if="open" name="footer" /></div>'
+  template: '<div><slot v-if="open" name="title" /><slot v-if="open" name="body" /><slot v-if="open" name="footer" /></div>'
 }
 
 // Shape of the <script setup> bindings exposed on wrapper.vm in this test harness -
@@ -87,9 +91,13 @@ interface VmAny {
     condition: string
     price: number | undefined
     min_price: number | undefined
+    translations: Record<string, { name: string, description: string, condition: string }>
   }
+  activeLang: 'en' | 'ms' | 'zh'
+  currentName: string
+  currentDescription: string
   files: File[]
-  images: { id: string, file: File, url: string }[]
+  images: StagedImage[]
   step: 'choose' | 'photos' | 'details'
   mode: 'manual' | 'ai'
   autofilled: boolean
@@ -113,6 +121,16 @@ interface VmAny {
   remove: (item: Item) => Promise<void>
   firstImage: (item: Item) => string | undefined
   formatDate: (d: string) => string
+}
+
+/** A photo staged in the grid: either newly picked, or already on the listing. */
+type StagedImage
+  = | { id: string, kind: 'new', file: File, url: string }
+    | { id: string, kind: 'existing', url: string }
+
+/** Identify each staged photo: a new one by filename, a stored one by its URL. */
+function names(vm: VmAny) {
+  return vm.images.map(i => (i.kind === 'new' ? i.file.name : i.url))
 }
 
 /** Open the create modal on the manual path with the named photos staged. */
@@ -297,6 +315,29 @@ describe('components/admin/AdminItems.vue', () => {
       expect(vm.files).toEqual([])
     })
 
+    it('openEdit seeds the photo grid from image_path, in stored order', async () => {
+      callMock.mockResolvedValueOnce([])
+      const wrapper = await mountSuspended(AdminItems)
+      const vm = wrapper.vm as unknown as VmAny
+
+      vm.openEdit(makeItem({ id: 'i2' }))
+
+      expect(vm.images.map(i => i.kind)).toEqual(['existing', 'existing'])
+      expect(vm.images.map(i => i.url)).toEqual(['https://cdn.test/a.jpg', 'https://cdn.test/b.jpg'])
+    })
+
+    it('openEdit leaves the grid empty for an item with no usable image_path', async () => {
+      callMock.mockResolvedValueOnce([])
+      const wrapper = await mountSuspended(AdminItems)
+      const vm = wrapper.vm as unknown as VmAny
+
+      vm.openEdit(makeItem({ image_path: null }))
+      expect(vm.images).toEqual([])
+
+      vm.openEdit(makeItem({ image_path: 'not-json' }))
+      expect(vm.images).toEqual([])
+    })
+
     it('openEdit falls back to empty description, "Good" condition, and undefined min_price when missing', async () => {
       callMock.mockResolvedValueOnce([])
       const wrapper = await mountSuspended(AdminItems)
@@ -364,15 +405,30 @@ describe('components/admin/AdminItems.vue', () => {
       expect(vm.canSubmit).toBe(true)
     })
 
-    it('is true when editing with name + price even without any photos', async () => {
+    it('is true when editing with name + price and the item\'s stored photos', async () => {
       callMock.mockResolvedValueOnce([])
       const wrapper = await mountSuspended(AdminItems)
       const vm = wrapper.vm as unknown as VmAny
       vm.openEdit(makeItem())
       vm.form.name = 'Chair'
       vm.form.price = 50
-      expect(vm.images).toEqual([])
+      expect(vm.images).toHaveLength(2)
       expect(vm.canSubmit).toBe(true)
+    })
+
+    it('is false when editing after every photo has been removed', async () => {
+      callMock.mockResolvedValueOnce([])
+      const wrapper = await mountSuspended(AdminItems)
+      const vm = wrapper.vm as unknown as VmAny
+      vm.openEdit(makeItem())
+      vm.form.name = 'Chair'
+      vm.form.price = 50
+
+      vm.removeImage(0)
+      vm.removeImage(0)
+
+      expect(vm.images).toEqual([])
+      expect(vm.canSubmit).toBe(false)
     })
 
     it('is false while isAnalyzing is true, even with a valid name/price', async () => {
@@ -548,6 +604,79 @@ describe('components/admin/AdminItems.vue', () => {
       })
     })
 
+    it('populates trilingual translations when provided by AI analysis', async () => {
+      callMock.mockResolvedValueOnce([])
+      const wrapper = await mountSuspended(AdminItems)
+      const vm = wrapper.vm as unknown as VmAny
+      vm.openCreate()
+      vm.startAi()
+      vm.files = [makeFile('keyboard.png')]
+
+      analyzeMock.mockResolvedValueOnce({
+        name: 'Mechanical Keyboard',
+        description: 'RGB wireless mechanical keyboard',
+        condition: 'good',
+        translations: {
+          en: { name: 'Mechanical Keyboard', description: 'RGB wireless keyboard', condition: 'Good' },
+          ms: { name: 'Papan Kekunci Mekanikal', description: 'Papan kekunci tanpa wayar RGB', condition: 'Baik' },
+          zh: { name: '机械键盘', description: 'RGB无线机械键盘', condition: '良好' }
+        }
+      })
+
+      await vm.detectAndContinue()
+
+      expect(vm.form.translations.en.name).toBe('Mechanical Keyboard')
+      expect(vm.form.translations.ms.name).toBe('Papan Kekunci Mekanikal')
+      expect(vm.form.translations.zh.name).toBe('机械键盘')
+      expect(vm.form.translations.ms.description).toBe('Papan kekunci tanpa wayar RGB')
+    })
+
+    it('defensively extracts trilingual fields when description contains serialized JSON without translations object', async () => {
+      callMock.mockResolvedValueOnce([])
+      const wrapper = await mountSuspended(AdminItems)
+      const vm = wrapper.vm as unknown as VmAny
+      vm.openCreate()
+      vm.startAi()
+      vm.files = [makeFile('headphones.png')]
+
+      const rawJson = `\`\`\`json
+{
+  "en": {
+    "name": "AirPods Max Space Gray",
+    "description": "Premium wireless headphones with Active Noise Cancellation.",
+    "condition": "Like New"
+  },
+  "ms": {
+    "name": "AirPods Max Kelabu",
+    "description": "Fon kepala tanpa wayar premium dengan Pembatalan Hingar Aktif.",
+    "condition": "Seperti Baru"
+  },
+  "zh": {
+    "name": "AirPods Max 深空灰",
+    "description": "具备主动降噪功能的高端无线耳机。",
+    "condition": "几乎全新"
+  }
+}
+\`\`\``
+
+      analyzeMock.mockResolvedValueOnce({
+        name: 'AirPods Max Space Gray',
+        description: rawJson,
+        condition: 'like new',
+        market_data: { suggested_listing: 1250 }
+      })
+
+      await vm.detectAndContinue()
+
+      expect(vm.form.description).toBe('Premium wireless headphones with Active Noise Cancellation.')
+      expect(vm.form.description).not.toContain('```json')
+      expect(vm.form.translations.en.description).toBe('Premium wireless headphones with Active Noise Cancellation.')
+      expect(vm.form.translations.ms.name).toBe('AirPods Max Kelabu')
+      expect(vm.form.translations.ms.description).toBe('Fon kepala tanpa wayar premium dengan Pembatalan Hingar Aktif.')
+      expect(vm.form.translations.zh.name).toBe('AirPods Max 深空灰')
+      expect(vm.form.translations.zh.description).toBe('具备主动降噪功能的高端无线耳机。')
+    })
+
     it('applies streamed patches as they arrive, before the analysis finishes', async () => {
       callMock.mockResolvedValueOnce([])
       const wrapper = await mountSuspended(AdminItems)
@@ -696,10 +825,6 @@ describe('components/admin/AdminItems.vue', () => {
   // ---- photo ordering ----
 
   describe('photo ordering', () => {
-    function names(vm: VmAny) {
-      return vm.images.map(i => i.file.name)
-    }
-
     it('addImages appends to the end, keeping the existing thumbnail first', async () => {
       callMock.mockResolvedValueOnce([])
       const wrapper = await mountSuspended(AdminItems)
@@ -746,6 +871,52 @@ describe('components/admin/AdminItems.vue', () => {
       expect(names(vm)).toEqual(['b.png'])
       expect(revoke).toHaveBeenCalledWith('blob:mock-url')
       revoke.mockRestore()
+    })
+
+    it('removeImage never revokes a stored photo\'s URL', async () => {
+      const revoke = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+      callMock.mockResolvedValueOnce([])
+      const wrapper = await mountSuspended(AdminItems)
+      const vm = wrapper.vm as unknown as VmAny
+      vm.openEdit(makeItem())
+
+      vm.removeImage(0)
+
+      expect(names(vm)).toEqual(['https://cdn.test/b.jpg'])
+      expect(revoke).not.toHaveBeenCalled()
+      revoke.mockRestore()
+    })
+
+    it('closing the modal revokes staged previews but leaves stored URLs alone', async () => {
+      const revoke = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+      callMock.mockResolvedValueOnce([])
+      const wrapper = await mountSuspended(AdminItems)
+      const vm = wrapper.vm as unknown as VmAny
+      vm.openEdit(makeItem())
+      vm.addImages([makeFile('extra.png')])
+      // Let the `open` watcher settle on true, so closing is a real transition
+      // rather than a change Vue batches away.
+      await flushPromises()
+
+      vm.open = false
+      await flushPromises()
+
+      expect(revoke).toHaveBeenCalledTimes(1)
+      expect(revoke).toHaveBeenCalledWith('blob:mock-url')
+      expect(vm.images).toEqual([])
+      revoke.mockRestore()
+    })
+
+    it('a stored photo can be reordered against a newly added one', async () => {
+      callMock.mockResolvedValueOnce([])
+      const wrapper = await mountSuspended(AdminItems)
+      const vm = wrapper.vm as unknown as VmAny
+      vm.openEdit(makeItem())
+      vm.addImages([makeFile('fresh.png')])
+
+      vm.moveImage(2, 0)
+
+      expect(names(vm)).toEqual(['fresh.png', 'https://cdn.test/a.jpg', 'https://cdn.test/b.jpg'])
     })
 
     it('removeImage is a no-op for an index that does not exist', async () => {
@@ -934,8 +1105,16 @@ describe('components/admin/AdminItems.vue', () => {
       })
     })
 
-    describe('edit (JSON PUT)', () => {
-      it('PUTs a JSON body to /items/:id, toasts, closes the modal, and refreshes', async () => {
+    describe('edit (multipart FormData)', () => {
+      /** The FormData the component PUT to /items/:id. */
+      function editBody(path: string): FormData {
+        const call = callMock.mock.calls.find(([p, opts]) => p === path && opts?.method === 'PUT')
+        expect(call).toBeTruthy()
+        expect(call![1].body).toBeInstanceOf(FormData)
+        return call![1].body as FormData
+      }
+
+      it('PUTs a FormData body to /items/:id, toasts, closes the modal, and refreshes', async () => {
         const original = makeItem({ id: 'i5', name: 'Old Name', description: 'Old desc', condition: 'Fair', price: 40, min_price: 10 })
         callMock.mockResolvedValueOnce([original])
         const wrapper = await mountSuspended(AdminItems)
@@ -950,22 +1129,24 @@ describe('components/admin/AdminItems.vue', () => {
 
         await vm.submitItem()
 
-        expect(callMock).toHaveBeenCalledWith('/items/i5', {
-          method: 'PUT',
-          body: {
-            name: 'New Name',
-            description: 'Old desc',
-            condition: 'Fair',
-            price: 75,
-            min_price: 10
-          }
+        const body = editBody('/items/i5')
+        expect(body.get('name')).toBe('New Name')
+        expect(body.get('description')).toBe('Old desc')
+        expect(body.get('condition')).toBe('Fair')
+        expect(body.get('price')).toBe('75')
+        expect(body.get('min_price')).toBe('10')
+        expect(JSON.parse(body.get('translations') as string)).toEqual({
+          en: { name: 'New Name', description: 'Old desc', condition: 'Fair' },
+          ms: { name: '', description: '', condition: '' },
+          zh: { name: '', description: '', condition: '' }
         })
+
         expect(toastAddMock).toHaveBeenCalledWith({ title: 'Item updated', color: 'success' })
         expect(vm.open).toBe(false)
         expect(vm.saving).toBe(false)
       })
 
-      it('sends min_price: null when the minimum price field is left empty', async () => {
+      it('sends an empty min_price when the minimum price field is left empty', async () => {
         const original = makeItem({ id: 'i6', min_price: 10 })
         callMock.mockResolvedValueOnce([original])
         const wrapper = await mountSuspended(AdminItems)
@@ -979,13 +1160,10 @@ describe('components/admin/AdminItems.vue', () => {
 
         await vm.submitItem()
 
-        expect(callMock).toHaveBeenCalledWith('/items/i6', expect.objectContaining({
-          method: 'PUT',
-          body: expect.objectContaining({ min_price: null })
-        }))
+        expect(editBody('/items/i6').get('min_price')).toBeNull()
       })
 
-      it('does not touch images/files on an edit submit', async () => {
+      it('keeps every stored photo, in order, when the grid is untouched', async () => {
         const original = makeItem({ id: 'i7' })
         callMock.mockResolvedValueOnce([original])
         const wrapper = await mountSuspended(AdminItems)
@@ -999,9 +1177,59 @@ describe('components/admin/AdminItems.vue', () => {
 
         await vm.submitItem()
 
-        const [, opts] = callMock.mock.calls.find(([path]) => path === '/items/i7')!
-        expect(opts.body).not.toBeInstanceOf(FormData)
-        expect(typeof opts.body).toBe('object')
+        const body = editBody('/items/i7')
+        expect(JSON.parse(body.get('images_order') as string)).toEqual([
+          'https://cdn.test/a.jpg',
+          'https://cdn.test/b.jpg'
+        ])
+        expect(body.getAll('new_images')).toHaveLength(0)
+      })
+
+      it('interleaves kept URLs and new:<n> tokens to match the arranged order', async () => {
+        const original = makeItem({ id: 'i11' })
+        callMock.mockResolvedValueOnce([original])
+        const wrapper = await mountSuspended(AdminItems)
+        const vm = wrapper.vm as unknown as VmAny
+
+        vm.openEdit(original)
+        vm.addImages([makeFile('fresh.png'), makeFile('newer.png')])
+        // Arrange as: fresh, a.jpg, newer, b.jpg
+        vm.moveImage(2, 0)
+        vm.moveImage(3, 2)
+
+        callMock.mockResolvedValueOnce({})
+        callMock.mockResolvedValueOnce([original])
+
+        await vm.submitItem()
+
+        const body = editBody('/items/i11')
+        expect(JSON.parse(body.get('images_order') as string)).toEqual([
+          'new:0',
+          'https://cdn.test/a.jpg',
+          'new:1',
+          'https://cdn.test/b.jpg'
+        ])
+        // The files are appended in token order, so new:0 is the first of them.
+        expect((body.getAll('new_images') as File[]).map(f => f.name)).toEqual(['fresh.png', 'newer.png'])
+      })
+
+      it('drops removed photos from images_order so the backend deletes them', async () => {
+        const original = makeItem({ id: 'i12' })
+        callMock.mockResolvedValueOnce([original])
+        const wrapper = await mountSuspended(AdminItems)
+        const vm = wrapper.vm as unknown as VmAny
+
+        vm.openEdit(original)
+        vm.removeImage(0)
+
+        callMock.mockResolvedValueOnce({})
+        callMock.mockResolvedValueOnce([original])
+
+        await vm.submitItem()
+
+        expect(JSON.parse(editBody('/items/i12').get('images_order') as string)).toEqual([
+          'https://cdn.test/b.jpg'
+        ])
       })
 
       it('shows an "Update failed" toast with the API detail and keeps the modal open on failure', async () => {
@@ -1212,6 +1440,25 @@ describe('components/admin/AdminItems.vue', () => {
       expect(callMock).toHaveBeenCalledWith('/items/row-2', { method: 'DELETE' })
     })
 
+    it('renders empty state with an action button that opens the create modal', async () => {
+      callMock.mockResolvedValueOnce([])
+      const wrapper = await mountSuspended(AdminItems)
+      const vm = wrapper.vm as unknown as VmAny
+      await flushPromises()
+
+      const empty = wrapper.findComponent({ name: 'UEmpty' })
+      expect(empty.exists()).toBe(true)
+      expect(empty.props('title')).toBe('No items found')
+
+      const uploadBtn = empty.findComponent({ name: 'UButton' })
+      expect(uploadBtn.exists()).toBe(true)
+      expect(uploadBtn.props('label')).toBe('Upload item')
+
+      await uploadBtn.trigger('click')
+      await flushPromises()
+      expect(vm.open).toBe(true)
+    })
+
     it('emitting update:open(false) from the modal (Escape/overlay dismiss) closes it', async () => {
       callMock.mockResolvedValueOnce([])
       const wrapper = await mountSuspended(AdminItems)
@@ -1246,7 +1493,7 @@ describe('components/admin/AdminItems.vue', () => {
       expect(wrapper.findComponent({ name: 'UFileUpload' }).exists()).toBe(false)
     })
 
-    it('creating: clicking "Let AI detect it" opens the photo picker with the detect action', async () => {
+    it('creating: clicking "Let AI detect it" opens the photo picker', async () => {
       callMock.mockResolvedValueOnce([])
       const wrapper = await mountSuspended(AdminItems, { global: { stubs: { UModal: UModalStub } } })
       const vm = wrapper.vm as unknown as VmAny
@@ -1260,7 +1507,6 @@ describe('components/admin/AdminItems.vue', () => {
 
       expect(vm.step).toBe('photos')
       expect(wrapper.findComponent({ name: 'UFileUpload' }).exists()).toBe(true)
-      expect(wrapper.findAll('button').some(b => b.text() === 'Detect with AI')).toBe(true)
     })
 
     it('creating: clicking "Fill in manually" shows the empty name/description/condition/price/min-price fields', async () => {
@@ -1300,7 +1546,7 @@ describe('components/admin/AdminItems.vue', () => {
       expect(wrapper.text()).not.toContain('Image editing isn\'t supported here')
     })
 
-    it('editing: hides the images upload field, prefills fields from the item, and shows the edit-images hint', async () => {
+    it('editing: shows the photo grid alongside the prefilled fields', async () => {
       const item = makeItem({
         id: 'i60',
         name: 'Bookshelf',
@@ -1315,7 +1561,12 @@ describe('components/admin/AdminItems.vue', () => {
       vm.openEdit(item)
       await flushPromises()
 
-      expect(wrapper.find('input[type="file"]').exists()).toBe(false)
+      const tiles = wrapper.findAll('[data-testid="image-tile"]')
+      expect(tiles).toHaveLength(2)
+      expect(tiles[0]!.text()).toContain('Thumbnail')
+      expect(tiles[0]!.find('img').attributes('src')).toBe('https://cdn.test/a.jpg')
+      // The hidden "Add" picker is mounted, so photos can be added here too.
+      expect(wrapper.find('input[type="file"]').exists()).toBe(true)
 
       const nameInput = wrapper.find('input[placeholder="e.g. Fender Stratocaster"]')
       expect((nameInput.element as HTMLInputElement).value).toBe('Bookshelf')
@@ -1332,7 +1583,36 @@ describe('components/admin/AdminItems.vue', () => {
       const minPrice = wrapper.find('input[placeholder="Optional"]')
       expect((minPrice.element as HTMLInputElement).value).toBe('20')
 
-      expect(wrapper.text()).toContain('Image editing isn\'t supported here — existing images are kept.')
+      expect(wrapper.text()).not.toContain('Image editing isn\'t supported here')
+    })
+
+    it('editing: clicking a tile\'s remove button drops that stored photo', async () => {
+      const item = makeItem({ id: 'i61' })
+      callMock.mockResolvedValueOnce([item])
+      const wrapper = await mountSuspended(AdminItems, { global: { stubs: { UModal: UModalStub } } })
+      const vm = wrapper.vm as unknown as VmAny
+      vm.openEdit(item)
+      await flushPromises()
+
+      const remove = wrapper.findAll('button').find(b => b.attributes('aria-label') === 'Remove photo')
+      await remove!.trigger('click')
+
+      expect(names(vm)).toEqual(['https://cdn.test/b.jpg'])
+      expect(wrapper.findAll('[data-testid="image-tile"]')).toHaveLength(1)
+    })
+
+    it('editing: Save changes is disabled once the last photo is removed', async () => {
+      const item = makeItem({ id: 'i62' })
+      callMock.mockResolvedValueOnce([item])
+      const wrapper = await mountSuspended(AdminItems, { global: { stubs: { UModal: UModalStub } } })
+      const vm = wrapper.vm as unknown as VmAny
+      vm.openEdit(item)
+      vm.removeImage(0)
+      vm.removeImage(0)
+      await flushPromises()
+
+      const submitBtn = wrapper.findAll('button').find(b => b.text() === 'Save changes')
+      expect(submitBtn!.attributes('disabled')).toBeDefined()
     })
 
     it('typing into the Name/Description/Price/Minimum price fields updates the form via v-model', async () => {
@@ -1352,6 +1632,59 @@ describe('components/admin/AdminItems.vue', () => {
       expect(vm.form.description).toBe('Adjustable height')
       expect(vm.form.price).toBe(150)
       expect(vm.form.min_price).toBe(75)
+    })
+
+    it('switches language tabs and independently updates currentName and currentDescription', async () => {
+      callMock.mockResolvedValueOnce([])
+      const wrapper = await mountSuspended(AdminItems, { global: { stubs: { UModal: UModalStub } } })
+      const vm = wrapper.vm as unknown as VmAny
+      vm.openCreate()
+      vm.startManual()
+
+      // Default active language is 'en'
+      expect(vm.activeLang).toBe('en')
+      vm.currentName = 'English Title'
+      vm.currentDescription = 'English Desc'
+      expect(vm.form.name).toBe('English Title')
+      expect(vm.form.translations.en.name).toBe('English Title')
+
+      // Switch to 'ms'
+      vm.activeLang = 'ms'
+      expect(vm.currentName).toBe('')
+      vm.currentName = 'Tajuk BM'
+      vm.currentDescription = 'Deskripsi BM'
+      expect(vm.form.translations.ms.name).toBe('Tajuk BM')
+      expect(vm.form.name).toBe('English Title') // English untouched
+
+      // Switch to 'zh'
+      vm.activeLang = 'zh'
+      expect(vm.currentName).toBe('')
+      vm.currentName = '中文标题'
+      vm.currentDescription = '中文描述'
+      expect(vm.form.translations.zh.name).toBe('中文标题')
+      expect(vm.form.translations.zh.description).toBe('中文描述')
+
+      // Switch back to 'en'
+      vm.activeLang = 'en'
+      expect(vm.currentName).toBe('English Title')
+    })
+
+    it('renders listing language tabs using UTabs with variant="link"', async () => {
+      callMock.mockResolvedValueOnce([])
+      const wrapper = await mountSuspended(AdminItems, { global: { stubs: { UModal: UModalStub } } })
+      const vm = wrapper.vm as unknown as VmAny
+      vm.openCreate()
+      vm.startManual()
+      await flushPromises()
+
+      const tabs = wrapper.findComponent({ name: 'UTabs' })
+      expect(tabs.exists()).toBe(true)
+      expect(tabs.props('variant')).toBe('link')
+      expect(tabs.props('items')).toEqual(expect.arrayContaining([
+        expect.objectContaining({ label: 'English', value: 'en' }),
+        expect.objectContaining({ label: 'Bahasa Melayu', value: 'ms' }),
+        expect.objectContaining({ label: '简体中文', value: 'zh' })
+      ]))
     })
 
     it('changing the Condition select updates the form via v-model', async () => {
@@ -1404,19 +1737,17 @@ describe('components/admin/AdminItems.vue', () => {
       expect(tiles[1]!.text()).toContain('2')
     })
 
-    it('clicking a tile\'s move-earlier button promotes that photo to the thumbnail', async () => {
+    it('dragging and dropping a tile reorders photos and updates the thumbnail', async () => {
       callMock.mockResolvedValueOnce([])
       const wrapper = await mountSuspended(AdminItems, { global: { stubs: { UModal: UModalStub } } })
       const vm = wrapper.vm as unknown as VmAny
       stageManual(vm, 'a.png', 'b.png')
       await flushPromises()
 
-      const moveEarlier = wrapper.findAll('button')
-        .filter(b => b.attributes('aria-label') === 'Move photo earlier')
-      // The first tile's button is disabled, so drive the second tile's.
-      await moveEarlier[1]!.trigger('click')
+      vm.dragIndex = 1
+      vm.dropOn(0)
 
-      expect(vm.images.map(i => i.file.name)).toEqual(['b.png', 'a.png'])
+      expect(names(vm)).toEqual(['b.png', 'a.png'])
     })
 
     it('clicking a tile\'s remove button drops that photo', async () => {
@@ -1430,7 +1761,7 @@ describe('components/admin/AdminItems.vue', () => {
       expect(remove).toBeTruthy()
       await remove!.trigger('click')
 
-      expect(vm.images.map(i => i.file.name)).toEqual(['b.png'])
+      expect(names(vm)).toEqual(['b.png'])
     })
 
     it('clicking Cancel in the footer closes the modal without submitting anything', async () => {
@@ -1448,7 +1779,7 @@ describe('components/admin/AdminItems.vue', () => {
       expect(callMock).toHaveBeenCalledTimes(1) // only the initial GET /items
     })
 
-    it('clicking Back in the footer returns to the choice screen', async () => {
+    it('clicking the back button returns to the choice screen', async () => {
       callMock.mockResolvedValueOnce([])
       const wrapper = await mountSuspended(AdminItems, { global: { stubs: { UModal: UModalStub } } })
       const vm = wrapper.vm as unknown as VmAny
@@ -1456,11 +1787,28 @@ describe('components/admin/AdminItems.vue', () => {
       vm.startManual()
       await flushPromises()
 
-      const backBtn = wrapper.findAll('button').find(b => b.text() === 'Back')
+      const backBtn = wrapper.findAll('button').find(b => b.attributes('aria-label') === 'Back')
       expect(backBtn).toBeTruthy()
       await backBtn!.trigger('click')
 
       expect(vm.step).toBe('choose')
+    })
+
+    it('uploading photos in the photos step immediately triggers AI detection', async () => {
+      callMock.mockResolvedValueOnce([])
+      const wrapper = await mountSuspended(AdminItems, { global: { stubs: { UModal: UModalStub } } })
+      const vm = wrapper.vm as unknown as VmAny
+      vm.openCreate()
+      vm.startAi()
+      await flushPromises()
+
+      expect(vm.step).toBe('photos')
+      const photo = makeFile('chair.png')
+      vm.onPhotosUploaded([photo])
+      await flushPromises()
+
+      expect(vm.step).toBe('details')
+      expect(vm.images.length).toBe(1)
     })
 
     it('clicking "Create item" in the footer submits the new item', async () => {

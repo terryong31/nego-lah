@@ -126,7 +126,8 @@ async def upload_item(
     condition: str,
     uploaded_images: list[UploadFile],
     price: float,
-    min_price: float = None
+    min_price: float = None,
+    translations: dict = None
     ) -> bool:
     """
     Uploads images to Supabase Storage and creates an item in the database.
@@ -138,6 +139,7 @@ async def upload_item(
         uploaded_images: List of uploaded image files
         price: Listed price
         min_price: Base price (minimum acceptable price for negotiation)
+        translations: Trilingual translations dictionary {en: {...}, ms: {...}, zh: {...}}
     """
 
     try:
@@ -179,6 +181,9 @@ async def upload_item(
         if min_price is not None:
             item_data["min_price"] = min_price
 
+        if translations is not None:
+            item_data["translations"] = translations
+
         admin_supabase.table('items').insert(item_data).execute()
 
         # Invalidate cache so new item shows up
@@ -188,6 +193,90 @@ async def upload_item(
     except Exception as e:
         logger.error(f"An error has occured! Error: {e}")
         return False
+
+async def sync_item_images(
+    item_id: str,
+    ordered: list[str],
+    new_images: list[UploadFile] = None
+    ) -> str | None:
+    """
+    Rebuild an item's image map from an ordered list of tokens (edit flow).
+
+    `image_path` is a {filename: url} map whose insertion order *is* the display
+    order, so this returns a freshly built map rather than patching the old one.
+
+    Args:
+        item_id: Item whose photos are being replaced
+        ordered: One token per photo, in display order (first = thumbnail).
+            A token is either the public URL of a photo the item already has,
+            or "new:<n>" naming the nth file in `new_images`. Anything else is
+            dropped, so a stale client can never write a foreign URL into the row.
+        new_images: Newly uploaded files referenced by the "new:<n>" tokens
+
+    Returns:
+        The JSON string for `image_path`, or None if the rebuild failed.
+    """
+    try:
+        response = admin_supabase.table('items').select('image_path').eq('id', item_id).execute()
+        if not response.data:
+            return None
+
+        try:
+            current = json.loads(response.data[0].get('image_path') or '{}')
+        except (TypeError, ValueError):
+            current = {}
+        if not isinstance(current, dict):
+            current = {}
+
+        # Kept photos arrive as URLs; map back to the filename that keys them.
+        by_url = {url: name for name, url in current.items()}
+
+        async def upload_new(img: UploadFile) -> tuple[str, str]:
+            img_extension = img.filename.split(".")[-1] if img.filename else "dat"
+            # Random names, not positional ones: a photo added at slot 0 must
+            # never overwrite the object of a photo the listing still points at.
+            img_name = f"{uuid.uuid4().hex[:8]}.{img_extension}"
+            path = f"items/{item_id}/{img_name}"
+            file_content = await img.read()
+            await asyncio.to_thread(
+                admin_supabase.storage.from_(STORAGE_BUCKET).upload,
+                file=file_content,
+                path=path,
+                file_options={"content-type": img.content_type or "application/octet-stream"}
+            )
+            return img_name, admin_supabase.storage.from_(STORAGE_BUCKET).get_public_url(path=path)
+
+        uploaded = list(await asyncio.gather(
+            *(upload_new(img) for img in (new_images or []))
+        ))
+
+        urls = {}
+        for token in ordered:
+            if token.startswith("new:"):
+                try:
+                    img_name, url = uploaded[int(token[4:])]
+                except (ValueError, IndexError):
+                    continue
+                urls[img_name] = url
+            elif token in by_url:
+                urls[by_url[token]] = token
+
+        dropped = [f"items/{item_id}/{name}" for name in current if name not in urls]
+        if dropped:
+            try:
+                await asyncio.to_thread(
+                    admin_supabase.storage.from_(STORAGE_BUCKET).remove, dropped
+                )
+            except Exception as e:
+                # Orphaned bytes are cheaper than a save the admin can't retry.
+                logger.warning(f"Failed to remove dropped images for item {item_id}: {e}")
+
+        return json.dumps(urls)
+
+    except Exception as e:
+        logger.error(f"Failed to sync images for item {item_id}: {e}")
+        return None
+
 
 def delete_item(item_id: str) -> bool:
     """Soft-delete an item: hide it from the storefront without destroying history.
@@ -214,7 +303,8 @@ def update_item(
     condition: str = None,
     price: float = None,
     min_price: float = None,
-    images: str = None
+    images: str = None,
+    translations: dict = None
     ):
     """
     Update an item in the database.
@@ -227,6 +317,7 @@ def update_item(
         price: New listed price (optional)
         min_price: New base price (optional)
         images: New images JSON (optional)
+        translations: New translations dict (optional)
     """
     try:
         update = {}
@@ -242,6 +333,8 @@ def update_item(
             update["min_price"] = float(min_price)
         if images:
             update["image_path"] = images
+        if translations is not None:
+            update["translations"] = translations
 
         if not update:
             return False

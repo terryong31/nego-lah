@@ -161,6 +161,32 @@ def test_password_then_send_otp_otp_send_failure_still_returns_handle(fake_auth_
     assert redis_client.get(f"{_PREAUTH_KEY}{handle}") == "admin2@example.com"
 
 
+def test_password_then_send_otp_invokes_resend_fallback(fake_auth_client, monkeypatch):
+    """When sign_in_with_otp fails, fallback to generate_link + Resend dispatch."""
+    user = make_admin_user("admin-fallback")
+    fake_auth_client.auth.sign_in_with_password.return_value = SimpleNamespace(user=user)
+    fake_auth_client.auth.sign_in_with_otp.side_effect = Exception("Domain not verified")
+
+    mock_generate = MagicMock(return_value=("87654321", "https://example.com/magic"))
+    mock_send = MagicMock(return_value=True)
+
+    monkeypatch.setattr(admin_session, "_generate_otp_link", mock_generate)
+    monkeypatch.setattr(admin_session, "_send_otp_via_resend", mock_send)
+
+    handle = password_then_send_otp("admin-fallback@example.com", "pw")
+    assert handle
+    mock_generate.assert_called_once_with("admin-fallback@example.com")
+    mock_send.assert_called_once_with("admin-fallback@example.com", "87654321", "https://example.com/magic")
+
+
+def test_render_otp_email_html():
+    """Verify OTP code is injected into the rendered HTML."""
+    html = admin_session._render_otp_email_html("44556677", "https://example.com/action")
+    assert "44556677" in html
+    assert "https://example.com/action" in html
+    assert "Nego" in html
+
+
 def test_password_then_send_otp_sign_out_failure_is_swallowed(fake_auth_client):
     user = make_admin_user("admin-signout-fail")
     fake_auth_client.auth.sign_in_with_password.return_value = SimpleNamespace(user=user)

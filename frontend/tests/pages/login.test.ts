@@ -31,6 +31,15 @@ mockNuxtImport('useToast', () => () => ({
   add: toastAddMock
 }))
 
+// The @nuxtjs/supabase guard redirects before our own `auth` middleware can
+// attach `?redirect=`, so it stashes the blocked page in a cookie instead
+// (`saveRedirectToCookie` in nuxt.config). `pluck()` reads-and-clears it.
+const { pluckMock } = vi.hoisted(() => ({ pluckMock: vi.fn() }))
+mockNuxtImport('useSupabaseCookieRedirect', () => () => ({
+  path: { value: null },
+  pluck: pluckMock
+}))
+
 // Note: useRouter is deliberately left un-mocked (see tests/pages/items/index.test.ts
 // for precedent). A partial stub like `{ push: vi.fn() }` breaks Nuxt's own internal
 // client plugins (chunk-reload, navigation-repaint, ...) which call real router
@@ -54,6 +63,7 @@ describe('pages/login.vue', () => {
     signInWithOAuthMock.mockReset().mockResolvedValue({ error: null })
     callMock.mockReset().mockResolvedValue({ ok: true })
     toastAddMock.mockReset()
+    pluckMock.mockReset().mockReturnValue(null)
   })
 
   it('renders the login form fields, Google provider, and footer links', async () => {
@@ -95,6 +105,49 @@ describe('pages/login.vue', () => {
         color: 'success'
       })
       expect(pushSpy).toHaveBeenCalledWith('/')
+    })
+
+    it('falls back to the supabase redirect cookie when the route carries no redirect query', async () => {
+      pluckMock.mockReturnValue('/chat?item_id=item-9')
+      const wrapper = await mountSuspended(LoginPage)
+      const pushSpy = spyOnRouterPush(wrapper)
+
+      await fillAndSubmit(wrapper, 'user@example.com', 'password123')
+
+      expect(pushSpy).toHaveBeenCalledWith('/chat?item_id=item-9')
+    })
+
+    it('ignores an unsafe cookie value and goes home instead', async () => {
+      pluckMock.mockReturnValue('//evil.com/chat')
+      const wrapper = await mountSuspended(LoginPage)
+      const pushSpy = spyOnRouterPush(wrapper)
+
+      await fillAndSubmit(wrapper, 'user@example.com', 'password123')
+
+      expect(pushSpy).toHaveBeenCalledWith('/')
+    })
+
+    it('prefers an explicit ?redirect= query over the cookie', async () => {
+      pluckMock.mockReturnValue('/orders')
+      const wrapper = await mountSuspended(LoginPage, {
+        route: '/login?redirect=%2Fitems%2Fitem-1'
+      })
+      const pushSpy = spyOnRouterPush(wrapper)
+
+      await fillAndSubmit(wrapper, 'user@example.com', 'password123')
+
+      expect(pushSpy).toHaveBeenCalledWith('/items/item-1')
+    })
+
+    it('signs in and redirects to the safe redirect target when present in route query', async () => {
+      const wrapper = await mountSuspended(LoginPage, {
+        route: '/login?redirect=%2Fitems%2Fitem-1'
+      })
+      const pushSpy = spyOnRouterPush(wrapper)
+
+      await fillAndSubmit(wrapper, 'user@example.com', 'password123')
+
+      expect(pushSpy).toHaveBeenCalledWith('/items/item-1')
     })
   })
 

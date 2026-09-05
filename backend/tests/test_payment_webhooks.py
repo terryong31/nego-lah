@@ -57,7 +57,14 @@ def test_verify_webhook_bad_signature_returns_none(fake_stripe):
 # ---------------------------------------------------------------------------
 
 def _session_event(session_overrides=None):
+    """A real Stripe Event, not a dict.
+
+    Stripe hands `handle_checkout_completed` a `StripeObject`, which since
+    stripe-python 15 is no longer a dict subclass: `.get()` on it raises
+    AttributeError. Building the fixture as a plain dict hid that breakage
+    from this suite while every live webhook delivery failed."""
     session = {
+        "object": "checkout.session",
         "metadata": {},
         "customer_details": {"email": "buyer@example.com"},
         "payment_intent": "pi_123",
@@ -65,7 +72,23 @@ def _session_event(session_overrides=None):
     }
     if session_overrides:
         session.update(session_overrides)
-    return {"data": {"object": session}}
+    return stripe.Event.construct_from(
+        {
+            "id": "evt_123",
+            "object": "event",
+            "type": "checkout.session.completed",
+            "data": {"object": session},
+        },
+        "sk_test_fixture",
+    )
+
+
+def _payment_link(metadata):
+    """A real `stripe.PaymentLink`, as `PaymentLink.retrieve()` returns."""
+    return stripe.PaymentLink.construct_from(
+        {"id": "plink_abc", "object": "payment_link", "metadata": metadata},
+        "sk_test_fixture",
+    )
 
 
 def test_handle_checkout_completed_metadata_on_session(monkeypatch):
@@ -97,8 +120,9 @@ def test_handle_checkout_completed_metadata_on_session(monkeypatch):
 
 def test_handle_checkout_completed_metadata_via_payment_link_fallback(monkeypatch, fake_stripe):
     """Metadata missing on session but session references a payment_link -> fetched from PaymentLink."""
-    plink = stripe.PaymentLink.retrieve.return_value
-    plink.metadata = {"item_id": "item-2", "user_id": "user-2", "item_name": "Gadget"}
+    fake_stripe.PaymentLink.retrieve.return_value = _payment_link(
+        {"item_id": "item-2", "user_id": "user-2", "item_name": "Gadget"}
+    )
 
     called_kwargs = {}
 
@@ -178,8 +202,7 @@ def test_handle_checkout_completed_payment_link_lookup_raises_falls_through_to_m
 def test_handle_checkout_completed_payment_link_metadata_none_falls_through(monkeypatch, fake_stripe):
     """PaymentLink.retrieve() succeeds but its .metadata is falsy (None) ->
     `metadata = plink.metadata or {}` covers the `or {}` branch, still missing item_id/user_id."""
-    plink = stripe.PaymentLink.retrieve.return_value
-    plink.metadata = None
+    fake_stripe.PaymentLink.retrieve.return_value = _payment_link(None)
 
     monkeypatch.setattr(webhooks, "fulfill_purchase", lambda **kwargs: {"status": "success"})
 

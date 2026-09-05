@@ -22,7 +22,14 @@ lands, so the caller can stream real percentages rather than animating a guess.
 """
 
 import asyncio
+import json
+import re
 from collections.abc import Awaitable, Callable
+
+try:
+    import jiter
+except ImportError:
+    jiter = None
 
 from agent.tools.image_analyzer import image_analyzer
 from agent.tools.market_price import market_service
@@ -41,6 +48,7 @@ PROGRESS_PER_PARALLEL_STAGE = 22  # 50 -> 72 -> 94, leaving the last 6 for the c
 async def analyze_listing(
     images_data: list[dict],
     on_progress: ProgressCallback | None = None,
+    language: str = "en",
 ) -> dict:
     """Run the full listing analysis, reporting progress as stages complete.
 
@@ -50,6 +58,7 @@ async def analyze_listing(
             Events carry `stage`, `progress` (0-100), `message`, and — once
             there is something worth showing — a `patch` of fields the caller
             can drop straight into the form.
+        language: target language for the generated listing ('en', 'ms', 'zh')
 
     Returns:
         The same shape `/analyze-image` has always returned: name, description,
@@ -65,7 +74,11 @@ async def analyze_listing(
 
     await emit("identifying", PROGRESS_IDENTIFYING, "Looking at your photos…")
 
-    identified = await image_analyzer.identify(images_data)
+    try:
+        identified = await image_analyzer.identify(images_data, language=language)
+    except TypeError:
+        identified = await image_analyzer.identify(images_data)
+
     name = identified.get("name") or ""
     condition = identified.get("condition") or "Good"
     category = identified.get("category")
@@ -91,12 +104,63 @@ async def analyze_listing(
         await emit(key, progress, message, patch=to_patch(value) if value else None)
         return key, value
 
+    try:
+        desc_coro = image_analyzer.describe(images_data, language=language)
+    except TypeError:
+        desc_coro = image_analyzer.describe(images_data)
+
+    def _parse_described(val):
+        if not val:
+            return {"description": ""}
+        if isinstance(val, dict):
+            desc = val.get("en", {}).get("description") or ""
+            return {"description": desc, "translations": val}
+        if not isinstance(val, str):
+            return {"description": str(val)}
+
+        clean_str = val.strip()
+        match = re.search(r"(\{[\s\S]*\})", clean_str)
+        candidate = match.group(1).strip() if match else clean_str
+
+        parsed = None
+        try:
+            parsed = json.loads(candidate, strict=False)
+        except Exception as exc:
+            logger.debug(f"json.loads failed on candidate: {exc}")
+
+        if not parsed and jiter:
+            try:
+                parsed = jiter.from_json(candidate.encode("utf-8"), partial_mode=True)
+            except Exception as exc:
+                logger.debug(f"jiter failed on candidate: {exc}")
+
+        if isinstance(parsed, dict):
+            norm = {}
+            for k, v in parsed.items():
+                if not isinstance(v, dict):
+                    continue
+                k_lower = str(k).lower()
+                if k_lower in ("en", "english"):
+                    norm["en"] = v
+                elif k_lower in ("ms", "malay", "bahasa", "bahasa melayu"):
+                    norm["ms"] = v
+                elif k_lower in ("zh", "chinese", "mandarin", "simplified chinese", "zh-cn"):
+                    norm["zh"] = v
+                else:
+                    norm[k] = v
+
+            if any(k in norm for k in ("en", "ms", "zh")):
+                en_desc = norm.get("en", {}).get("description") or ""
+                return {"description": en_desc, "translations": norm}
+
+        return {"description": val}
+
     stages = [
         run_stage(
             "described",
-            image_analyzer.describe(images_data),
+            desc_coro,
             "Description written",
-            lambda desc: {"description": desc},
+            _parse_described,
         ),
         run_stage(
             "priced",
@@ -107,9 +171,11 @@ async def analyze_listing(
     ]
 
     results = dict(await asyncio.gather(*stages))
+    parsed_desc = _parse_described(results.get("described"))
 
     return {
         **identified,
-        "description": results.get("described") or "",
+        "description": parsed_desc.get("description") or "",
         "market_data": results.get("priced"),
+        "translations": parsed_desc.get("translations"),
     }

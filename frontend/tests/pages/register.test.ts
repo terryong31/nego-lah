@@ -97,7 +97,7 @@ describe('pages/register.vue', () => {
         description: 'Please check your email to verify your account.',
         color: 'success'
       })
-      expect(pushSpy).toHaveBeenCalledWith('/login')
+      expect(pushSpy).toHaveBeenCalledWith({ path: '/login' })
     })
   })
 
@@ -118,7 +118,7 @@ describe('pages/register.vue', () => {
         description: 'This email already has an account. If you signed up with Google, use the Google button.',
         color: 'warning'
       })
-      expect(pushSpy).toHaveBeenCalledWith('/login')
+      expect(pushSpy).toHaveBeenCalledWith({ path: '/login' })
     })
 
     it('treats a missing identities field (undefined) the same as an empty array', async () => {
@@ -132,7 +132,7 @@ describe('pages/register.vue', () => {
       await fillAndSubmit(wrapper)
 
       expect(toastAddMock).toHaveBeenCalledWith(expect.objectContaining({ title: 'Email already registered' }))
-      expect(pushSpy).toHaveBeenCalledWith('/login')
+      expect(pushSpy).toHaveBeenCalledWith({ path: '/login' })
     })
   })
 

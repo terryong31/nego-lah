@@ -31,7 +31,7 @@ async function submitPassword() {
   }
 }
 
-const OTP_LENGTH = 8
+const OTP_LENGTH = 6
 
 async function submitOtp() {
   if (code.value.length < OTP_LENGTH) return

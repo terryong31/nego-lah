@@ -1,52 +1,85 @@
-// https://nuxt.com/docs/api/configuration/nuxt-config
 export default defineNuxtConfig({
+
   modules: [
     '@nuxt/eslint',
     '@nuxt/ui',
     '@nuxtjs/supabase',
     '@nuxtjs/mdc',
+    '@nuxtjs/turnstile',
+    '@nuxtjs/i18n',
     '@sentry/nuxt/module',
+    '@vite-pwa/nuxt'
   ],
+  ssr: false,
 
   devtools: {
     enabled: true
   },
 
-  css: ['~/assets/css/main.css'],
-
-
-  vite: {
-    optimizeDeps: {
-      include: [
-        '@vue/devtools-core',
-        '@vue/devtools-kit'
+  app: {
+    head: {
+      title: 'Nego-Lah',
+      htmlAttrs: {
+        lang: 'en'
+      },
+      meta: [
+        { charset: 'utf-8' },
+        { name: 'viewport', content: 'width=device-width, initial-scale=1, maximum-scale=5' },
+        { name: 'description', content: 'Malaysia\'s autonomous second-hand marketplace with AI price negotiations. Buy and sell pre-loved gadgets, fashion, and collectibles at fair market prices.' },
+        { name: 'keywords', content: 'second-hand marketplace, AI negotiation, nego-lah, pre-loved items, Malaysia marketplace, automated bargaining' },
+        { name: 'theme-color', content: '#10b981', media: '(prefers-color-scheme: light)' },
+        { name: 'theme-color', content: '#09090b', media: '(prefers-color-scheme: dark)' },
+        // OpenGraph
+        { property: 'og:type', content: 'website' },
+        { property: 'og:site_name', content: 'Nego-Lah' },
+        { property: 'og:title', content: 'Nego-Lah · Autonomous AI Price Negotiation Marketplace' },
+        { property: 'og:description', content: 'Malaysia\'s autonomous second-hand marketplace with AI price negotiations. Buy and sell pre-loved items at fair market prices.' },
+        { property: 'og:image', content: 'https://negolah.my/og-image.png' },
+        { property: 'og:image:width', content: '1200' },
+        { property: 'og:image:height', content: '675' },
+        { property: 'og:image:alt', content: 'Nego-Lah - Autonomous AI Price Negotiation Marketplace' },
+        { property: 'og:url', content: 'https://negolah.my' },
+        // Twitter Cards
+        { name: 'twitter:card', content: 'summary_large_image' },
+        { name: 'twitter:site', content: '@negolah' },
+        { name: 'twitter:title', content: 'Nego-Lah · Autonomous AI Price Negotiation Marketplace' },
+        { name: 'twitter:description', content: 'Malaysia\'s autonomous second-hand marketplace with AI price negotiations. Buy and sell pre-loved items at fair market prices.' },
+        { name: 'twitter:image', content: 'https://negolah.my/og-image.png' },
+        { name: 'twitter:image:alt', content: 'Nego-Lah - Autonomous AI Price Negotiation Marketplace' }
+      ],
+      link: [
+        { rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' },
+        { rel: 'icon', type: 'image/x-icon', href: '/favicon.ico' },
+        { rel: 'apple-touch-icon', sizes: '180x180', href: '/apple-touch-icon.png' },
+        { rel: 'canonical', href: 'https://negolah.my' }
       ]
     }
   },
 
+  css: ['~/assets/css/main.css'],
+  spaLoadingTemplate: 'spa-loading-template.html',
+
   runtimeConfig: {
     public: {
-      apiBaseUrl: process.env.API_BASE_URL || 'http://localhost:8000',
-      // Not secret (it's shipped to every browser anyway) — safe to leave empty
-      // by default. Set NUXT_PUBLIC_SENTRY_DSN (or SENTRY_DSN at build time) to enable.
-      sentryDsn: process.env.SENTRY_DSN || ''
+      apiBaseUrl: process.env.NUXT_PUBLIC_API_BASE_URL || process.env.API_BASE_URL || (process.env.NODE_ENV === 'production' ? 'https://api.negolah.my' : 'http://localhost:8000'),
+      sentryDsn: process.env.NUXT_PUBLIC_SENTRY_DSN || process.env.SENTRY_DSN || 'https://7c4d1217c773d186925bc7c19e6d0368@o4511643096907776.ingest.us.sentry.io/4511683725361152',
+      turnstileEnabled: process.env.NODE_ENV === 'production' || process.env.NUXT_PUBLIC_TURNSTILE_ENABLED === 'true',
+      turnstileSiteKey: process.env.NODE_ENV === 'production' ? (process.env.NUXT_PUBLIC_TURNSTILE_SITE_KEY || '0x4AAAAAAEmNZSy3jXy_Eh38') : '',
+      gtmId: process.env.NUXT_PUBLIC_GTM_ID || '',
+      gaId: process.env.NUXT_PUBLIC_GA_ID || 'G-M4J8K55PPM'
     }
   },
 
-  // The admin console authenticates via an httpOnly cookie on the API host, which
-  // SSR can't forward — render it client-side only (no SEO needed there anyway).
-  //
-  // The catch-all '/**' rule adds security headers that mirror production (Caddy).
-  // Full CSP is skipped in dev because Vite HMR injects dynamic scripts/WebSocket
-  // connections that would violate a strict policy.
+  // The catch-all '/**' rule adds security headers that mirror production (Caddy / Cloudflare Pages).
+  // Includes full CSP and Service Worker directives.
   routeRules: {
-    '/_console/**': { ssr: false },
-    '/_console': { ssr: false },
     '/**': {
       headers: {
         'X-Content-Type-Options': 'nosniff',
         'X-Frame-Options': 'DENY',
-        'Referrer-Policy': 'strict-origin-when-cross-origin'
+        'Referrer-Policy': 'strict-origin-when-cross-origin',
+        'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+        'Content-Security-Policy': 'default-src \'self\'; script-src \'self\' \'unsafe-inline\' \'unsafe-eval\' https://challenges.cloudflare.com https://www.googletagmanager.com https://*.google-analytics.com; worker-src \'self\' blob:; child-src \'self\' blob:; style-src \'self\' \'unsafe-inline\' https://fonts.googleapis.com; font-src \'self\' data: https://fonts.gstatic.com; img-src \'self\' data: blob: https:; media-src \'self\' https: blob:; connect-src \'self\' https://api.negolah.my http://localhost:8000 http://127.0.0.1:8000 https://*.supabase.co wss://*.supabase.co https://*.sentry.io https://challenges.cloudflare.com https://*.google-analytics.com https://*.analytics.google.com https://*.googletagmanager.com; frame-src \'self\' https://challenges.cloudflare.com https://js.stripe.com; object-src \'none\'; base-uri \'self\';'
       }
     }
   },
@@ -61,6 +94,46 @@ export default defineNuxtConfig({
 
   compatibilityDate: '2025-01-15',
 
+  nitro: {
+    prerender: {
+      routes: ['/']
+    }
+  },
+
+  vite: {
+    optimizeDeps: {
+      include: [
+        '@vue/devtools-core',
+        '@vue/devtools-kit'
+      ]
+    }
+  },
+
+  typescript: {
+    shim: true
+  },
+
+  hooks: {
+    'components:extend'(components) {
+      const pageHero = components.find(c => c.pascalName === 'UPageHero')
+      if (pageHero) {
+        components.push({
+          ...pageHero,
+          pascalName: 'UHero',
+          kebabName: 'u-hero'
+        })
+      }
+      const pageSection = components.find(c => c.pascalName === 'UPageSection')
+      if (pageSection) {
+        components.push({
+          ...pageSection,
+          pascalName: 'USection',
+          kebabName: 'u-section'
+        })
+      }
+    }
+  },
+
   eslint: {
     config: {
       stylistic: {
@@ -70,12 +143,31 @@ export default defineNuxtConfig({
     }
   },
 
+  i18n: {
+    strategy: 'no_prefix',
+    defaultLocale: 'en',
+    locales: [
+      { code: 'en', language: 'en-US', name: 'English' },
+      { code: 'ms', language: 'ms-MY', name: 'Bahasa Melayu' },
+      { code: 'zh', language: 'zh-CN', name: '简体中文' }
+    ],
+    detectBrowserLanguage: false,
+    vueI18n: './i18n.config.ts'
+  },
+
   // @nuxt/icon serves its local collections from `localApiEndpoint`, which
   // defaults to `/api/_nuxt_icon`. In production Caddy routes ALL `/api/*` to
   // the FastAPI backend, which would hijack that route and 404 every icon.
   // Move it off `/api` so it stays on the Nuxt server.
   icon: {
     localApiEndpoint: '/_nuxt_icon',
+    // The brand mark, served as a normal `i-nego-mark` icon name so it can be
+    // passed to any Nuxt UI component's `icon` prop (see the chat indicator in
+    // pages/chat.vue) instead of hand-rolling an SVG into a component slot.
+    // The file is monochrome `currentColor`, so `text-*` utilities theme it.
+    customCollections: [
+      { prefix: 'nego', dir: './app/assets/icons' }
+    ],
     // Pre-bundle the icons actually used in the app (static analysis of literal
     // `i-*` names) into the client build, so they render instantly and offline
     // with no runtime request to the Iconify API. This also removes the
@@ -109,7 +201,115 @@ export default defineNuxtConfig({
         'lucide:folder',
         'lucide:folder-open'
       ],
-      sizeLimitKb: 512
+      sizeLimitKb: 512,
+      // ssr: false — the generated site has no icon server to hit at runtime,
+      // so custom collections must be inlined into the client bundle too.
+      includeCustomCollections: true
+    }
+  },
+
+  pwa: {
+    registerType: 'autoUpdate',
+    manifest: {
+      name: 'Nego-Lah · Autonomous AI Price Negotiation Marketplace',
+      short_name: 'Nego-Lah',
+      description: 'Malaysia\'s premier second-hand marketplace with autonomous AI price negotiations.',
+      theme_color: '#10b981',
+      background_color: '#ffffff',
+      display: 'standalone',
+      orientation: 'portrait-primary',
+      scope: '/',
+      start_url: '/',
+      icons: [
+        {
+          src: '/favicon.svg',
+          sizes: 'any',
+          type: 'image/svg+xml',
+          purpose: 'any'
+        },
+        {
+          src: '/apple-touch-icon.png',
+          sizes: '180x180',
+          type: 'image/png'
+        },
+        {
+          src: '/icon-192.png',
+          sizes: '192x192',
+          type: 'image/png',
+          purpose: 'any maskable'
+        },
+        {
+          src: '/icon-512.png',
+          sizes: '512x512',
+          type: 'image/png',
+          purpose: 'any maskable'
+        }
+      ]
+    },
+    workbox: {
+      navigateFallback: '/',
+      navigateFallbackDenylist: [/^\/api\//, /^\/_console/],
+      globPatterns: ['**/*.{js,css,html,svg,png,ico,woff,woff2}'],
+      cleanupOutdatedCaches: true,
+      clientsClaim: true,
+      skipWaiting: true,
+      runtimeCaching: [
+        {
+          urlPattern: /^https:\/\/fonts\.(?:googleapis|gstatic)\.com\/.*/i,
+          handler: 'CacheFirst',
+          options: {
+            cacheName: 'google-fonts',
+            expiration: {
+              maxEntries: 10,
+              maxAgeSeconds: 60 * 60 * 24 * 365
+            },
+            cacheableResponse: {
+              statuses: [0, 200]
+            }
+          }
+        },
+        {
+          urlPattern: /\.(?:png|jpg|jpeg|svg|gif|webp)$/i,
+          handler: 'StaleWhileRevalidate',
+          options: {
+            cacheName: 'static-images',
+            expiration: {
+              maxEntries: 100,
+              maxAgeSeconds: 60 * 60 * 24 * 30
+            },
+            cacheableResponse: {
+              statuses: [0, 200]
+            }
+          }
+        },
+        {
+          urlPattern: /.*\/storage\/v1\/object\/public\/.*/i,
+          handler: 'StaleWhileRevalidate',
+          options: {
+            cacheName: 'supabase-storage-images',
+            expiration: {
+              maxEntries: 100,
+              maxAgeSeconds: 60 * 60 * 24 * 7
+            },
+            cacheableResponse: {
+              statuses: [0, 200]
+            }
+          }
+        },
+        {
+          // Never serve stale responses for API calls or chat / negotiation
+          urlPattern: /^https:\/\/api\.negolah\.my\/api\/.*/i,
+          handler: 'NetworkOnly'
+        }
+      ]
+    },
+    client: {
+      installPrompt: true
+    },
+    devOptions: {
+      enabled: false,
+      suppressWarnings: true,
+      type: 'module'
     }
   },
 
@@ -123,26 +323,41 @@ export default defineNuxtConfig({
   // Source map upload is skipped automatically whenever authToken is unset
   // (e.g. local dev builds), so nothing breaks without it.
   sentry: {
-    autoInjectServerSentry: 'top-level-import',
-    org: process.env.SENTRY_ORG,
-    project: process.env.SENTRY_PROJECT,
+    enabled: process.env.NODE_ENV === 'production',
+    org: process.env.SENTRY_ORG || process.env.NUXT_PUBLIC_SENTRY_ORG || 'nego-lah',
+    project: process.env.SENTRY_PROJECT || process.env.NUXT_PUBLIC_SENTRY_PROJECT || 'nego-lah-frontend',
     authToken: process.env.SENTRY_AUTH_TOKEN,
-    // Maps are uploaded to Sentry, then deleted locally so the shipped image
-    // never carries readable, unminified source.
+    release: {
+      name: process.env.SENTRY_RELEASE || '731092f67e3a1eefb8716bc53dc145016e6c412f'
+    },
     sourcemaps: {
       filesToDeleteAfterUpload: ['.output/**/*.map']
     }
   },
 
   supabase: {
-    // SSR mode — session is handled server-side via cookies
+    url: process.env.NUXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL,
+    key: process.env.NUXT_PUBLIC_SUPABASE_KEY || process.env.SUPABASE_KEY,
+    cookieOptions: {
+      secure: process.env.NODE_ENV === 'production'
+    },
     redirectOptions: {
       login: '/login',
       callback: '/confirm',
+      // This module's guard runs before any page middleware, so on a lapsed
+      // session it — not our own `auth` middleware — is what redirects, and it
+      // has no way to attach a `?redirect=` query. Letting it stash the blocked
+      // page in a cookie is the module's own answer to that; `pages/login.vue`
+      // plucks it so the visitor lands back where they were kicked off.
+      saveRedirectToCookie: true,
       // Public routes that don't require auth.
       // /_console is the admin area; it has its OWN cookie-based auth (handled by
       // the backend), so it must be excluded from the Supabase-user redirect.
       exclude: ['/', '/items', '/items/*', '/login', '/register', '/forgot-password', '/reset-password', '/privacy', '/terms', '/_console', '/_console/*']
     }
+  },
+
+  turnstile: {
+    siteKey: process.env.NODE_ENV === 'production' ? (process.env.NUXT_PUBLIC_TURNSTILE_SITE_KEY || '0x4AAAAAAEmNZSy3jXy_Eh38') : ''
   }
 })

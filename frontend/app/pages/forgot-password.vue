@@ -1,39 +1,53 @@
 <script setup lang="ts">
-import * as z from 'zod'
 import type { FormSubmitEvent } from '@nuxt/ui'
+import { forgotPasswordSchema, type ForgotPasswordForm } from '~/utils/schemas'
 
+const { t } = useI18n()
 const supabase = useSupabaseClient()
 const toast = useToast()
 
-useSeoMeta({ title: 'Forgot Password' })
+useSeoMeta({ title: () => t('auth.forgotPasswordTitle') })
 
-const fields = [{
+const fields = computed(() => [{
   name: 'email',
   type: 'email',
-  label: 'Email',
-  placeholder: 'Enter your email',
+  label: t('auth.emailLabel'),
+  placeholder: t('auth.emailPlaceholder'),
   required: true
-}]
+}])
 
-const schema = z.object({
-  email: z.string().email('Invalid email address')
-})
-
-type Schema = z.output<typeof schema>
 const loading = ref(false)
 const sent = ref(false)
+const { token: turnstileToken, isEnabled: isTurnstileEnabled } = useTurnstileToken()
 
-async function onSubmit(payload: FormSubmitEvent<Schema>) {
+async function onSubmit(payload: FormSubmitEvent<ForgotPasswordForm>) {
+  if (isTurnstileEnabled.value && !turnstileToken.value) {
+    toast.add({
+      title: t('auth.securityCheckRequired'),
+      description: t('auth.securityCheckRequiredDesc'),
+      color: 'warning'
+    })
+    return
+  }
   loading.value = true
   try {
     const { error } = await supabase.auth.resetPasswordForEmail(payload.data.email, {
-      redirectTo: `${window.location.origin}/reset-password`
+      redirectTo: `${window.location.origin}/reset-password`,
+      captchaToken: turnstileToken.value || undefined
     })
     if (error) throw error
     sent.value = true
-    toast.add({ title: 'Check your inbox', description: 'We sent you a password reset link.', color: 'success' })
+    toast.add({
+      title: t('auth.checkInbox'),
+      description: t('auth.resetLinkSent'),
+      color: 'success'
+    })
   } catch (err) {
-    toast.add({ title: 'Request failed', description: err instanceof Error ? err.message : 'Something went wrong', color: 'error' })
+    toast.add({
+      title: t('auth.requestFailed'),
+      description: err instanceof Error ? err.message : t('profile.somethingWentWrong'),
+      color: 'error'
+    })
   } finally {
     loading.value = false
   }
@@ -52,14 +66,14 @@ async function onSubmit(payload: FormSubmitEvent<Schema>) {
           class="size-10 text-primary"
         />
         <h2 class="text-lg font-semibold text-highlighted">
-          Email sent
+          {{ $t('auth.emailSent') }}
         </h2>
         <p class="text-sm text-muted">
-          If an account exists for that email, you'll receive a link to reset your password.
+          {{ $t('auth.emailSentDesc') }}
         </p>
         <UButton
           to="/login"
-          label="Back to login"
+          :label="$t('auth.backToLogin')"
           variant="ghost"
           class="mt-2"
         />
@@ -67,22 +81,34 @@ async function onSubmit(payload: FormSubmitEvent<Schema>) {
 
       <UAuthForm
         v-else
-        :schema="schema"
-        title="Forgot password"
-        description="Enter your email and we'll send you a reset link."
+        :schema="forgotPasswordSchema"
+        :title="$t('auth.forgotPasswordTitle')"
+        :description="$t('auth.forgotPasswordDesc')"
         icon="i-lucide-key-round"
         :fields="fields"
         :loading="loading"
-        :submit="{ label: 'Send reset link' }"
+        :submit="{ label: $t('auth.sendResetLink') }"
         @submit="onSubmit"
       >
+        <template #validation>
+          <div
+            v-if="isTurnstileEnabled"
+            class="flex justify-center my-3 min-h-[65px]"
+          >
+            <NuxtTurnstile
+              v-model="turnstileToken"
+              :options="{ action: 'forgot-password' }"
+            />
+          </div>
+        </template>
+
         <template #footer>
           <div class="text-sm text-center text-muted">
-            Remembered it?
+            {{ $t('auth.rememberPassword') }}
             <ULink
               to="/login"
               class="text-primary font-medium"
-            >Login</ULink>
+            >{{ $t('auth.loginTitle') }}</ULink>
           </div>
         </template>
       </UAuthForm>

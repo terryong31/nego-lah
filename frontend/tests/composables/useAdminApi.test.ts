@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { useAdminApi } from '../../app/composables/useAdminApi'
 
 // `$fetch` is a runtime global (provided by ofetch/nitro), not a named entry
 // in the Nuxt auto-import registry, so `mockNuxtImport('$fetch', ...)` fails

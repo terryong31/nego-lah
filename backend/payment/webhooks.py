@@ -3,6 +3,7 @@ import stripe
 from env import STRIPE_API_KEY, STRIPE_WEBHOOK_SECRET
 from logger import logger
 from payment.fulfillment import fulfill_purchase
+from payment.stripe_compat import stripe_get
 
 stripe.api_key = STRIPE_API_KEY
 
@@ -18,28 +19,37 @@ def handle_checkout_completed(event) -> dict:
     Returns the fulfill_purchase result dict so the route can decide whether to
     ask Stripe to retry.
     """
-    session = event['data']['object']
+    session = stripe_get(stripe_get(event, 'data'), 'object')
 
-    metadata = session.get('metadata', {}) or {}
+    metadata = stripe_get(session, 'metadata') or {}
 
     # PaymentLinks don't propagate metadata onto the Session — fetch from the link.
-    payment_link_id = session.get('payment_link')
-    if payment_link_id and not metadata.get('item_id'):
+    payment_link_id = stripe_get(session, 'payment_link')
+    if payment_link_id and not stripe_get(metadata, 'item_id'):
         try:
             plink = stripe.PaymentLink.retrieve(payment_link_id)
-            metadata = plink.metadata or {}
+            metadata = stripe_get(plink, 'metadata') or {}
         except Exception as e:
             logger.warning(f"⚠️ Error fetching PaymentLink metadata: {e}")
 
-    item_id = metadata.get('item_id')
-    user_id = metadata.get('user_id')
-    item_name = metadata.get('item_name', 'Item')
+    item_id = stripe_get(metadata, 'item_id')
+    user_id = stripe_get(metadata, 'user_id')
+    item_name = stripe_get(metadata, 'item_name')
+    if (not item_name or item_name.strip().lower() == "item") and item_id:
+        try:
+            from connector import admin_supabase
+            row = admin_supabase.table('items').select('name').eq('id', item_id).execute()
+            if row and row.data and row.data[0].get('name'):
+                item_name = row.data[0]['name']
+        except Exception as e:
+            logger.warning(f"⚠️ Webhook item lookup error: {e}")
+    item_name = item_name or 'Item'
 
-    buyer_email = (session.get('customer_details') or {}).get('email')
-    payment_intent = session.get('payment_intent')
+    buyer_email = stripe_get(stripe_get(session, 'customer_details'), 'email')
+    payment_intent = stripe_get(session, 'payment_intent')
 
     # Trust the amount Stripe actually charged.
-    amount = (session.get('amount_total') or 0) / 100
+    amount = (stripe_get(session, 'amount_total') or 0) / 100
 
     logger.info(
         f"💰 PAYMENT COMPLETED — item={item_id} buyer={user_id} "

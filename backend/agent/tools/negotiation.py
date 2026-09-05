@@ -136,5 +136,21 @@ def evaluate_offer(item_id: str, offered_price: float, extra_discount_percent: f
     else:
         result = f"REJECT_FLOOR: Offer of RM{offered_price} is below the absolute minimum of RM{min_price}. Tell buyer: 'Sorry, that's below my cost. The lowest I can do is RM{min_price}.'"
 
+    from agent.context import get_user_id
+
+    user_id = get_user_id()
+    if user_id and item_id:
+        try:
+            from cache import redis_client
+            active_price = None
+            if "ACCEPT" in result and offered_price < listed_price:
+                active_price = offered_price
+            elif "COUNTER" in result:
+                active_price = counter
+            if active_price is not None:
+                redis_client.setex(f"negotiated_price:{user_id}:{item_id}", 3 * 86400, str(active_price))
+        except Exception as e:
+            logger.warning(f"⚠️ Could not cache negotiated price: {e}")
+
     logger.info(f"📋 RESULT: {result}")
     return result

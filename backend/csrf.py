@@ -22,6 +22,7 @@ from env import (
     ADMIN_COOKIE_NAME,
     ADMIN_COOKIE_PATH,
     ADMIN_SESSION_TTL,
+    CSRF_COOKIE_DOMAIN,
     CSRF_COOKIE_NAME,
     CSRF_COOKIE_SAMESITE,
     CSRF_COOKIE_SECURE,
@@ -53,6 +54,7 @@ def set_csrf_cookie(response: Response, token: str) -> None:
         secure=CSRF_COOKIE_SECURE,
         samesite=CSRF_COOKIE_SAMESITE,
         path=ADMIN_COOKIE_PATH,
+        domain=CSRF_COOKIE_DOMAIN,
     )
 
 
@@ -60,7 +62,7 @@ def clear_csrf(session_id: str | None, response: Response) -> None:
     """Delete the CSRF token from Redis and clear the cookie."""
     if session_id:
         redis_client.delete(f"{_CSRF_KEY}{session_id}")
-    response.delete_cookie(key=CSRF_COOKIE_NAME, path=ADMIN_COOKIE_PATH)
+    response.delete_cookie(key=CSRF_COOKIE_NAME, path=ADMIN_COOKIE_PATH, domain=CSRF_COOKIE_DOMAIN)
 
 
 # ---------------------------------------------------------------------------

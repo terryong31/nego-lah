@@ -38,7 +38,6 @@ describe('layouts/default.vue', () => {
     const hrefs = wrapper.findAll('a').map(a => a.attributes('href'))
     expect(hrefs).toContain('/privacy')
     expect(hrefs).toContain('/terms')
-    expect(hrefs).toContain('https://github.com/terryong31/nego-lah')
   })
 
   it('does NOT apply the framed border classes to UMain when on the root path "/"', async () => {

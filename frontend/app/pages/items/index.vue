@@ -67,10 +67,10 @@ useSeoMeta({
   <div class="space-y-6">
     <div class="flex flex-col gap-1">
       <h1 class="text-2xl font-bold text-highlighted">
-        All Items
+        {{ $t('items.allItems') }}
       </h1>
       <p class="text-sm text-muted">
-        Browse every listing and start a bargain session.
+        {{ $t('items.allItemsDesc') }}
       </p>
     </div>
 
@@ -80,26 +80,26 @@ useSeoMeta({
         icon="i-lucide-search"
         size="md"
         variant="outline"
-        placeholder="Search for items..."
+        :placeholder="$t('items.searchPlaceholder')"
         class="w-full sm:w-72"
       />
 
       <!-- Filter pills -->
       <div class="flex gap-1.5 self-start sm:self-center">
         <UButton
-          label="All"
+          :label="$t('items.filterAll')"
           size="sm"
           :variant="activeFilter === 'all' ? 'solid' : 'ghost'"
           @click="activeFilter = 'all'"
         />
         <UButton
-          label="Available"
+          :label="$t('items.filterAvailable')"
           size="sm"
           :variant="activeFilter === 'available' ? 'solid' : 'ghost'"
           @click="activeFilter = 'available'"
         />
         <UButton
-          label="Sold Out"
+          :label="$t('items.filterSoldOut')"
           size="sm"
           :variant="activeFilter === 'sold' ? 'solid' : 'ghost'"
           @click="activeFilter = 'sold'"

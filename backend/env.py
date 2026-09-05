@@ -10,7 +10,7 @@ load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 ADMIN_SUPABASE_KEY = os.getenv("ADMIN_SUPABASE_KEY")
-USER_SUPABASE_KEY = os.getenv("USER_SUPABASE_KEY")
+USER_SUPABASE_KEY = os.getenv("USER_SUPABASE_KEY") or ADMIN_SUPABASE_KEY
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 REDIS_URL = os.getenv("REDIS_URL")
@@ -56,18 +56,24 @@ FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000").rstrip("/")
 # 2FA + the verify_admin session gate + rate limiting, not by hiding the path.
 ADMIN_PREFIX = "/admin"
 
+_is_https = FRONTEND_URL.startswith("https://")
+
 # Admin session / 2FA configuration.
 ADMIN_COOKIE_NAME = os.getenv("ADMIN_COOKIE_NAME", "admin_sid")
-ADMIN_COOKIE_SECURE = os.getenv("ADMIN_COOKIE_SECURE", "true").lower() == "true"
+ADMIN_COOKIE_SECURE = (
+    os.getenv("ADMIN_COOKIE_SECURE", "true" if _is_https else "false").lower() == "true"
+    and _is_https
+)
 # "strict" is safest and requires the admin UI + API to be same-site (same
-# registrable domain; ports/subdomains are fine). Use "none" only if the admin UI
-# and API live on different domains (then ADMIN_COOKIE_SECURE must be true).
-ADMIN_COOKIE_SAMESITE = os.getenv("ADMIN_COOKIE_SAMESITE", "strict").lower()
+# registrable domain; ports/subdomains are fine). In local dev (HTTP), "lax" ensures
+# cross-port cookies between localhost:3000 and localhost:8000 are sent smoothly.
+ADMIN_COOKIE_SAMESITE = os.getenv("ADMIN_COOKIE_SAMESITE", "strict" if _is_https else "lax").lower()
 # Cookie Path. Keep "/" when the backend sits behind a reverse proxy that strips a
 # path prefix (e.g. Caddy strips /api before forwarding): the browser sees the full
 # /api/admin/... URL, so a cookie scoped to the backend's internal /admin path would
 # never be sent back. "/" sidesteps the mismatch.
 ADMIN_COOKIE_PATH = os.getenv("ADMIN_COOKIE_PATH", "/")
+ADMIN_COOKIE_DOMAIN = os.getenv("ADMIN_COOKIE_DOMAIN")
 ADMIN_SESSION_TTL = int(os.getenv("ADMIN_SESSION_TTL", "7200"))  # sliding session, seconds
 ADMIN_PREAUTH_TTL = int(os.getenv("ADMIN_PREAUTH_TTL", "300"))   # 2FA pre-auth handle, seconds
 
@@ -75,8 +81,12 @@ ADMIN_PREAUTH_TTL = int(os.getenv("ADMIN_PREAUTH_TTL", "300"))   # 2FA pre-auth 
 # The CSRF cookie is NOT httpOnly (JS must read it). Secure/SameSite follow the
 # same pattern as the admin session cookie — override for local dev in .env.
 CSRF_COOKIE_NAME = os.getenv("CSRF_COOKIE_NAME", "csrf_token")
-CSRF_COOKIE_SECURE = os.getenv("CSRF_COOKIE_SECURE", "true").lower() == "true"
-CSRF_COOKIE_SAMESITE = os.getenv("CSRF_COOKIE_SAMESITE", "strict").lower()
+CSRF_COOKIE_SECURE = (
+    os.getenv("CSRF_COOKIE_SECURE", "true" if _is_https else "false").lower() == "true"
+    and _is_https
+)
+CSRF_COOKIE_SAMESITE = os.getenv("CSRF_COOKIE_SAMESITE", "strict" if _is_https else "lax").lower()
+CSRF_COOKIE_DOMAIN = os.getenv("CSRF_COOKIE_DOMAIN")
 
 # Supabase Storage bucket for item images and avatars.
 # Must match an existing bucket in your Supabase project.

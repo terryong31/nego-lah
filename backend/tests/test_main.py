@@ -101,27 +101,47 @@ async def test_cors_origins_unset_uses_default_list(monkeypatch):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_sentry_not_initialized_without_dsn():
-    # conftest pins SENTRY_DSN to "" (falsy, not simply absent - see conftest's
-    # module docstring for why), so the baseline module-level `app` was
-    # constructed without calling sentry_sdk.init at all.
-    assert not os.environ.get("SENTRY_DSN")
-
-
-@pytest.mark.asyncio
-async def test_sentry_initialized_when_dsn_set(monkeypatch):
+async def test_sentry_disabled_in_development_even_with_dsn(monkeypatch):
     import sentry_sdk
 
     mock_init = MagicMock()
     monkeypatch.setattr(sentry_sdk, "init", mock_init)
     monkeypatch.setenv("SENTRY_DSN", "https://fakekey@fake.ingest.sentry.io/123")
+    monkeypatch.setenv("ENV", "development")
+    try:
+        _reload_main()
+        mock_init.assert_not_called()
+    finally:
+        monkeypatch.undo()
+        _reload_main()
+
+
+@pytest.mark.asyncio
+async def test_sentry_initialized_in_production_when_dsn_set(monkeypatch):
+    import sentry_sdk
+
+    mock_init = MagicMock()
+    monkeypatch.setattr(sentry_sdk, "init", mock_init)
+    monkeypatch.setenv("SENTRY_DSN", "https://fakekey@fake.ingest.sentry.io/123")
+    monkeypatch.setenv("ENV", "production")
     try:
         _reload_main()
         mock_init.assert_called_once()
         _, kwargs = mock_init.call_args
         assert kwargs["dsn"] == "https://fakekey@fake.ingest.sentry.io/123"
-        # ENV=test (conftest baseline) -> not prod -> "development"
-        assert kwargs["environment"] == "development"
+        assert kwargs["environment"] == "production"
+    finally:
+        monkeypatch.undo()
+        _reload_main()
+
+
+@pytest.mark.asyncio
+async def test_sentry_enforced_in_production_raises_without_dsn(monkeypatch):
+    monkeypatch.setenv("SENTRY_DSN", "")
+    monkeypatch.setenv("ENV", "production")
+    try:
+        with pytest.raises(RuntimeError, match="SENTRY_DSN environment variable is strictly required in production"):
+            _reload_main()
     finally:
         monkeypatch.undo()
         _reload_main()
@@ -146,6 +166,9 @@ async def test_docs_reachable_when_not_prod():
 
 @pytest.mark.asyncio
 async def test_docs_hidden_when_env_is_production(monkeypatch):
+    import sentry_sdk
+    monkeypatch.setattr(sentry_sdk, "init", MagicMock())
+    monkeypatch.setenv("SENTRY_DSN", "https://fakekey@fake.ingest.sentry.io/123")
     monkeypatch.setenv("ENV", "production")
     try:
         reloaded = _reload_main()
@@ -164,7 +187,10 @@ async def test_docs_hidden_when_env_is_production(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_docs_hidden_when_env_is_prod_shorthand(monkeypatch):
+    import sentry_sdk
     # IS_PROD accepts "prod" as well as "production" (case-insensitively).
+    monkeypatch.setattr(sentry_sdk, "init", MagicMock())
+    monkeypatch.setenv("SENTRY_DSN", "https://fakekey@fake.ingest.sentry.io/123")
     monkeypatch.setenv("ENV", "PROD")
     try:
         reloaded = _reload_main()

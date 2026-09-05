@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import json
 
@@ -36,7 +37,9 @@ async def get_chat_history(
     try:
         from agent.memory import conversation_memory
 
-        return conversation_memory.get_history_page(user_id, limit=limit, offset=offset)
+        return await asyncio.to_thread(
+            conversation_memory.get_history_page, user_id, limit=limit, offset=offset
+        )
     except Exception as e:
         logger.error(f"Error getting chat history: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
@@ -53,7 +56,7 @@ async def clear_chat_history(
 
     try:
         from agent.memory import conversation_memory
-        conversation_memory.clear_history(user_id)
+        await asyncio.to_thread(conversation_memory.clear_history, user_id)
         return {"message": "Chat history cleared"}
     except Exception as e:
         logger.error(f"Error clearing chat history: {e}")
@@ -70,7 +73,10 @@ async def get_chat_settings(
     get_user_id_from_body_or_token(user_id, token_user_id)
 
     try:
-        result = admin_supabase.table('chat_settings').select('ai_enabled').eq('user_id', user_id).execute()
+        result = await asyncio.to_thread(
+            lambda: admin_supabase.table('chat_settings')
+            .select('ai_enabled').eq('user_id', user_id).execute()
+        )
         if result.data and len(result.data) > 0:
             return {"ai_enabled": result.data[0].get('ai_enabled', True)}
         return {"ai_enabled": True}  # Default to enabled
@@ -85,6 +91,12 @@ async def chat_stream(request: Request):
     Stream chat response using Server-Sent Events.
     Requires valid JWT token in Authorization header.
     Accepts both JSON body and multipart form data with optional file attachments.
+
+    Deliberately NOT Turnstile-gated: a siteverify token is single-use and
+    expires in ~300s, so it can only guard one-shot submissions (the auth entry
+    points in SPEC-003), not an endpoint the client calls on every message.
+    Abuse protection here is JWT auth + the per-user rate limit below + the AI
+    token budget.
     """
     # Validate JWT token FIRST
     token_user_id = await verify_user_token(request)
@@ -135,11 +147,18 @@ async def chat_stream(request: Request):
     async def generate():
         from agent.bot import chat_stream
         from agent.memory import conversation_memory
+        from payment.fulfillment import broadcast_to_chat
+
+        # Broadcast incoming human message to Realtime channel for live admin console synchronization
+        await asyncio.to_thread(broadcast_to_chat, user_id, message, role="user", source="human")
 
         # Check if AI is enabled for this user
         ai_enabled = True
         try:
-            settings = admin_supabase.table('chat_settings').select('ai_enabled').eq('user_id', user_id).execute()
+            settings = await asyncio.to_thread(
+                lambda: admin_supabase.table('chat_settings')
+                .select('ai_enabled').eq('user_id', user_id).execute()
+            )
             if settings.data and len(settings.data) > 0:
                 ai_enabled = settings.data[0].get('ai_enabled', True)
         except Exception as e:
@@ -147,7 +166,9 @@ async def chat_stream(request: Request):
 
         if not ai_enabled:
             # Save user message to memory but don't respond with AI.
-            conversation_memory.add_message(user_id, "human", message, source="human")
+            await asyncio.to_thread(
+                conversation_memory.add_message, user_id, "human", message, source="human"
+            )
             # Emit an empty-but-well-formed message so useChat clears its loading state.
             yield _sse({"type": "start"})
             yield _sse({"type": "finish"})
@@ -161,22 +182,37 @@ async def chat_stream(request: Request):
             rate_limit_message = "Sorry you messaged me too many times, may try again later.\n\nI will hand this conversation to Terry so you can discuss with him directly"
 
             # Save user message first
-            conversation_memory.add_message(user_id, "human", message, source="human")
+            await asyncio.to_thread(
+                conversation_memory.add_message, user_id, "human", message, source="human"
+            )
 
             # Send the rate limit message as an AI response
-            conversation_memory.add_message(user_id, "ai", rate_limit_message, source="ai")
+            await asyncio.to_thread(
+                conversation_memory.add_message, user_id, "ai", rate_limit_message, source="ai"
+            )
 
             # Update chat_settings to disable AI and enable admin intervention
-            admin_supabase.table('chat_settings').upsert({
-                'user_id': user_id,
-                'ai_enabled': False,
-                'admin_intervening': True,
-                'updated_at': 'now()'
-            }).execute()
+            await asyncio.to_thread(
+                lambda: admin_supabase.table('chat_settings').upsert({
+                    'user_id': user_id,
+                    'ai_enabled': False,
+                    'admin_intervening': True,
+                    'updated_at': 'now()'
+                }).execute()
+            )
 
             # Add system message about AI retiring
             system_msg = "--- The AI has retired from the chat and Terry will take over now ---"
-            conversation_memory.add_message(user_id, "system", system_msg, source="system")
+            await asyncio.to_thread(
+                conversation_memory.add_message, user_id, "system", system_msg, source="system"
+            )
+
+            await asyncio.to_thread(
+                broadcast_to_chat, user_id, rate_limit_message, role="ai", source="ai"
+            )
+            await asyncio.to_thread(
+                broadcast_to_chat, user_id, system_msg, role="system", source="system"
+            )
 
             # Deliver the rate-limit notice as a normal assistant message.
             yield _sse({"type": "start"})
@@ -207,6 +243,15 @@ async def chat_stream(request: Request):
                 if not delta:
                     continue
                 if isinstance(delta, dict):
+                    # SPEC-020: which engine served this turn (self-hosted Apple
+                    # M5 vs Gemini overflow). Emitted as an AI SDK data part —
+                    # this stream speaks the UI message protocol, where a bare
+                    # `event: metadata` frame would be dropped by the client.
+                    provider = delta.get("provider")
+                    if provider:
+                        yield _sse({"type": "data-provider", "id": "provider", "data": provider})
+                        continue
+
                     status = delta.get("status", "")
                     if status:
                         if not started:
@@ -234,6 +279,10 @@ async def chat_stream(request: Request):
         output_tokens = len(response_text) // 4 + 1 if response_text else 0
         track_ai_tokens(user_id, input_tokens, output_tokens)
 
+        # Broadcast completed AI response to Realtime & notification broker
+        if response_text:
+            await asyncio.to_thread(broadcast_to_chat, user_id, response_text, role="ai", source="ai")
+
         if started:
             yield _sse({"type": "text-end", "id": text_id})
         yield _sse({"type": "finish"})
@@ -249,3 +298,71 @@ async def chat_stream(request: Request):
             "x-vercel-ai-ui-message-stream": "v1",
         }
     )
+
+
+@router.get("/chat/notifications/stream")
+async def notifications_stream(request: Request):
+    """
+    Real-time Server-Sent Events (SSE) notification stream.
+    Emits instant notifications when the seller sends a message.
+    Accepts token via Authorization header or ?token= query parameter.
+    """
+    token = None
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header.split(" ", 1)[1]
+    if not token:
+        token = request.query_params.get("token")
+
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing authorization token")
+
+    from cache import cache_token_user, get_cached_user_by_token
+    user_id = get_cached_user_by_token(token)
+    if not user_id:
+        try:
+            # Supabase's client is synchronous: awaiting it in a thread keeps a
+            # cache miss from stalling every other request on this worker for
+            # the length of the round trip.
+            res = await asyncio.to_thread(admin_supabase.auth.get_user, token)
+            if res and res.user:
+                user_id = res.user.id
+                cache_token_user(token, user_id)
+            else:
+                raise HTTPException(status_code=401, detail="Invalid token")
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=401, detail=f"Authentication error: {e}") from e
+
+    from notifications import notification_broker
+
+    async def event_generator():
+        # Subscribe INSIDE the generator so it is always paired with the
+        # `finally` below. Subscribing in the route body leaks a queue (and its
+        # Redis channel) whenever the response body is never iterated — a client
+        # that vanishes between the handshake and the first chunk.
+        queue = await notification_broker.subscribe(user_id)
+        try:
+            yield ": connected\n\n"
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=15.0)
+                    yield f"event: message\ndata: {json.dumps(event)}\n\n"
+                except TimeoutError:
+                    yield ": ping\n\n"
+        finally:
+            await notification_broker.unsubscribe(user_id, queue)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        }
+    )
+

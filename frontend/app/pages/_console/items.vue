@@ -13,6 +13,9 @@ useSeoMeta({ title: 'Items · Admin', robots: 'noindex, nofollow' })
         <template #leading>
           <UDashboardSidebarCollapse />
         </template>
+        <template #right>
+          <UDashboardSearchButton class="w-60" />
+        </template>
       </UDashboardNavbar>
     </template>
 

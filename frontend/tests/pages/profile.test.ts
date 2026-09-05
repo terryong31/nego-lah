@@ -738,7 +738,7 @@ describe('pages/profile.vue', () => {
       wrapper = await mountSuspended(ProfilePage, {
         global: {
           stubs: {
-            UModal: { template: '<div><slot name="content" /></div>' }
+            UModal: { template: '<div><slot name="content" /><slot name="body" /><slot name="footer" /></div>' }
           }
         }
       })

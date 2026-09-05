@@ -15,6 +15,7 @@ export interface AnalyzeResult {
   condition?: string
   category?: string
   market_data?: { suggested_listing?: number } | null
+  translations?: Record<string, ItemTranslation>
 }
 
 // A partial form update the backend hands over early, before the whole
@@ -24,6 +25,7 @@ export interface AnalyzePatch {
   description?: string
   condition?: string
   price?: number
+  translations?: Record<string, ItemTranslation>
 }
 
 interface AnalyzeEvent {
@@ -82,7 +84,7 @@ async function downscale(file: File): Promise<Blob> {
 
 export const useItemAnalysis = () => {
   const config = useRuntimeConfig()
-  const { call } = useAdminApi()
+  const { call, ensureCsrfToken: adminEnsureCsrf } = useAdminApi()
 
   const isAnalyzing = ref(false)
   const progress = ref(0)
@@ -165,8 +167,13 @@ export const useItemAnalysis = () => {
    * @param files photos to analyze
    * @param onPatch called as individual fields become available, before the
    *   whole analysis is done
+   * @param language target language for AI generation ('en', 'ms', 'zh')
    */
-  async function analyze(files: File[], onPatch?: (patch: AnalyzePatch) => void): Promise<AnalyzeResult> {
+  async function analyze(
+    files: File[],
+    onPatch?: (patch: AnalyzePatch) => void,
+    language: string = 'all'
+  ): Promise<AnalyzeResult> {
     isAnalyzing.value = true
     progress.value = 0
     stageMessage.value = 'Preparing photos…'
@@ -175,15 +182,42 @@ export const useItemAnalysis = () => {
       const shrunk = await Promise.all(files.map(downscale))
       const fd = new FormData()
       shrunk.forEach((blob, i) => fd.append('images', blob, files[i]?.name ?? `photo-${i}.jpg`))
+      fd.append('language', language)
 
       progress.value = 5
       stageMessage.value = 'Uploading photos…'
 
-      const res = await fetch(`${config.public.apiBaseUrl}/admin/analyze-image/stream`, {
+      const csrfToken = adminEnsureCsrf ? await adminEnsureCsrf() : getCsrfToken()
+      const headers: Record<string, string> = {}
+      if (csrfToken) {
+        headers['X-CSRF-Token'] = csrfToken
+      }
+
+      let res = await fetch(`${config.public.apiBaseUrl}/admin/analyze-image/stream`, {
         method: 'POST',
         credentials: 'include',
+        headers,
         body: fd
       })
+
+      if (res.status === 403) {
+        try {
+          const fresh = await $fetch<{ csrf_token: string }>(`${config.public.apiBaseUrl}/admin/auth/csrf`, {
+            credentials: 'include'
+          })
+          if (fresh?.csrf_token) {
+            headers['X-CSRF-Token'] = fresh.csrf_token
+            res = await fetch(`${config.public.apiBaseUrl}/admin/analyze-image/stream`, {
+              method: 'POST',
+              credentials: 'include',
+              headers,
+              body: fd
+            })
+          }
+        } catch {
+          // Fall through to error handler
+        }
+      }
 
       if (!res.ok) {
         const detail = await res.json().catch(() => null)

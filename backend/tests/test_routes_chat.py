@@ -288,6 +288,53 @@ async def test_chat_stream_happy_path(client, monkeypatch, patch_supabase, fake_
     assert track_calls[0][0] == user_id
 
 
+async def test_chat_stream_forwards_provider_attribution(client, monkeypatch, patch_supabase, fake_supabase):
+    """SPEC-020: the engine that served the turn reaches the UI as an AI SDK
+    `data-provider` part, emitted before any token and never as message text."""
+    user_id = "user-provider"
+    monkeypatch.setattr("routes.chat.verify_user_token", await fake_verify_user_token_factory(user_id))
+
+    set_chat_settings_select(fake_supabase, [])
+    patch_supabase("routes.chat", admin=fake_supabase)
+
+    async def fake_chat_stream(user_id, message, item_id=None, files=None):
+        yield {"provider": {
+            "provider": "local_qwen",
+            "model": "mlx-community/Qwen3.6-35B-A3B-4bit",
+            "hardware": "Apple M5 (Self-Hosted)",
+        }}
+        yield "Sure!"
+
+    monkeypatch.setattr("agent.bot.chat_stream", fake_chat_stream)
+    monkeypatch.setattr("routes.chat.track_ai_tokens", lambda uid, inp, out: None)
+
+    resp = await client.post(
+        "/chat/stream",
+        json={"user_id": user_id, "message": "Hi"},
+        headers={"Authorization": "Bearer sometoken"},
+    )
+
+    assert resp.status_code == 200
+    frames = parse_sse(resp.text)
+
+    provider_frames = [f for f in frames if isinstance(f, dict) and f.get("type") == "data-provider"]
+    assert provider_frames == [{
+        "type": "data-provider",
+        "id": "provider",
+        "data": {
+            "provider": "local_qwen",
+            "model": "mlx-community/Qwen3.6-35B-A3B-4bit",
+            "hardware": "Apple M5 (Self-Hosted)",
+        },
+    }]
+
+    # It lands before the first token...
+    assert frames.index(provider_frames[0]) < frames.index({"type": "text-start", "id": "0"})
+    # ...and never leaks into the visible reply.
+    deltas = [f["delta"] for f in frames if isinstance(f, dict) and f.get("type") == "text-delta"]
+    assert deltas == ["Sure!"]
+
+
 async def test_chat_stream_multipart_with_file_and_empty_message(client, monkeypatch, patch_supabase, fake_supabase):
     user_id = "user-multipart"
     monkeypatch.setattr("routes.chat.verify_user_token", await fake_verify_user_token_factory(user_id))
@@ -479,7 +526,7 @@ async def test_chat_stream_exception_before_any_content(client, monkeypatch, pat
 
     async def failing_chat_stream(user_id, message, item_id=None, files=None):
         raise RuntimeError("agent blew up")
-        yield "unreachable"  # noqa: pragma - keeps this an async generator
+        yield "unreachable"  # noqa - keeps this an async generator
 
     monkeypatch.setattr("agent.bot.chat_stream", failing_chat_stream)
     monkeypatch.setattr("routes.chat.track_ai_tokens", lambda *a, **k: None)
@@ -685,3 +732,40 @@ async def test_chat_stream_body_user_id_blank_falls_back_to_token_user(client, m
 
     assert resp.status_code == 200
     assert recorded == [user_id]
+
+
+async def test_chat_stream_is_not_turnstile_gated(client, monkeypatch, patch_supabase, fake_supabase):
+    """/chat/stream must work without an X-Turnstile-Token header.
+
+    Turnstile tokens are single-use and expire after ~300s (Cloudflare's
+    siteverify rejects a replay with `timeout-or-duplicate`), so they can only
+    gate one-shot submissions -- the auth entry points in SPEC-003 -- never a
+    per-message chat endpoint. This test pins a REAL-looking secret rather than
+    relying on conftest's `TURNSTILE_SECRET_KEY: ""`: the empty value activates
+    verify_turnstile's dev bypass, which is precisely what let a Turnstile
+    dependency land on this route and 400 every message in dev.
+    """
+    monkeypatch.setenv("TURNSTILE_SECRET_KEY", "0x_not_a_testing_key")
+    monkeypatch.setenv("TURNSTILE_SECRET", "0x_not_a_testing_key")
+
+    user_id = "user-no-turnstile"
+    monkeypatch.setattr("routes.chat.verify_user_token", await fake_verify_user_token_factory(user_id))
+
+    set_chat_settings_select(fake_supabase, [])
+    patch_supabase("routes.chat", admin=fake_supabase)
+
+    async def fake_chat_stream(user_id, message, item_id=None, files=None):
+        yield "pong"
+
+    monkeypatch.setattr("agent.bot.chat_stream", fake_chat_stream)
+    monkeypatch.setattr("routes.chat.track_ai_tokens", lambda uid, inp, out: None)
+
+    resp = await client.post(
+        "/chat/stream",
+        json={"user_id": user_id, "message": "ping"},
+        headers={"Authorization": "Bearer sometoken"},
+    )
+
+    assert resp.status_code == 200
+    frames = parse_sse(resp.text)
+    assert {"type": "text-delta", "id": "0", "delta": "pong"} in frames

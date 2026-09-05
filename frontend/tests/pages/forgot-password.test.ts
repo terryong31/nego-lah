@@ -87,7 +87,7 @@ describe('pages/forgot-password.vue', () => {
       expect(wrapper.text()).toContain('Email sent')
       expect(wrapper.text()).toContain('If an account exists for that email, you\'ll receive a link to reset your password.')
       expect(wrapper.find('a[href="/login"]').exists()).toBe(true)
-      expect(wrapper.text()).toContain('Back to login')
+      expect(wrapper.text()).toMatch(/back to login/i)
       // The form (and its email input) should no longer be rendered
       expect(wrapper.find('input[type="email"]').exists()).toBe(false)
       expect(wrapper.text()).not.toContain('Forgot password')

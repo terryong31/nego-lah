@@ -27,7 +27,7 @@ mockNuxtImport('navigateTo', () => navigateToMock)
 mockComponent('UPinInput', {
   props: {
     modelValue: { type: Array, default: () => [] },
-    length: { type: [Number, String], default: 8 },
+    length: { type: [Number, String], default: 6 },
     otp: { type: Boolean, default: false },
     disabled: { type: Boolean, default: false }
   },
@@ -57,7 +57,7 @@ async function fillPassword(wrapper: VueWrapper, email = 'admin@example.com', pa
   await flushPromises()
 }
 
-async function fillOtp(wrapper: VueWrapper, code = '12345678') {
+async function fillOtp(wrapper: VueWrapper, code = '123456') {
   await wrapper.find('[data-testid="otp-input"]').setValue(code)
   await flushPromises()
 }
@@ -118,7 +118,7 @@ describe('pages/_console/login.vue', () => {
       expect(wrapper.find('input[type="password"]').exists()).toBe(false)
       expect(wrapper.find('[data-testid="otp-input"]').exists()).toBe(true)
       expect(wrapper.text()).toContain('admin@example.com')
-      expect(wrapper.text()).toContain('8-digit code')
+      expect(wrapper.text()).toContain('6-digit code')
     })
 
     it('shows a "Login failed" toast with the server detail message on failure and stays on the password step', async () => {
@@ -157,17 +157,17 @@ describe('pages/_console/login.vue', () => {
       callMock.mockReset()
     }
 
-    it('auto-submits once the 8-digit OTP is complete, verifies it, shows a success toast, and redirects', async () => {
+    it('auto-submits once the 6-digit OTP is complete, verifies it, shows a success toast, and redirects', async () => {
       wrapper = await mountSuspended(LoginPage)
       await goToOtpStep(wrapper)
 
       callMock.mockResolvedValue({ ok: true })
 
-      await fillOtp(wrapper, '12345678')
+      await fillOtp(wrapper, '123456')
 
       expect(callMock).toHaveBeenCalledWith('/auth/verify-2fa', {
         method: 'POST',
-        body: { handle: 'handle-123', code: '12345678' }
+        body: { handle: 'handle-123', code: '123456' }
       })
       expect(toastAddMock).toHaveBeenCalledWith({ title: 'Welcome back', color: 'success' })
       expect(navigateToMock).toHaveBeenCalledWith('/_console')
@@ -179,7 +179,7 @@ describe('pages/_console/login.vue', () => {
 
       callMock.mockRejectedValue({ data: { detail: 'Code expired' } })
 
-      await fillOtp(wrapper, '12345678')
+      await fillOtp(wrapper, '123456')
 
       expect(toastAddMock).toHaveBeenCalledWith({
         title: 'Verification failed',
@@ -197,7 +197,7 @@ describe('pages/_console/login.vue', () => {
 
       callMock.mockRejectedValue(new Error('boom'))
 
-      await fillOtp(wrapper, '12345678')
+      await fillOtp(wrapper, '123456')
 
       expect(toastAddMock).toHaveBeenCalledWith({
         title: 'Verification failed',
@@ -206,7 +206,7 @@ describe('pages/_console/login.vue', () => {
       })
     })
 
-    it('does not call the API when the code is shorter than 8 digits', async () => {
+    it('does not call the API when the code is shorter than 6 digits', async () => {
       wrapper = await mountSuspended(LoginPage)
       await goToOtpStep(wrapper)
 

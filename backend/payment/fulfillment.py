@@ -22,7 +22,7 @@ import sentry_sdk
 import stripe
 
 from connector import admin_supabase
-from env import STRIPE_API_KEY, SUPABASE_URL, USER_SUPABASE_KEY
+from env import ADMIN_SUPABASE_KEY, STRIPE_API_KEY, SUPABASE_URL, USER_SUPABASE_KEY
 from logger import logger
 
 stripe.api_key = STRIPE_API_KEY
@@ -31,23 +31,21 @@ stripe.api_key = STRIPE_API_KEY
 def broadcast_to_chat(user_id: str, content: str, role: str = "ai", source: str = "ai"):
     """
     Broadcast a message to the user's chat + notifications channels via Supabase
-    Realtime, so AI messages triggered by webhooks show up live.
+    Realtime and the SSE notification broker, so messages show up live.
     """
     try:
         broadcast_url = f"{SUPABASE_URL}/realtime/v1/api/broadcast"
+        key = ADMIN_SUPABASE_KEY or USER_SUPABASE_KEY
         headers = {
-            "apikey": USER_SUPABASE_KEY,
-            "Authorization": f"Bearer {USER_SUPABASE_KEY}",
+            "apikey": key,
+            "Authorization": f"Bearer {key}",
             "Content-Type": "application/json",
         }
         payload = {
             "messages": [{
                 "topic": f"chat:{user_id}",
-                "event": "broadcast",
-                "payload": {
-                    "event": "new_message",
-                    "payload": {"role": role, "source": source, "content": content},
-                },
+                "event": "new_message",
+                "payload": {"role": role, "source": source, "content": content},
             }]
         }
         requests.post(broadcast_url, json=payload, headers=headers, timeout=2)
@@ -56,6 +54,25 @@ def broadcast_to_chat(user_id: str, content: str, role: str = "ai", source: str 
         logger.info(f"📡 Broadcasted message to user {user_id}")
     except Exception as e:
         logger.warning(f"❌ Broadcast error: {e}")
+
+    # The SSE stream is the buyer's "someone messaged you" channel, so only
+    # messages addressed TO them belong on it. Their own outgoing text
+    # (source="human", broadcast purely to sync the admin console) and system
+    # separators stay on Realtime — otherwise the buyer gets toasted for
+    # sentences they just typed.
+    if source in ("human", "system"):
+        return
+
+    try:
+        from notifications import notification_broker
+        notification_broker.publish(user_id, {
+            "type": "new_message",
+            "message": content,
+            "source": source,
+            "role": role,
+        })
+    except Exception as e:
+        logger.debug(f"Notification broker publish skipped: {e}")
 
 
 def _is_unique_violation(err: Exception) -> bool:
@@ -96,15 +113,15 @@ def _refund(payment_intent: str, reason: str = "duplicate") -> bool:
 
 
 def _send_thank_you(user_id: str, item_name: str, amount: float):
-    """Post + broadcast the post-purchase shipping-info prompt (once)."""
-    thank_you_msg = f"""🎉 **Payment Confirmed!**
+    """Post + broadcast the post-purchase shipping-info prompt (once). Plain text without markdown formatting."""
+    thank_you_msg = f"""🎉 Payment Confirmed!
 
-Thank you for purchasing **{item_name}** for RM{amount:.2f}!
+Thank you for purchasing {item_name} for RM{amount:.2f}!
 
 To complete your order, please provide your shipping details:
-1. **Full Name** (recipient)
-2. **Phone Number**
-3. **Shipping Address**
+1. Full Name (recipient)
+2. Phone Number
+3. Shipping Address
 
 Just reply with these details and I'll process your order right away!"""
     try:
@@ -145,8 +162,16 @@ def _get_or_create_order(payment_intent, item_id, user_id, amount, item_name):
         return None, None, None
 
 
-def _finalize_won_sale(item_id, user_id, payment_intent, amount, item_name, buyer_email):
+def _finalize_won_sale(item_id, user_id, payment_intent, amount, item_name, buyer_email, order_id=None):
     """Side effects that run exactly once — only on the call that wins the claim."""
+    if (not item_name or item_name.strip().lower() == "item") and item_id:
+        try:
+            item_res = admin_supabase.table('items').select('name').eq('id', item_id).execute()
+            if item_res and item_res.data and item_res.data[0].get('name'):
+                item_name = item_res.data[0]['name']
+        except Exception as err:
+            logger.warning(f"⚠️ Could not look up item name for {item_id}: {err}")
+
     logger.info(f"✅ Item {item_id} sold to {user_id} (payment {payment_intent})")
 
     try:
@@ -175,6 +200,36 @@ def _finalize_won_sale(item_id, user_id, payment_intent, amount, item_name, buye
 
     _send_thank_you(user_id, item_name, amount)
 
+    # Deliver receipt to buyer and alert to seller
+    try:
+        resolved_buyer_email = buyer_email
+        if not resolved_buyer_email:
+            try:
+                user_res = admin_supabase.auth.admin.get_user_by_id(user_id)
+                if user_res and hasattr(user_res, "user") and user_res.user:
+                    resolved_buyer_email = user_res.user.email
+                elif user_res and isinstance(user_res, dict):
+                    resolved_buyer_email = user_res.get("email") or (user_res.get("user") or {}).get("email")
+            except Exception as auth_err:
+                logger.warning(f"⚠️ Could not lookup buyer email for notification: {auth_err}")
+
+        from env import RESEND_FORWARD_TO
+        from services.email_service import send_purchase_receipt, send_seller_sale_alert
+        order_info = {
+            "id": order_id or "N/A",
+            "item_name": item_name,
+            "amount": amount,
+            "buyer_email": resolved_buyer_email,
+            "buyer_id": user_id,
+        }
+        if resolved_buyer_email:
+            send_purchase_receipt(resolved_buyer_email, order_info)
+        seller_target = RESEND_FORWARD_TO
+        if seller_target:
+            send_seller_sale_alert(seller_target, order_info)
+    except Exception as mail_err:
+        logger.warning(f"⚠️ Could not send order notifications via email: {mail_err}")
+
 
 def fulfill_purchase(
     item_id: str,
@@ -198,6 +253,15 @@ def fulfill_purchase(
     if not item_id or not user_id:
         logger.error("❌ fulfill_purchase missing item_id or user_id")
         return {"status": "error", "error": "missing_item_or_user"}
+
+    # Resolve real item name from DB if missing or generic placeholder
+    if (not item_name or item_name.strip().lower() == "item") and item_id:
+        try:
+            item_res = admin_supabase.table('items').select('name').eq('id', item_id).execute()
+            if item_res and item_res.data and item_res.data[0].get('name'):
+                item_name = item_res.data[0]['name']
+        except Exception as err:
+            logger.warning(f"⚠️ Could not look up item name for {item_id}: {err}")
 
     if not payment_intent:
         # Without a PaymentIntent we cannot guarantee idempotency or refund.
@@ -240,7 +304,7 @@ def fulfill_purchase(
 
     if claim.data:
         # We performed the transition — run the one-time side effects.
-        _finalize_won_sale(item_id, user_id, payment_intent, amount, item_name, buyer_email)
+        _finalize_won_sale(item_id, user_id, payment_intent, amount, item_name, buyer_email, order_id=order_id)
         return {"status": "fulfilled", "order_id": order_id}
 
     # --- Claim failed: already sold. Ours (duplicate) or someone else's? ----

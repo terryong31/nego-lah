@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { TableColumn } from '@nuxt/ui'
 
+const { t } = useI18n()
 const { call } = useAdminApi()
 const toast = useToast()
 
@@ -104,13 +105,13 @@ async function remove(u: AdminUser) {
   }
 }
 
-const columns: TableColumn<AdminUser>[] = [
-  { accessorKey: 'display_name', header: 'User' },
-  { accessorKey: 'is_banned', header: 'Status' },
+const columns = computed<TableColumn<AdminUser>[]>(() => [
+  { accessorKey: 'display_name', header: t('admin.usersSection.colName') },
+  { accessorKey: 'is_banned', header: t('admin.usersSection.colStatus') },
   { accessorKey: 'ai_enabled', header: 'AI' },
-  { accessorKey: 'created_at', header: 'Joined' },
+  { accessorKey: 'created_at', header: t('admin.usersSection.colCreated') },
   { id: 'actions', header: '' }
-]
+])
 </script>
 
 <template>
@@ -123,7 +124,7 @@ const columns: TableColumn<AdminUser>[] = [
         size="xs"
         variant="ghost"
         icon="i-lucide-refresh-cw"
-        label="Refresh"
+        :label="$t('admin.ordersSection.refresh')"
         :loading="pending"
         @click="refresh()"
       />
@@ -135,6 +136,16 @@ const columns: TableColumn<AdminUser>[] = [
       :loading="pending"
       :ui="{ td: 'py-2' }"
     >
+      <template #empty>
+        <UEmpty
+          icon="i-lucide-users"
+          :title="$t('admin.usersSection.emptyTitle')"
+          :description="$t('admin.usersSection.emptyDesc')"
+          variant="naked"
+          class="py-6"
+        />
+      </template>
+
       <template #display_name-cell="{ row }">
         <div class="flex items-center gap-3">
           <UAvatar

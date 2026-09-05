@@ -1,6 +1,11 @@
 @import "tailwindcss";
 @import "@nuxt/ui";
 
+html,
+body {
+  overflow-x: clip;
+}
+
 @theme static {
   --font-sans: 'Public Sans', sans-serif;
 
@@ -15,4 +20,172 @@
   --color-green-800: #016538;
   --color-green-900: #0A5331;
   --color-green-950: #052E16;
+}
+
+/* Corporate Memphis & 2D Motion Keyframes */
+@keyframes memphis-float {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  50% { transform: translateY(-8px) rotate(1.2deg); }
+}
+
+@keyframes memphis-float-reverse {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  50% { transform: translateY(8px) rotate(-1.2deg); }
+}
+
+@keyframes memphis-wobble {
+  0%, 100% { transform: rotate(-6deg); }
+  50% { transform: rotate(6deg); }
+}
+
+@keyframes memphis-pulse-subtle {
+  0%, 100% { transform: scale(1); opacity: 0.9; }
+  50% { transform: scale(1.05); opacity: 1; }
+}
+
+@keyframes memphis-spin-slow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes memphis-pop {
+  0% { transform: scale(0.7) rotate(-8deg); opacity: 0; }
+  70% { transform: scale(1.08) rotate(3deg); opacity: 1; }
+  100% { transform: scale(1) rotate(0deg); opacity: 1; }
+}
+
+.animate-memphis-float {
+  animation: memphis-float 4s ease-in-out infinite;
+}
+
+.animate-memphis-float-reverse {
+  animation: memphis-float-reverse 4.5s ease-in-out infinite;
+}
+
+.animate-memphis-wobble {
+  animation: memphis-wobble 3s ease-in-out infinite;
+  transform-origin: top center;
+}
+
+.animate-memphis-pulse-subtle {
+  animation: memphis-pulse-subtle 2.5s ease-in-out infinite;
+}
+
+.animate-memphis-spin-slow {
+  animation: memphis-spin-slow 18s linear infinite;
+}
+
+.animate-memphis-pop {
+  animation: memphis-pop 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-memphis-float,
+  .animate-memphis-float-reverse,
+  .animate-memphis-wobble,
+  .animate-memphis-pulse-subtle,
+  .animate-memphis-spin-slow,
+  .animate-memphis-pop {
+    animation: none !important;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Scroll-driven section reveals.
+
+   Progressive enhancement: content is fully visible with no animation at all,
+   and only browsers that actually support view() timelines opt into the fade.
+   That keeps it off the main thread (no scroll listener, no IntersectionObserver)
+   and means a browser without support renders the finished state rather than
+   an invisible section — the usual failure mode of JS reveal libraries.
+--------------------------------------------------------------------------- */
+@supports (animation-timeline: view()) {
+  @media (prefers-reduced-motion: no-preference) {
+    @keyframes reveal-rise {
+      from { opacity: 0; transform: translateY(30px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .reveal-rise {
+      animation: reveal-rise linear both;
+      animation-timeline: view();
+      animation-range: entry 4% cover 24%;
+    }
+  }
+}
+
+/* Chat bubble entrance for the negotiation replay. Mirrors memphis-pop's
+   overshoot so the demo reads as part of the same illustrated world. */
+@keyframes bubble-in {
+  0% { opacity: 0; transform: translateY(12px) scale(0.94); }
+  70% { opacity: 1; transform: translateY(-2px) scale(1.01); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes think-bounce {
+  0%, 80%, 100% { transform: translateY(0); opacity: 0.45; }
+  40% { transform: translateY(-4px); opacity: 1; }
+}
+
+.animate-bubble-in {
+  animation: bubble-in 0.42s cubic-bezier(0.175, 0.885, 0.32, 1.275) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-bubble-in {
+    animation: none !important;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Chat work-process indicator.
+
+   The brand mark replaces Nuxt UI's default `animate-spin` loader icon and
+   does a small hop with a full 3D flip — the same choreography as the SPA
+   loading screen (spa-loading-template.html's loaderJump + loaderSpin), scaled
+   from a 56px leap down to 3px so it reads as a busy glyph at size-4 rather
+   than a bouncing logo. Both axes live in one keyframe so the flip stays
+   locked to the airborne phase and always lands facing front.
+--------------------------------------------------------------------------- */
+@keyframes brand-hop {
+  0%, 12% {
+    transform: perspective(60px) translateY(0) scale(1) rotateY(0deg);
+    animation-timing-function: cubic-bezier(0.35, 0, 0.7, 0.2);
+  }
+  20% {
+    /* Plié prep dip */
+    transform: perspective(60px) translateY(0.5px) scale(1.08, 0.92) rotateY(0deg);
+    animation-timing-function: cubic-bezier(0.1, 0.9, 0.25, 1);
+  }
+  40% {
+    /* Apex, mid-flip */
+    transform: perspective(60px) translateY(-3px) scale(0.97, 1.03) rotateY(180deg);
+    animation-timing-function: cubic-bezier(0.7, 0.1, 0.85, 0.7);
+  }
+  58% {
+    /* Touchdown squash, flip complete */
+    transform: perspective(60px) translateY(0.5px) scale(1.1, 0.9) rotateY(360deg);
+    animation-timing-function: cubic-bezier(0.2, 0.8, 0.3, 1);
+  }
+  66% {
+    /* Micro rebound */
+    transform: perspective(60px) translateY(-1px) scale(1) rotateY(360deg);
+  }
+  74%, 100% {
+    /* Landed, resting */
+    transform: perspective(60px) translateY(0) scale(1) rotateY(360deg);
+  }
+}
+
+.animate-brand-hop {
+  animation: brand-hop 1.6s infinite;
+  transform-origin: center bottom;
+  transform-style: preserve-3d;
+  will-change: transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-brand-hop {
+    animation: none !important;
+  }
 }

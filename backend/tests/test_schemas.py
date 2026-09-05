@@ -23,7 +23,6 @@ from schemas import (
     OrderStatusUpdate,
     OrderUpdate,
     PasswordUpdateSchema,
-    UpdateItemSchema,
     UserProfileUpdateRequest,
 )
 
@@ -62,23 +61,6 @@ def test_create_item_schema_optional_defaults():
 def test_create_item_schema_missing_required_field_raises():
     with pytest.raises(ValidationError):
         CreateItemSchema(description="No name provided", condition="new", images="x")
-
-
-def test_update_item_schema_all_optional():
-    s = UpdateItemSchema()
-    assert s.name is None
-    assert s.description is None
-    assert s.condition is None
-    assert s.images is None
-    assert s.price is None
-    assert s.min_price is None
-
-
-def test_update_item_schema_partial():
-    s = UpdateItemSchema(name="New Name", price=25.5)
-    assert s.name == "New Name"
-    assert s.price == 25.5
-    assert s.description is None
 
 
 def test_image_reorder_request():

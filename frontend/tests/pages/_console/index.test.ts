@@ -100,15 +100,14 @@ describe('pages/_console/index.vue', () => {
       expect(callMock).toHaveBeenCalledWith('/summary')
     })
 
-    it('shows a skeleton placeholder in every card while the fetch is in flight, and none once it resolves', async () => {
+    it('shows skeleton placeholders while the fetch is in flight, and none once it resolves', async () => {
       const { promise, resolve } = deferred<Summary>()
       callMock.mockReturnValue(promise)
 
       const w = await mountPage()
 
-      // 4 headline stats + 4 pipeline stages + 3 inventory tiles = 11 cards,
-      // each rendering exactly one USkeleton (aria-busy="true") while pending.
-      expect(w.findAll('[aria-busy="true"]')).toHaveLength(11)
+      // Multiple skeleton loaders across KPI cards, pipeline stages, charts, and activity feeds
+      expect(w.findAll('[aria-busy="true"]').length).toBeGreaterThanOrEqual(11)
       expect(w.text()).not.toContain('RM 0.00')
 
       resolve(makeSummary())
@@ -299,6 +298,73 @@ describe('pages/_console/index.vue', () => {
 
       expect(w.text()).toContain('Orders pipeline')
       expect(w.text()).toContain('Inventory')
+    })
+  })
+
+  describe('recent orders feed and operational hub', () => {
+    it('calls /orders on mount and displays recent order items', async () => {
+      callMock.mockImplementation((url: string) => {
+        if (url === '/orders') {
+          return Promise.resolve({
+            orders: [
+              {
+                id: 'order-12345678',
+                item_name: 'Vintage Camera',
+                amount: 350.0,
+                status: 'confirmed',
+                buyer_name: 'Alice',
+                created_at: '2026-09-04T10:00:00Z'
+              }
+            ],
+            stats: { total_orders: 1, total_sales: 350.0 }
+          })
+        }
+        return Promise.resolve(makeSummary())
+      })
+
+      const w = await mountPage()
+      expect(callMock).toHaveBeenCalledWith('/orders')
+      expect(w.text()).toContain('Vintage Camera')
+      expect(w.text()).toContain('Alice')
+      expect(w.text()).toContain('RM 350.00')
+      expect(w.text()).toContain('confirmed')
+    })
+
+    it('displays empty state message when there are no recent orders', async () => {
+      callMock.mockImplementation((url: string) => {
+        if (url === '/orders') {
+          return Promise.resolve({ orders: [], stats: { total_orders: 0, total_sales: 0 } })
+        }
+        return Promise.resolve(makeSummary())
+      })
+
+      const w = await mountPage()
+      expect(w.text()).toContain('No orders placed yet')
+    })
+  })
+
+  describe('AI negotiation telemetry and quick actions', () => {
+    it('renders AI pulse card and allows inspecting live conversations', async () => {
+      callMock.mockResolvedValue(makeSummary({ conversations: 7 }))
+      const w = await mountPage()
+
+      expect(w.text()).toContain('AI Bargaining Pulse')
+      expect(w.text()).toContain('Inspect Live Conversations')
+    })
+
+    it('renders quick action floating button and menu items for items, orders, and users', async () => {
+      callMock.mockResolvedValue(makeSummary())
+      const w = await mountPage()
+
+      expect(w.text()).toContain('Quick Actions')
+      interface QuickActionItem {
+        label?: string
+      }
+      const vm = w.vm as unknown as { quickActionItems: QuickActionItem[][] }
+      const labels = vm.quickActionItems.flat().map(i => i.label)
+      expect(labels).toContain('Create New Item Listing')
+      expect(labels).toContain('Manage Shipping & Orders')
+      expect(labels).toContain('View Registered Users')
     })
   })
 })

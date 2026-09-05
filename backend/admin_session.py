@@ -17,8 +17,11 @@ There is deliberately no IP allowlist — access is gated by the factors above
 plus rate limiting, audit logging, and the layers documented in the README.
 """
 import json
+import re
 import secrets
+from pathlib import Path
 
+import httpx
 from fastapi import HTTPException, Request, Response
 from supabase import create_client
 
@@ -26,12 +29,15 @@ from cache import check_rate_limit, redis_client
 from connector import admin_supabase
 from csrf import clear_csrf, generate_csrf_token, set_csrf_cookie
 from env import (
+    ADMIN_COOKIE_DOMAIN,
     ADMIN_COOKIE_NAME,
     ADMIN_COOKIE_PATH,
     ADMIN_COOKIE_SAMESITE,
     ADMIN_COOKIE_SECURE,
     ADMIN_PREAUTH_TTL,
     ADMIN_SESSION_TTL,
+    RESEND_API_KEY,
+    RESEND_FORWARD_FROM,
     SUPABASE_URL,
     USER_SUPABASE_KEY,
 )
@@ -136,16 +142,97 @@ def password_then_send_otp(email: str, password: str) -> str:
     except Exception as e:
         logger.debug(f"Best-effort sign_out failed (ignored): {e}")
 
-    # Factor 2: email OTP. Failure here is logged but still returns a handle so
-    # the response shape can't be used to probe accounts.
+    # Factor 2: email OTP. Falls back to direct Resend generation/dispatch if Supabase mailer fails.
+    # Returns a handle regardless so the response shape can't be used to probe accounts.
     try:
         client.auth.sign_in_with_otp({"email": email, "options": {"should_create_user": False}})
     except Exception as e:
-        logger.error(f"Failed to send admin OTP to {email}: {e}")
+        logger.warning(f"Supabase sign_in_with_otp failed for {email} ({e}); attempting direct Resend fallback")
+        otp, action_link = _generate_otp_link(email)
+        if otp:
+            sent = _send_otp_via_resend(email, otp, action_link)
+            if not sent:
+                logger.error(f"Failed to deliver admin OTP to {email} via Resend fallback")
+        else:
+            logger.error(f"Failed to generate admin OTP link for {email}")
 
     handle = secrets.token_urlsafe(32)
     redis_client.setex(f"{_PREAUTH_KEY}{handle}", ADMIN_PREAUTH_TTL, email)
     return handle
+
+
+def _render_otp_email_html(otp: str, action_link: str | None = None) -> str:
+    template_path = Path(__file__).resolve().parent.parent / "supabase" / "templates" / "magic_link.html"
+    if template_path.exists():
+        try:
+            html = template_path.read_text(encoding="utf-8")
+            html = html.replace("{{ .Token }}", otp)
+            if action_link:
+                html = html.replace("{{ .ConfirmationURL }}", action_link)
+                html = html.replace("{{ if .ConfirmationURL }}", "").replace("{{ end }}", "")
+            else:
+                html = re.sub(r"\{\{\s*if\s*\.ConfirmationURL\s*\}\}.*?\{\{\s*end\s*\}\}", "", html, flags=re.DOTALL)
+            return html
+        except Exception as e:
+            logger.warning(f"Failed to read email template {template_path}: {e}")
+
+    return (
+        f"<h2>Your Nego-lah Verification Code</h2>"
+        f"<p>Use the following one-time code to sign in:</p>"
+        f"<h1 style='letter-spacing: 4px; font-family: monospace;'>{otp}</h1>"
+        f"<p>Valid for 10 minutes. Do not share this code.</p>"
+    )
+
+
+def _generate_otp_link(email: str) -> tuple[str | None, str | None]:
+    """Generate an OTP token using Supabase admin service role."""
+    try:
+        res = admin_supabase.auth.admin.generate_link({"type": "magiclink", "email": email})
+        otp = getattr(res.properties, "email_otp", None)
+        action_link = getattr(res.properties, "action_link", None)
+        return otp, action_link
+    except Exception as e:
+        logger.error(f"Failed to generate OTP link via admin_supabase: {e}")
+        return None, None
+
+
+def _send_otp_via_resend(email: str, otp: str, action_link: str | None = None) -> bool:
+    """Fallback OTP delivery via Resend API when Supabase built-in mailer fails."""
+    if not RESEND_API_KEY:
+        return False
+
+    html_content = _render_otp_email_html(otp, action_link)
+    headers = {
+        "Authorization": f"Bearer {RESEND_API_KEY}",
+        "Content-Type": "application/json",
+    }
+
+    senders = []
+    if RESEND_FORWARD_FROM:
+        senders.append(RESEND_FORWARD_FROM)
+    senders.append("Nego-lah <onboarding@resend.dev>")
+
+    seen = set()
+    unique_senders = [s for s in senders if s and not (s in seen or seen.add(s))]
+
+    for sender in unique_senders:
+        payload = {
+            "from": sender,
+            "to": [email],
+            "subject": f"Your Nego-lah Verification Code: {otp}",
+            "html": html_content,
+        }
+        try:
+            with httpx.Client(timeout=10.0) as http_client:
+                resp = http_client.post("https://api.resend.com/emails", headers=headers, json=payload)
+                if resp.status_code < 300:
+                    logger.info(f"Admin OTP delivered to {email} via Resend fallback (sender: {sender})")
+                    return True
+                logger.warning(f"Resend send attempt from {sender} returned {resp.status_code}: {resp.text}")
+        except Exception as err:
+            logger.warning(f"Resend send attempt from {sender} failed: {err}")
+
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -212,6 +299,7 @@ def _set_cookie(response: Response, sid: str) -> None:
         secure=ADMIN_COOKIE_SECURE,
         samesite=ADMIN_COOKIE_SAMESITE,
         path=ADMIN_COOKIE_PATH,
+        domain=ADMIN_COOKIE_DOMAIN,
     )
 
 
@@ -219,7 +307,7 @@ def clear_session(request: Request, response: Response) -> None:
     sid = request.cookies.get(ADMIN_COOKIE_NAME)
     if sid:
         redis_client.delete(f"{_SESS_KEY}{sid}")
-    response.delete_cookie(key=ADMIN_COOKIE_NAME, path=ADMIN_COOKIE_PATH)
+    response.delete_cookie(key=ADMIN_COOKIE_NAME, path=ADMIN_COOKIE_PATH, domain=ADMIN_COOKIE_DOMAIN)
 
     # Also clear the CSRF token and its cookie.
     clear_csrf(sid, response)

@@ -143,6 +143,38 @@ describe('components/ItemCard.vue', () => {
     expect(wrapper.text()).toContain(baseItem.condition)
   })
 
+  it('renders localized title and condition when translation is available for the current locale', async () => {
+    const wrapper = await mountSuspended(ItemCard, {
+      props: {
+        item: {
+          ...baseItem,
+          translations: {
+            en: { name: 'Localized Camera', condition: 'Mint' }
+          }
+        }
+      }
+    })
+
+    expect(wrapper.text()).toContain('Localized Camera')
+    expect(wrapper.text()).toContain('Mint')
+  })
+
+  it('falls back to item.name and item.condition when no translation for current locale exists', async () => {
+    const wrapper = await mountSuspended(ItemCard, {
+      props: {
+        item: {
+          ...baseItem,
+          translations: {
+            zh: { name: '中文相机', condition: '全新' }
+          }
+        }
+      }
+    })
+
+    expect(wrapper.text()).toContain(baseItem.name)
+    expect(wrapper.text()).toContain(baseItem.condition)
+  })
+
   it('navigates to the item detail page when the card is clicked', async () => {
     navigateToMock.mockClear()
 
@@ -151,5 +183,18 @@ describe('components/ItemCard.vue', () => {
     await wrapper.find('.group.cursor-pointer').trigger('click')
 
     expect(navigateToMock).toHaveBeenCalledWith(`/items/${baseItem.item_id}`)
+  })
+
+  it('renders discounted_price and strikethrough original price when discounted', async () => {
+    const discountedItem = {
+      ...baseItem,
+      price: 150,
+      discounted_price: 120
+    }
+    const wrapper = await mountSuspended(ItemCard, { props: { item: discountedItem } })
+
+    expect(wrapper.text()).toContain('RM 120.00')
+    expect(wrapper.text()).toContain('RM 150.00')
+    expect(wrapper.find('.line-through').text()).toContain('RM 150.00')
   })
 })

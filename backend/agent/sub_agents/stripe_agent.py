@@ -1,16 +1,14 @@
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.prebuilt import create_react_agent
 
-from env import GEMINI_API_KEY
-
+from ..llm_factory import get_chat_model
 from ..tools.payment import cancel_payment_link, collect_shipping_info, create_checkout_link
 
-# Initialize the model
-model = ChatGoogleGenerativeAI(
-    model="gemini-3.6-flash",
-    temperature=0.1, # Extremely low temperature for strict payment logic
-    google_api_key=GEMINI_API_KEY
-)
+STRIPE_AGENT_TOOLS = [create_checkout_link, cancel_payment_link, collect_shipping_info]
+
+
+def _select_stripe_model(state, runtime):
+    """Resolve this sub-agent's model per invocation (SPEC-020) — see item_agent."""
+    return get_chat_model(temperature=0.1).bind_tools(STRIPE_AGENT_TOOLS)
 
 # Define the system prompt for the Stripe Agent
 STRIPE_AGENT_PROMPT = """You are a Payment Processor Agent for 'Nego-Lah'.
@@ -31,8 +29,8 @@ RULES:
 """
 
 stripe_agent_graph = create_react_agent(
-    model,
-    tools=[create_checkout_link, cancel_payment_link, collect_shipping_info],
+    _select_stripe_model,
+    tools=STRIPE_AGENT_TOOLS,
     prompt=STRIPE_AGENT_PROMPT
 )
 

@@ -6,6 +6,7 @@ definePageMeta({
 const { call } = useApi()
 const supabase = useSupabaseClient()
 const user = useSupabaseUser()
+const { t } = useI18n()
 
 interface Order {
   item_name: string
@@ -19,11 +20,6 @@ const userId = computed(() => user.value?.id)
 const { data: orders, pending } = useAsyncData<Order[]>(
   'user-orders',
   async () => {
-    // Resolve the id from the live session rather than the reactive
-    // `useSupabaseUser` ref: on a hard refresh the ref can be truthy while its
-    // `id` is still undefined during hydration, which made this page render
-    // "No Orders Yet" even when orders exist. The `watch` below re-runs this
-    // once the session hydrates.
     const { data: { session } } = await supabase.auth.getSession()
     const uid = session?.user?.id ?? user.value?.id
     if (!uid) return []
@@ -37,12 +33,12 @@ const { data: orders, pending } = useAsyncData<Order[]>(
   }
 )
 
-const columns = [
-  { accessorKey: 'item_name', header: 'Item Name' },
-  { accessorKey: 'amount', header: 'Price (RM)' },
-  { accessorKey: 'status', header: 'Status' },
-  { accessorKey: 'created_at', header: 'Purchased On' }
-]
+const columns = computed(() => [
+  { accessorKey: 'item_name', header: t('orders.colItem') },
+  { accessorKey: 'amount', header: t('orders.colPrice') },
+  { accessorKey: 'status', header: t('orders.colStatus') },
+  { accessorKey: 'created_at', header: t('orders.colDate') }
+])
 
 function getStatusColor(status: string) {
   const s = status?.toLowerCase()
@@ -67,7 +63,7 @@ function formatDate(dateStr: string) {
   <div class="space-y-6">
     <div>
       <h1 class="text-2xl font-bold text-highlighted">
-        Purchase History
+        {{ $t('orders.purchaseHistory') }}
       </h1>
     </div>
 
@@ -85,26 +81,19 @@ function formatDate(dateStr: string) {
       />
     </div>
 
-    <div
+    <UEmpty
       v-else-if="orders.length === 0"
-      class="flex flex-col items-center justify-center py-20 text-center"
-    >
-      <UIcon
-        name="i-lucide-shopping-bag"
-        class="size-16 text-muted mb-4"
-      />
-      <h3 class="text-lg font-semibold text-highlighted">
-        No Orders Yet
-      </h3>
-      <p class="text-sm text-muted mt-1 max-w-xs">
-        Bargain with our AI model and secure a deal to start purchasing!
-      </p>
-      <UButton
-        label="Explore Storefront"
-        to="/"
-        class="mt-4"
-      />
-    </div>
+      icon="i-lucide-shopping-bag"
+      :title="$t('orders.noOrdersYet')"
+      :description="$t('orders.noOrdersDesc')"
+      :actions="[{
+        label: $t('orders.browseItems'),
+        to: '/',
+        color: 'primary'
+      }]"
+      variant="naked"
+      class="py-16"
+    />
 
     <div
       v-else

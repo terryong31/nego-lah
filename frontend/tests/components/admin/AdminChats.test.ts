@@ -299,7 +299,10 @@ describe('components/admin/AdminChats.vue', () => {
     expect(wrapper.text()).not.toContain('Customer is typing')
   })
 
-  it('closing a conversation (the X button) returns to the placeholder pane', async () => {
+  it('offers no close control on desktop, where the list never leaves the screen', async () => {
+    // The split view keeps the conversation list beside the thread, so closing
+    // is only meaningful on mobile — where the Back button covers it (see the
+    // single-pane test below).
     callMock.mockImplementationOnce(() => Promise.resolve([makeChat({ user_id: 'u1', display_name: 'Alice' })]))
 
     const wrapper = await mountSuspended(AdminChats)
@@ -312,10 +315,31 @@ describe('components/admin/AdminChats.vue', () => {
 
     expect(wrapper.text()).not.toContain('Select a conversation to view and reply.')
 
-    const closeButton = wrapper.find('header button')
-    await closeButton.trigger('click')
+    const header = wrapper.find('header')
+    expect(header.find('[aria-label="Close conversation"]').exists()).toBe(false)
+    // The only control left in the header is the AI toggle.
+    expect(header.findAll('button')).toHaveLength(1)
+  })
 
-    expect(wrapper.text()).toContain('Select a conversation to view and reply.')
+  it('gives the AI badge and its toggle a matching size, with the toggle solid', async () => {
+    callMock.mockImplementationOnce(() => Promise.resolve([makeChat({ user_id: 'u1', display_name: 'Alice' })]))
+
+    const wrapper = await mountSuspended(AdminChats)
+    await flushPromises()
+
+    callMock.mockImplementationOnce(() => Promise.resolve({ user_id: 'u1', messages: [] }))
+    const chatButton = wrapper.findAll('button').find(b => b.text().includes('Alice'))
+    await chatButton!.trigger('click')
+    await flushPromises()
+
+    const badge = wrapper.findComponent({ name: 'UBadge' })
+    const toggle = wrapper.findAllComponents({ name: 'UButton' })
+      .find(b => ['Take over', 'Resume AI'].includes(b.text()))!
+
+    // Badge `md` and button `xs` share px-2 py-1 text-xs, so they line up.
+    expect(badge.props('size')).toBe('md')
+    expect(toggle.props('size')).toBe('xs')
+    expect(toggle.props('variant')).toBe('solid')
   })
 
   it('send(): optimistically appends the outgoing message and clears the input', async () => {
@@ -349,6 +373,34 @@ describe('components/admin/AdminChats.vue', () => {
 
     expect(wrapper.text()).toContain('Sure, that works for me')
     expect((wrapper.find('textarea').element as HTMLTextAreaElement).value).toBe('')
+  })
+
+  it('send(): renders the seller\'s own message once, not twice when the broadcast echoes back', async () => {
+    // The backend broadcasts every admin message to chat:{user_id}, and this
+    // console is subscribed to that same channel — so its own send comes back
+    // as a `new_message` event on top of the optimistic append.
+    callMock.mockImplementationOnce(() => Promise.resolve([makeChat({ user_id: 'u1', display_name: 'Alice' })]))
+
+    const wrapper = await mountSuspended(AdminChats)
+    await flushPromises()
+
+    callMock.mockImplementationOnce(() => Promise.resolve({ user_id: 'u1', messages: [] }))
+    const chatButton = wrapper.findAll('button').find(b => b.text().includes('Alice'))
+    await chatButton!.trigger('click')
+    await flushPromises()
+
+    callMock.mockImplementationOnce(() => Promise.resolve({ ok: true }))
+    const textarea = wrapper.find('textarea')
+    await textarea.setValue('This is a duplicated message')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    const onMessage = typingState.join.mock.calls[0]![1].onMessage as (payload: unknown) => void
+    onMessage({ role: 'ai', content: 'This is a duplicated message', source: 'admin' })
+    await flushPromises()
+
+    const copies = wrapper.text().split('This is a duplicated message').length - 1
+    expect(copies).toBe(1)
   })
 
   it('send(): does nothing when the reply is blank/whitespace or no conversation is selected', async () => {
@@ -444,7 +496,7 @@ describe('components/admin/AdminChats.vue', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('Just a plain reply, no links here.')
-    expect(wrapper.text()).not.toContain('Payment ready')
+    expect(wrapper.text()).not.toContain('Deal agreed')
     expect(wrapper.text()).not.toContain('Preparing payment link')
   })
 
@@ -464,11 +516,33 @@ describe('components/admin/AdminChats.vue', () => {
     await chatButton!.trigger('click')
     await flushPromises()
 
-    expect(wrapper.text()).toContain('Payment ready')
+    expect(wrapper.text()).toContain('Deal agreed')
+    // No RM amount in this label, so the card keeps the Stripe line and the
+    // agent's own wording on the button.
     expect(wrapper.text()).toContain('Complete your purchase securely via Stripe')
     const payLink = wrapper.findAll('a').find(a => a.text() === 'Pay now')
     expect(payLink).toBeTruthy()
     expect(payLink!.attributes('href')).toBe('https://pay.example.com/session/abc123')
+  })
+
+  it('shows the agreed amount as the payment card\'s headline when the label carries one', async () => {
+    callMock.mockImplementationOnce(() => Promise.resolve([makeChat({ user_id: 'u1', display_name: 'Alice' })]))
+
+    const wrapper = await mountSuspended(AdminChats)
+    await flushPromises()
+
+    callMock.mockImplementationOnce(() =>
+      Promise.resolve({
+        user_id: 'u1',
+        messages: [{ role: 'ai', content: '[Pay RM1000 Now](https://pay.example.com/session/abc123)' }]
+      })
+    )
+    const chatButton = wrapper.findAll('button').find(b => b.text().includes('Alice'))
+    await chatButton!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('RM 1000.00')
+    expect(wrapper.text()).not.toContain('Pay RM1000 Now')
   })
 
   it('renders a bare "](http" fragment with no completed markdown link as a pending payment placeholder', async () => {
@@ -491,10 +565,11 @@ describe('components/admin/AdminChats.vue', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('Preparing payment link…')
-    expect(wrapper.text()).not.toContain('Payment ready')
+    expect(wrapper.text()).not.toContain('Deal agreed')
   })
 
-  it('splits a multi-line message body into one block per non-empty line', async () => {
+  // SPEC-027: the console must render the thread the same shape the buyer sees.
+  it('splits an AI message on its blank lines, one bubble per block', async () => {
     callMock.mockImplementationOnce(() => Promise.resolve([makeChat({ user_id: 'u1', display_name: 'Alice' })]))
 
     const wrapper = await mountSuspended(AdminChats)
@@ -503,15 +578,61 @@ describe('components/admin/AdminChats.vue', () => {
     callMock.mockImplementationOnce(() =>
       Promise.resolve({
         user_id: 'u1',
-        messages: [{ role: 'ai', content: 'First line\n\nSecond line' }]
+        messages: [{ role: 'ai', source: 'ai', content: 'First line\n\nSecond line' }]
       })
     )
     const chatButton = wrapper.findAll('button').find(b => b.text().includes('Alice'))
     await chatButton!.trigger('click')
     await flushPromises()
 
-    expect(wrapper.text()).toContain('First line')
-    expect(wrapper.text()).toContain('Second line')
+    const bubbles = wrapper.findAll('div.rounded-2xl')
+    expect(bubbles.length).toBe(2)
+    expect(bubbles[0]!.text()).toBe('First line')
+    expect(bubbles[1]!.text()).toBe('Second line')
+  })
+
+  it('keeps an AI message\'s single line breaks in one bubble, so an address stays whole', async () => {
+    callMock.mockImplementationOnce(() => Promise.resolve([makeChat({ user_id: 'u1', display_name: 'Alice' })]))
+
+    const wrapper = await mountSuspended(AdminChats)
+    await flushPromises()
+
+    callMock.mockImplementationOnce(() =>
+      Promise.resolve({
+        user_id: 'u1',
+        messages: [{ role: 'ai', source: 'ai', content: 'Shipping to:\nTerry Ong\n12 Jalan Ampang, KL' }]
+      })
+    )
+    const chatButton = wrapper.findAll('button').find(b => b.text().includes('Alice'))
+    await chatButton!.trigger('click')
+    await flushPromises()
+
+    const bubbles = wrapper.findAll('div.rounded-2xl')
+    expect(bubbles.length).toBe(1)
+    expect(bubbles[0]!.text()).toBe('Shipping to:\nTerry Ong\n12 Jalan Ampang, KL')
+  })
+
+  it('keeps a seller-typed message in a single bubble with whitespace-pre-wrap', async () => {
+    callMock.mockImplementationOnce(() => Promise.resolve([makeChat({ user_id: 'u1', display_name: 'Alice' })]))
+
+    const wrapper = await mountSuspended(AdminChats)
+    await flushPromises()
+
+    // source: 'admin' -> the seller pressed Shift+Enter, so this is one message.
+    callMock.mockImplementationOnce(() =>
+      Promise.resolve({
+        user_id: 'u1',
+        messages: [{ role: 'ai', source: 'admin', content: 'First line\n\nSecond line' }]
+      })
+    )
+    const chatButton = wrapper.findAll('button').find(b => b.text().includes('Alice'))
+    await chatButton!.trigger('click')
+    await flushPromises()
+
+    const bubbles = wrapper.findAll('div.rounded-2xl')
+    expect(bubbles.length).toBe(1)
+    expect(bubbles[0]!.text()).toBe('First line\n\nSecond line')
+    expect(bubbles[0]!.element.className).toContain('whitespace-pre-wrap')
   })
 
   it('renders a system-role message as a centred separator with trimmed dash/whitespace label', async () => {
@@ -576,11 +697,96 @@ describe('components/admin/AdminChats.vue', () => {
     await flushPromises()
 
     callMock.mockImplementationOnce(() => Promise.resolve([makeChat({ user_id: 'u2', display_name: 'Zoe' })]))
-    const refreshButton = wrapper.findComponent({ name: 'UButton' })
+    const refreshButton = wrapper.findAllComponents({ name: 'UButton' }).find(b => b.props('icon') === 'i-lucide-refresh-cw')!
     await refreshButton.trigger('click')
     await flushPromises()
 
     expect(wrapper.text()).toContain('Zoe')
     expect(wrapper.text()).not.toContain('Alice')
+  })
+
+  it('toggles AI mode (HITL takeover) for the selected user', async () => {
+    callMock.mockImplementationOnce(() => Promise.resolve([makeChat({ user_id: 'u1', display_name: 'Alice', ai_enabled: true })]))
+
+    const wrapper = await mountSuspended(AdminChats)
+    await flushPromises()
+
+    callMock.mockImplementationOnce(() => Promise.resolve({ user_id: 'u1', messages: [] }))
+    const chatButton = wrapper.findAll('button').find(b => b.text().includes('Alice'))
+    await chatButton!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('AI Active')
+    const takeOverBtn = wrapper.findAll('button').find(b => b.text() === 'Take over')!
+    expect(takeOverBtn).toBeDefined()
+
+    callMock.mockImplementationOnce(() => Promise.resolve({ message: 'AI disabled for user' }))
+    await takeOverBtn.trigger('click')
+    await flushPromises()
+
+    expect(callMock).toHaveBeenCalledWith('/users/u1/ai', {
+      method: 'PUT',
+      body: { ai_enabled: false }
+    })
+    expect(wrapper.text()).toContain('AI Paused')
+  })
+
+  it('passes paid prop to ChatPayCard when messages indicate completed deal', async () => {
+    callMock.mockImplementationOnce(() => Promise.resolve([makeChat({ user_id: 'u1', display_name: 'Alice' })]))
+
+    const wrapper = await mountSuspended(AdminChats)
+    await flushPromises()
+
+    callMock.mockImplementationOnce(() =>
+      Promise.resolve({
+        user_id: 'u1',
+        messages: [
+          { role: 'ai', content: '[Pay RM1000 Now](https://pay.example.com/session/abc123)' },
+          { role: 'system', content: 'Payment received! Order completed.' }
+        ]
+      })
+    )
+    const chatButton = wrapper.findAll('button').find(b => b.text().includes('Alice'))
+    await chatButton!.trigger('click')
+    await flushPromises()
+
+    const payCard = wrapper.findComponent({ name: 'ChatPayCard' })
+    expect(payCard.exists()).toBe(true)
+    expect(payCard.props('paid')).toBe(true)
+  })
+
+  it('switches to single-pane navigation on mobile and navigates back with the Back button', async () => {
+    window.innerWidth = 375
+    window.dispatchEvent(new Event('resize'))
+
+    callMock.mockImplementationOnce(() => Promise.resolve([makeChat({ user_id: 'u1', display_name: 'Alice' })]))
+
+    const wrapper = await mountSuspended(AdminChats)
+    await flushPromises()
+
+    // On mobile, initially only conversation list is shown
+    expect(wrapper.text()).toContain('Alice')
+    expect(wrapper.text()).not.toContain('Select a conversation to view and reply.')
+
+    callMock.mockImplementationOnce(() => Promise.resolve({ user_id: 'u1', messages: [{ role: 'user', content: 'Hello mobile' }] }))
+    const chatButton = wrapper.findAll('button').find(b => b.text().includes('Alice'))
+    await chatButton!.trigger('click')
+    await flushPromises()
+
+    // In thread view on mobile: shows messages and Back button
+    expect(wrapper.text()).toContain('Hello mobile')
+    const backBtn = wrapper.findAll('button').find(b => b.text() === 'Back')!
+    expect(backBtn).toBeDefined()
+
+    // Clicking Back button returns to conversation list
+    await backBtn.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Alice')
+    expect(wrapper.text()).not.toContain('Hello mobile')
+
+    // Reset window width back to desktop
+    window.innerWidth = 1024
+    window.dispatchEvent(new Event('resize'))
   })
 })

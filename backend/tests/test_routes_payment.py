@@ -40,17 +40,25 @@ def _make_stripe_session(
     amount_total=10000,
     customer_details=None,
 ):
-    """Build a MagicMock that behaves like a Stripe checkout.Session for the
-    parts confirm_payment touches: attribute access (session.metadata, etc.)
-    AND dict-style `.get()` for `customer_details`."""
-    session = MagicMock()
-    session.payment_status = payment_status
-    session.metadata = metadata if metadata is not None else {}
-    session.payment_intent = payment_intent
-    session.amount_total = amount_total
-    _extra = {"customer_details": customer_details}
-    session.get.side_effect = lambda key, default=None: _extra.get(key, default)
-    return session
+    """Build a REAL `stripe.checkout.Session`, not a mock.
+
+    This matters: since stripe-python 15 a `StripeObject` is no longer a dict
+    subclass, so `.get()` raises AttributeError. A MagicMock (or a plain dict)
+    happily answers `.get()` and would let that break through to production
+    unnoticed -- which is exactly how every paid checkout started 500ing.
+    `construct_from` gives us the same object the SDK hands the route."""
+    return real_stripe.checkout.Session.construct_from(
+        {
+            "id": "cs_1",
+            "object": "checkout.session",
+            "payment_status": payment_status,
+            "metadata": metadata if metadata is not None else {},
+            "payment_intent": payment_intent,
+            "amount_total": amount_total,
+            "customer_details": customer_details,
+        },
+        "sk_test_fixture",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -247,6 +255,47 @@ async def test_webhook_retry_error_returns_503(client, monkeypatch):
     )
 
     assert response.status_code == 503
+
+
+async def test_webhook_fulfilment_does_not_block_the_event_loop(client, monkeypatch):
+    """Fulfilment writes to Supabase, sends an email and can issue a Stripe
+    refund — all synchronous. Stripe retries on timeout, so a stalled loop here
+    turns one slow webhook into duplicate deliveries."""
+    import asyncio
+    import contextlib
+    import time
+
+    event = {"type": "checkout.session.completed", "data": {"object": {}}}
+    monkeypatch.setattr(webhooks, "verify_webhook", lambda payload, sig: event)
+
+    def slow_fulfil(_evt):
+        time.sleep(0.2)
+        return {"status": "fulfilled", "order_id": "order-1"}
+
+    monkeypatch.setattr(webhooks, "handle_checkout_completed", slow_fulfil)
+
+    ticks = 0
+
+    async def ticker():
+        nonlocal ticks
+        while True:
+            await asyncio.sleep(0.01)
+            ticks += 1
+
+    beat = asyncio.create_task(ticker())
+    try:
+        response = await client.post(
+            "/payment/webhook/stripe",
+            content=b"{}",
+            headers={"stripe-signature": "good-sig"},
+        )
+    finally:
+        beat.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await beat
+
+    assert response.status_code == 200
+    assert ticks > 5
 
 
 async def test_webhook_success_returns_200(client, monkeypatch):

@@ -51,6 +51,8 @@ def _quiet_side_effects(monkeypatch):
     """
     monkeypatch.setattr("cache.invalidate_item_cache", MagicMock(), raising=False)
     monkeypatch.setattr("payment.payment_state.delete_pending_payment", MagicMock(), raising=False)
+    monkeypatch.setattr("services.email_service.send_purchase_receipt", MagicMock(), raising=False)
+    monkeypatch.setattr("services.email_service.send_seller_sale_alert", MagicMock(), raising=False)
     fake_memory = MagicMock()
     monkeypatch.setattr("agent.memory.conversation_memory", fake_memory, raising=False)
     return fake_memory
@@ -153,15 +155,12 @@ def test_refund_generic_exception_returns_false(fake_stripe):
 # ---------------------------------------------------------------------------
 
 def test_broadcast_to_chat_posts_twice_for_chat_and_notifications(_no_network_broadcast):
-    # broadcast_to_chat mutates and reuses the SAME payload dict across both
-    # requests.post calls (rewriting "topic" in place) rather than building
-    # two independent payloads, so we must snapshot each call's json body via
-    # side_effect as it happens -- inspecting call_args_list afterwards would
-    # see the final mutated dict for both recorded calls.
     seen_topics = []
+    seen_payloads = []
 
     def _capture(*args, **kwargs):
         seen_topics.append(kwargs["json"]["messages"][0]["topic"])
+        seen_payloads.append(kwargs["json"]["messages"][0].copy())
         return MagicMock()
 
     _no_network_broadcast.post.side_effect = _capture
@@ -170,6 +169,67 @@ def test_broadcast_to_chat_posts_twice_for_chat_and_notifications(_no_network_br
 
     assert _no_network_broadcast.post.call_count == 2
     assert seen_topics == ["chat:user-1", "notifications:user-1"]
+    assert seen_payloads[0]["event"] == "new_message"
+    assert seen_payloads[0]["payload"] == {"role": "ai", "source": "ai", "content": "hello"}
+
+
+@pytest.mark.asyncio
+async def test_broadcast_notifies_the_buyer_for_messages_from_the_ai_or_the_seller(_no_network_broadcast):
+    """The SSE stream is the buyer's "someone messaged you" channel."""
+    from notifications import notification_broker
+
+    for source in ("ai", "admin"):
+        q = await notification_broker.subscribe("user-1")
+        try:
+            fulfillment.broadcast_to_chat("user-1", "hello", role="ai", source=source)
+            event = q.get_nowait()
+            assert event == {
+                "type": "new_message",
+                "message": "hello",
+                "source": source,
+                "role": "ai",
+            }
+        finally:
+            await notification_broker.unsubscribe("user-1", q)
+
+
+@pytest.mark.asyncio
+async def test_broadcast_never_notifies_the_buyer_of_their_own_message(_no_network_broadcast):
+    """The human broadcast exists to sync the admin console, not to ping the
+    buyer about text they just typed themselves."""
+    import asyncio
+
+    from notifications import notification_broker
+
+    q = await notification_broker.subscribe("user-1")
+    try:
+        fulfillment.broadcast_to_chat("user-1", "hi there", role="user", source="human")
+
+        # Realtime still carries it (that is what the console listens to)...
+        assert _no_network_broadcast.post.call_count == 2
+        # ...but nothing lands on the buyer's notification stream.
+        with pytest.raises(asyncio.QueueEmpty):
+            q.get_nowait()
+    finally:
+        await notification_broker.unsubscribe("user-1", q)
+
+
+@pytest.mark.asyncio
+async def test_broadcast_does_not_notify_for_system_separators(_no_network_broadcast):
+    """"--- Terry has joined the chat ---" is a thread separator, not a message."""
+    import asyncio
+
+    from notifications import notification_broker
+
+    q = await notification_broker.subscribe("user-1")
+    try:
+        fulfillment.broadcast_to_chat(
+            "user-1", "--- Terry has joined the chat ---", role="system", source="system"
+        )
+        with pytest.raises(asyncio.QueueEmpty):
+            q.get_nowait()
+    finally:
+        await notification_broker.unsubscribe("user-1", q)
 
 
 def test_broadcast_to_chat_swallows_exceptions(_no_network_broadcast):
@@ -192,6 +252,8 @@ def test_send_thank_you_adds_to_memory_and_broadcasts(_quiet_side_effects, _no_n
     assert args[1] == "ai"
     assert "Vintage Lamp" in args[2]
     assert "RM49.90" in args[2]
+    assert "**" not in args[2]
+    assert "🎉 Payment Confirmed!" in args[2]
     assert _no_network_broadcast.post.call_count == 2
 
 
@@ -272,6 +334,17 @@ def test_get_or_create_order_hard_error_returns_none(patch_supabase, fake_supaba
     assert (order_id, status, buyer) == (None, None, None)
 
 
+def test_get_or_create_order_non_unique_error_returns_none(patch_supabase, fake_supabase):
+    patch_supabase("payment.fulfillment", admin=fake_supabase)
+    fake_supabase.table.return_value.insert.return_value.execute.side_effect = RuntimeError("db down")
+
+    order_id, status, buyer = fulfillment._get_or_create_order(
+        "pi_1", "item-1", "user-1", 10.0, "Widget"
+    )
+
+    assert (order_id, status, buyer) == (None, None, None)
+
+
 # ---------------------------------------------------------------------------
 # _finalize_won_sale
 # ---------------------------------------------------------------------------
@@ -280,13 +353,24 @@ def test_finalize_won_sale_happy_path(monkeypatch, patch_supabase, fake_supabase
     patch_supabase("payment.fulfillment", admin=fake_supabase)
     fake_invalidate = MagicMock()
     fake_delete_pending = MagicMock()
+    fake_receipt = MagicMock()
+    fake_seller_alert = MagicMock()
     monkeypatch.setattr("cache.invalidate_item_cache", fake_invalidate, raising=False)
     monkeypatch.setattr("payment.payment_state.delete_pending_payment", fake_delete_pending, raising=False)
+    monkeypatch.setattr("services.email_service.send_purchase_receipt", fake_receipt, raising=False)
+    monkeypatch.setattr("services.email_service.send_seller_sale_alert", fake_seller_alert, raising=False)
 
-    fulfillment._finalize_won_sale("item-1", "user-1", "pi_1", 25.0, "Widget", "buyer@example.com")
+    fulfillment._finalize_won_sale("item-1", "user-1", "pi_1", 25.0, "Widget", "buyer@example.com", order_id="ord-1")
 
     fake_invalidate.assert_called_once_with("item-1")
     fake_delete_pending.assert_called_once_with("user-1", "item-1", cleanup_stripe=True)
+    fake_receipt.assert_called_once()
+    fake_seller_alert.assert_called_once()
+    receipt_args = fake_receipt.call_args[0]
+    assert receipt_args[0] == "buyer@example.com"
+    assert receipt_args[1]["item_name"] == "Widget"
+    assert receipt_args[1]["amount"] == 25.0
+
     fake_supabase.table.assert_any_call("transactions")
     _quiet_side_effects.add_message.assert_called_once()
     assert _no_network_broadcast.post.call_count == 2
@@ -519,3 +603,24 @@ def test_fulfill_purchase_without_payment_intent_mints_nopi_placeholder(patch_su
     assert result == {"status": "fulfilled", "order_id": "order-1"}
     insert_call = fake_supabase.table.return_value.insert.call_args
     assert insert_call.args[0]["stripe_payment_id"] == "nopi_user-1_item-1"
+
+
+def test_fulfill_purchase_resolves_item_name_from_db_when_default_item(
+    patch_supabase, fake_supabase, _quiet_side_effects, _no_network_broadcast
+):
+    """When item_name is missing or 'Item', fulfillment queries items table to get real name."""
+    patch_supabase("payment.fulfillment", admin=fake_supabase)
+    _order_insert_result(fake_supabase, {"id": "order-1"})
+    _items_claim_result(fake_supabase, [{"id": "item-1", "status": "sold", "buyer_id": "user-1", "name": "Real Camera"}])
+    _items_select_result(fake_supabase, [{"name": "Real Camera"}])
+
+    result = fulfillment.fulfill_purchase(
+        item_id="item-1", user_id="user-1", payment_intent="pi_1", amount=10.0,
+        item_name="Item", buyer_email="buyer@example.com",
+    )
+
+    assert result == {"status": "fulfilled", "order_id": "order-1"}
+    # Verify thank you message used the real item name instead of "Item"
+    thank_you_call = _quiet_side_effects.add_message.call_args[0][2]
+    assert "Real Camera" in thank_you_call
+    assert "purchasing Real Camera" in thank_you_call

@@ -84,6 +84,43 @@ Guidelines:
 """
 
 
+TRILINGUAL_DESCRIBE_PROMPT = """
+You are an expert e-commerce listing assistant for a Malaysian marketplace.
+Generate localized listing copy for all three main Malaysian languages: English (en), Bahasa Melayu (ms), and Simplified Chinese (zh).
+
+Return ONLY a valid, parseable JSON object with NO markdown code fences and NO surrounding text.
+IMPORTANT: Inside JSON string values, escape all double quotes and use \n for newlines so the output is strictly valid JSON:
+{
+  "en": {
+    "name": "Concise product title in English (max 60 chars)",
+    "description": "Compelling English description in Markdown. Include specs, key features, bullet points.",
+    "condition": "New, Like New, Good, or Fair"
+  },
+  "ms": {
+    "name": "Tajuk produk dalam Bahasa Melayu (maksimum 60 aksara)",
+    "description": "Penerangan dalam Bahasa Melayu gaya e-dagang Malaysia (Mudah/Carousell).",
+    "condition": "Baru, Seperti Baru, Elok, atau Sederhana"
+  },
+  "zh": {
+    "name": "商品标题（中文简体，不超过60字）",
+    "description": "商品详细描述（中文简体，Markdown格式）。",
+    "condition": "全新, 几乎全新, 良好, 或 一般"
+  }
+}
+"""
+
+LANGUAGE_DIRECTIVES = {
+    "all": (
+        "- Language: Generate a comprehensive multilingual listing suitable for Malaysian marketplaces "
+        "(Carousell/Mudah/FB Marketplace). In the markdown description, include clear sections for "
+        "English, Bahasa Melayu, and Simplified Chinese (简体中文). Keep the product title concise and clear."
+    ),
+    "en": "- Language: Output the product name, category, and markdown description in natural English.",
+    "ms": "- Language: Output the product name, category, and markdown description in natural Bahasa Melayu (Malaysian e-commerce style, e.g. Mudah.my / Carousell MY).",
+    "zh": "- Language: Output the product name, category, and markdown description in Simplified Chinese (简体中文, e-commerce style).",
+}
+
+
 class ImageAnalyzerService:
     """
     Analyzes product images to extract:
@@ -94,10 +131,25 @@ class ImageAnalyzerService:
 
     def __init__(self):
         self.model = ChatGoogleGenerativeAI(
-            model="gemini-3.6-flash",
+            model="gemini-3.8-flash",
             temperature=0.3,
             google_api_key=GEMINI_API_KEY
         ) if GEMINI_API_KEY else None
+
+    def _build_prompt(self, mode: str, language: str = "all") -> str:
+        """Construct localized prompt with target language directive."""
+        lang_key = (language or "all").lower().strip()
+        if mode == "describe" and lang_key == "all":
+            return TRILINGUAL_DESCRIBE_PROMPT.strip()
+
+        lang_directive = LANGUAGE_DIRECTIVES.get(lang_key, LANGUAGE_DIRECTIVES["all"])
+        if mode == "identify":
+            base = IDENTIFY_PROMPT
+        elif mode == "describe":
+            base = DESCRIBE_PROMPT
+        else:
+            base = ANALYZE_PROMPT
+        return f"{base.strip()}\n\n{lang_directive}\n"
 
     @staticmethod
     def _build_content(prompt: str, images_data: list[dict]) -> list[dict]:
@@ -113,19 +165,15 @@ class ImageAnalyzerService:
     @staticmethod
     def _extract_text(content) -> str:
         """Flatten a LangChain response body, which may be a list of parts."""
-        if not isinstance(content, list):
+        if isinstance(content, str):
             return content
-
-        text_parts = []
-        for part in content:
-            if isinstance(part, str):
-                text_parts.append(part)
-            elif isinstance(part, dict) and 'text' in part:
-                text_parts.append(part['text'])
-        return ''.join(text_parts)
+        if isinstance(content, list):
+            parts = [p if isinstance(p, str) else p.get("text", "") for p in content]
+            return "".join(parts)
+        return str(content)
 
     async def _ask(self, prompt: str, images_data: list[dict]) -> str:
-        """Run one vision call off the event loop and return its text body.
+        """Invoke Gemini with a multimodal message on a thread.
 
         The LangChain client is synchronous; `to_thread` keeps it from pinning
         the event loop so several of these can genuinely run at once.
@@ -134,12 +182,13 @@ class ImageAnalyzerService:
         response = await asyncio.to_thread(self.model.invoke, [msg])
         return self._extract_text(response.content)
 
-    async def analyze(self, images_data: list[dict]) -> dict:
+    async def analyze(self, images_data: list[dict], language: str = "en") -> dict:
         """
         Analyze multiple images and return product details.
 
         Args:
             images_data: list of dicts with 'base64_image' and 'mime_type'
+            language: target language ('en', 'ms', 'zh')
 
         Returns:
             dict with 'name', 'description', 'condition'
@@ -149,7 +198,8 @@ class ImageAnalyzerService:
 
         content = None
         try:
-            content = await self._ask(ANALYZE_PROMPT, images_data)
+            prompt = self._build_prompt("analyze", language=language)
+            content = await self._ask(prompt, images_data)
 
             # Clean up the response
             clean_content = content.replace('```json', '').replace('```', '').strip()
@@ -172,7 +222,7 @@ class ImageAnalyzerService:
             logger.info(f"Image analysis error: {e}")
             return self._get_fallback_response()
 
-    async def identify(self, images_data: list[dict]) -> dict:
+    async def identify(self, images_data: list[dict], language: str = "en") -> dict:
         """Fast pass: what is this item? Returns name/condition/category/keywords.
 
         Never raises — a failure here degrades to the fallback shape so the
@@ -185,7 +235,8 @@ class ImageAnalyzerService:
 
         content = None
         try:
-            content = await self._ask(IDENTIFY_PROMPT, images_data)
+            prompt = self._build_prompt("identify", language=language)
+            content = await self._ask(prompt, images_data)
             clean_content = content.replace('```json', '').replace('```', '').strip()
             result = json.loads(clean_content)
 
@@ -205,13 +256,14 @@ class ImageAnalyzerService:
         fallback.pop("description", None)
         return fallback
 
-    async def describe(self, images_data: list[dict]) -> str | None:
+    async def describe(self, images_data: list[dict], language: str = "en") -> str | None:
         """Slow pass: the Markdown listing copy. Returns None if unavailable."""
         if not self.model:
             return None
 
         try:
-            content = await self._ask(DESCRIBE_PROMPT, images_data)
+            prompt = self._build_prompt("describe", language=language)
+            content = await self._ask(prompt, images_data)
             return content.strip() or None
         except Exception as e:
             logger.info(f"Item description error: {e}")

@@ -56,4 +56,12 @@ describe('layouts/chat.vue', () => {
     expect(wrapper.find('[data-testid="app-header"]').exists()).toBe(true)
     expect(wrapper.find('div.flex.flex-col.h-screen').exists()).toBe(true)
   })
+
+  it('configures UMain with mobile edge-to-edge padding (px-0 sm:px-6)', async () => {
+    const wrapper = await mountSuspended(ChatLayout)
+    const main = wrapper.findComponent({ name: 'UMain' })
+    expect(main.exists()).toBe(true)
+    expect(main.classes()).toContain('px-0')
+    expect(main.classes()).toContain('sm:px-6')
+  })
 })

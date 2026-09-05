@@ -4,12 +4,23 @@ import { mockNuxtImport, mountSuspended } from '@nuxt/test-utils/runtime'
 import { flushPromises } from '@vue/test-utils'
 import ConfirmPage from '~/pages/confirm.vue'
 
-type StubUser = { id: string, email: string, app_metadata?: { provider?: string } }
+type StubUser = {
+  id: string
+  email: string
+  app_metadata?: { provider?: string }
+  amr?: Array<{ method: string, timestamp: number }> | string[]
+}
 const userRef = ref<StubUser | null>(null)
 const routeStub = reactive<{ query: Record<string, string | undefined>, hash?: string }>({ query: {} })
 
 mockNuxtImport('useSupabaseUser', () => () => userRef)
 mockNuxtImport('useRoute', () => () => routeStub)
+
+// The real `initLanguage` PUTs to the backend. Unmocked it 401s, and useApi's
+// interceptor then pushes /login — asynchronously, so the redirect lands in
+// whichever test happens to be running when the rejection settles.
+const { initLanguageMock } = vi.hoisted(() => ({ initLanguageMock: vi.fn() }))
+mockNuxtImport('useLanguage', () => () => ({ initLanguage: initLanguageMock }))
 
 function spyOnRouterPush(wrapper: { vm: { $router: { push: (...args: unknown[]) => unknown } } }) {
   return vi.spyOn(wrapper.vm.$router, 'push').mockImplementation(() => Promise.resolve())
@@ -24,6 +35,7 @@ describe('pages/confirm.vue', () => {
 
   beforeEach(() => {
     vi.useFakeTimers()
+    initLanguageMock.mockReset().mockResolvedValue(undefined)
     userRef.value = null
     routeStub.query = {}
     routeStub.hash = ''
@@ -43,6 +55,7 @@ describe('pages/confirm.vue', () => {
   })
 
   it('displays the Email Confirmed screen once the user ref becomes truthy', async () => {
+    routeStub.query = { token_hash: 'tok', type: 'signup' }
     userRef.value = null
     wrapper = await mountSuspended(ConfirmPage)
 
@@ -59,6 +72,7 @@ describe('pages/confirm.vue', () => {
   })
 
   it('navigates to / when clicking Explore Storefront', async () => {
+    routeStub.query = { token_hash: 'tok', type: 'signup' }
     userRef.value = { id: 'u1', email: 'user@example.com' }
     wrapper = await mountSuspended(ConfirmPage)
     const pushSpy = spyOnRouterPush(wrapper)
@@ -73,7 +87,7 @@ describe('pages/confirm.vue', () => {
 
   it('navigates to redirect target when query has a safe redirect path', async () => {
     userRef.value = { id: 'u1', email: 'user@example.com' }
-    routeStub.query = { redirect: '/items/item-1' }
+    routeStub.query = { redirect: '/items/item-1', token_hash: 'tok', type: 'signup' }
     wrapper = await mountSuspended(ConfirmPage)
     const pushSpy = spyOnRouterPush(wrapper)
 
@@ -86,6 +100,7 @@ describe('pages/confirm.vue', () => {
   })
 
   it('auto-redirects to / after countdown expires', async () => {
+    routeStub.query = { token_hash: 'tok', type: 'signup' }
     userRef.value = { id: 'u1', email: 'user@example.com' }
     wrapper = await mountSuspended(ConfirmPage)
     const pushSpy = spyOnRouterPush(wrapper)
@@ -154,11 +169,12 @@ describe('pages/confirm.vue', () => {
       expect(wrapper.text()).not.toContain('Explore Storefront')
     })
 
-    it('detects an untagged social callback from the session provider', async () => {
+    it('detects an untagged social callback from the session sign-in method', async () => {
+      routeStub.query = { code: 'abc' }
       wrapper = await mountSuspended(ConfirmPage)
       const replaceSpy = spyOnRouterReplace(wrapper)
 
-      userRef.value = { id: 'u1', email: 'user@example.com', app_metadata: { provider: 'google' } }
+      userRef.value = { id: 'u1', email: 'user@example.com', amr: [{ method: 'oauth', timestamp: 1 }] }
       await flushPromises()
 
       expect(replaceSpy).toHaveBeenCalledWith('/')
@@ -166,14 +182,47 @@ describe('pages/confirm.vue', () => {
     })
 
     it('still shows the success screen for an email-provider confirmation', async () => {
+      routeStub.query = { token_hash: 'tok', type: 'signup' }
       wrapper = await mountSuspended(ConfirmPage)
       const replaceSpy = spyOnRouterReplace(wrapper)
 
-      userRef.value = { id: 'u1', email: 'user@example.com', app_metadata: { provider: 'email' } }
+      userRef.value = { id: 'u1', email: 'user@example.com', amr: [{ method: 'otp', timestamp: 1 }] }
       await flushPromises()
 
       expect(replaceSpy).not.toHaveBeenCalled()
       expect(wrapper.text()).toContain('Email Confirmed!')
+    })
+
+    // The account's original provider is NOT how the current session signed in.
+    // An account created with a password and later linked to Google reports
+    // `app_metadata.provider === 'email'` on every Google login, forever. `amr`
+    // records what actually happened for THIS session.
+    it('detects a Google login on an account that was originally email/password', async () => {
+      routeStub.query = { code: 'abc' }
+      wrapper = await mountSuspended(ConfirmPage)
+      const replaceSpy = spyOnRouterReplace(wrapper)
+
+      userRef.value = {
+        id: 'u1',
+        email: 'user@example.com',
+        app_metadata: { provider: 'email' },
+        amr: [{ method: 'oauth', timestamp: 1 }]
+      }
+      await flushPromises()
+
+      expect(replaceSpy).toHaveBeenCalledWith('/')
+      expect(wrapper.text()).not.toContain('Email Confirmed!')
+    })
+
+    it('reads the string form of amr as well as the object form', async () => {
+      routeStub.query = { code: 'abc' }
+      wrapper = await mountSuspended(ConfirmPage)
+      const replaceSpy = spyOnRouterReplace(wrapper)
+
+      userRef.value = { id: 'u1', email: 'user@example.com', amr: ['oauth'] }
+      await flushPromises()
+
+      expect(replaceSpy).toHaveBeenCalledWith('/')
     })
 
     it('does not start the countdown on the OAuth path', async () => {
@@ -189,6 +238,33 @@ describe('pages/confirm.vue', () => {
       await flushPromises()
 
       expect(pushSpy).not.toHaveBeenCalled()
+    })
+  })
+
+  // Landing on /confirm with a session but no confirmation params at all means
+  // nothing was confirmed — the visitor just navigated to the callback route.
+  // Announcing "Email Confirmed!" there is simply untrue.
+  describe('stray navigation to /confirm', () => {
+    it('redirects away instead of claiming a confirmation happened', async () => {
+      wrapper = await mountSuspended(ConfirmPage)
+      const replaceSpy = spyOnRouterReplace(wrapper)
+
+      userRef.value = { id: 'u1', email: 'user@example.com', amr: [{ method: 'password', timestamp: 1 }] }
+      await flushPromises()
+
+      expect(wrapper.text()).not.toContain('Email Confirmed!')
+      expect(replaceSpy).toHaveBeenCalledWith('/')
+    })
+
+    it('honours the redirect target on a stray visit', async () => {
+      routeStub.query = { redirect: '/orders' }
+      wrapper = await mountSuspended(ConfirmPage)
+      const replaceSpy = spyOnRouterReplace(wrapper)
+
+      userRef.value = { id: 'u1', email: 'user@example.com' }
+      await flushPromises()
+
+      expect(replaceSpy).toHaveBeenCalledWith('/orders')
     })
   })
 

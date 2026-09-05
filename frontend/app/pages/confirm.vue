@@ -11,10 +11,7 @@ const { initLanguage } = useLanguage()
 
 type ConfirmStatus = 'loading' | 'success' | 'error'
 
-// Structural, because a session's user reaches us as a `User` from the Supabase
-// client but as a `JwtPayload` from `useSupabaseUser()`. All we need is the
-// primary provider that both carry.
-type SessionUserLike = { app_metadata?: { provider?: string } | null } | null | undefined
+type AmrEntry = string | { method?: string }
 
 /**
  * Supabase returns the callback params in the query string on the PKCE flow and
@@ -54,6 +51,9 @@ let timer: ReturnType<typeof setInterval> | null = null
 // and it needs the target and the flow marker already in hand.
 const targetRedirect = ref<string | null>(safeRedirectPath(readParam('redirect')))
 const isTaggedOAuth = readParam('flow') === 'oauth'
+// Positive evidence that something was actually verified. Without any of these
+// the visitor merely navigated to the callback route.
+const hasVerificationParam = !!(readParam('code') || readParam('token_hash') || readParam('type'))
 
 let redirected = false
 
@@ -63,30 +63,49 @@ function proceedToHome() {
 }
 
 /**
- * Whether this callback is a social sign-in rather than an email confirmation.
+ * How the *current* session authenticated, from the JWT's `amr` claim.
  *
- * The `flow` marker is set by `pages/login.vue` on the URL it hands the provider,
- * so it is authoritative. The session's primary provider is the fallback for a
- * social callback that reaches us untagged — only `email` means a real
- * confirmation link.
+ * Deliberately not `app_metadata.provider`: that is the account's ORIGINAL
+ * provider and never changes, so an account created with a password and later
+ * linked to Google reports `email` on every Google login for the rest of time.
+ * `amr` describes this sign-in. It comes in an object and a string form.
  */
-function isOAuthFlow(sessionUser: SessionUserLike): boolean {
-  if (isTaggedOAuth) return true
-  const provider = sessionUser?.app_metadata?.provider
-  return !!provider && provider !== 'email'
+function signedInWithOAuth(): boolean {
+  // Read from `useSupabaseUser()` specifically: @nuxtjs/supabase populates it
+  // from `getClaims()`, so it is the JWT payload. The `User` object the client
+  // hands back from a code exchange has no `amr` at all — it is a session fact,
+  // not a user one.
+  const amr = (user.value as { amr?: AmrEntry[] } | null)?.amr
+  if (!Array.isArray(amr)) return false
+  return amr.some(entry => (typeof entry === 'string' ? entry : entry?.method) === 'oauth')
+}
+
+/**
+ * Whether this callback is a real email confirmation — the only thing that earns
+ * the "Email Confirmed!" screen.
+ *
+ * Everything else goes straight through to the app: a social sign-in (which the
+ * visitor just performed deliberately and needs no interstitial for), and a stray
+ * navigation to /confirm, where announcing a confirmation would simply be untrue.
+ */
+function isEmailConfirmation(): boolean {
+  if (isTaggedOAuth) return false
+  if (!hasVerificationParam) return false
+  return !signedInWithOAuth()
 }
 
 /**
  * Single completion path for every way a session can arrive here.
  *
- * A social login goes straight through: someone who just clicked "Sign in with
- * Google" gets told nothing by an "Email Confirmed!" screen they never asked
- * for, and `replace` keeps the spent callback route out of their history.
+ * Only a genuine email confirmation stops on the success screen. A social login
+ * goes straight through — someone who just clicked "Sign in with Google" gets
+ * told nothing by an "Email Confirmed!" screen they never asked for — and
+ * `replace` keeps the spent callback route out of their history.
  */
-async function succeed(sessionUser?: SessionUserLike) {
+async function succeed() {
   if (status.value === 'success' || redirected) return
 
-  if (isOAuthFlow(sessionUser ?? user.value)) {
+  if (!isEmailConfirmation()) {
     redirected = true
     // The immediate watcher can fire during setup; wait for the mount so the
     // navigation isn't issued from a component that doesn't exist yet.
@@ -113,7 +132,7 @@ async function succeedIfSessionExists(): Promise<boolean> {
   const { data } = await supabase.auth.getSession()
   const sessionUser = data?.session?.user ?? user.value
   if (!sessionUser) return false
-  await succeed(sessionUser)
+  await succeed()
   return true
 }
 
@@ -132,7 +151,7 @@ async function verify(
   try {
     const { data, error } = await run()
     if (!error && data?.session) {
-      await succeed(data.session.user)
+      await succeed()
       return
     }
     if (error) console.warn(`[confirm.vue] ${label}:`, error.message)
@@ -173,7 +192,7 @@ onMounted(async () => {
 
   // Subscribe first, in case @nuxtjs/supabase exchanges the code in the background
   const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
-    if (session?.user) succeed(session.user)
+    if (session?.user) succeed()
   })
   authSubscription = authListener.subscription
 
@@ -205,7 +224,7 @@ function startCountdown() {
 }
 
 watch(user, (newUser) => {
-  if (newUser && !errorMessage.value) succeed(newUser)
+  if (newUser && !errorMessage.value) succeed()
 }, { immediate: true })
 
 watch(status, (newStatus) => {

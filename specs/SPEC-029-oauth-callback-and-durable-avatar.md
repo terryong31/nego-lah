@@ -117,3 +117,27 @@ The purchase-confirmation email asked for alongside these fixes already exists �
 `send_purchase_receipt` (services/email_service.py) fires from
 `_finalize_won_sale` on the one-time fulfilment transition, which both the Stripe
 webhook and the frontend confirm route funnel through. No work was needed.
+
+# Correction (2026-09-06)
+
+The first implementation detected a social sign-in from `app_metadata.provider`.
+That was wrong: `provider` is the account's ORIGINAL provider and never changes,
+so an account created with email/password and later linked to Google reports
+`email` on every Google login for the rest of time — the fallback could never
+fire for exactly the accounts that need it.
+
+Detection now reads the JWT's `amr` claim, which records how the *current*
+session authenticated (`oauth` / `password` / `otp`). It is read from
+`useSupabaseUser()` specifically, because @nuxtjs/supabase populates that from
+`getClaims()`; the `User` object returned by a code exchange has no `amr`, which
+is a session fact rather than a user one.
+
+The screen also now requires positive evidence that something was verified —
+a `code`, `token_hash` or `type` param. Landing on `/confirm` with a session but
+no confirmation params means nothing was confirmed, so announcing "Email
+Confirmed!" was simply untrue; that case redirects instead.
+
+- [x] A Google login on an account originally created with a password skips the
+      confirmation screen.
+- [x] `amr` is read in both its object and string forms.
+- [x] A bare visit to `/confirm` redirects instead of claiming a confirmation.

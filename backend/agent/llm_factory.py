@@ -91,7 +91,7 @@ def _local_config() -> tuple[str, str, str]:
     return (
         os.getenv("LOCAL_LLM_BASE_URL", "http://127.0.0.1:8001/v1"),
         os.getenv("LOCAL_LLM_MODEL", DEFAULT_LOCAL_MODEL),
-        os.getenv("LOCAL_LLM_API_KEY", "dummy-local-key"),
+        os.getenv("LOCAL_LLM_API_KEY", "").strip(),
     )
 
 
@@ -135,6 +135,15 @@ def _set_cache(is_up: bool) -> None:
         logger.debug(f"Redis probe cache set failed: {e}")
 
 
+def _probe_headers() -> dict[str, str]:
+    """Headers for probing and authenticating against local-llm endpoint."""
+    _, _, api_key = _local_config()
+    headers = {"Origin": "https://api.negolah.my"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    return headers
+
+
 def is_local_llm_available_sync(timeout: float = 1.5) -> bool:
     """Synchronously check if the self-hosted local model or Cloudflare Tunnel is reachable."""
     cached = _check_cache()
@@ -145,7 +154,7 @@ def is_local_llm_available_sync(timeout: float = 1.5) -> bool:
     is_up = False
     try:
         with httpx.Client(timeout=timeout) as client:
-            res = client.get(url)
+            res = client.get(url, headers=_probe_headers())
             is_up = res.status_code == 200
     except Exception as e:
         logger.debug(f"Local LLM probe failed at {url}: {e}")
@@ -165,7 +174,7 @@ async def is_local_llm_available(timeout: float = 1.5) -> bool:
     is_up = False
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
-            res = await client.get(url)
+            res = await client.get(url, headers=_probe_headers())
             is_up = res.status_code == 200
     except Exception as e:
         logger.debug(f"Local LLM probe failed at {url}: {e}")
@@ -274,10 +283,11 @@ def _build_local_model(temperature: float) -> ChatOpenAI:
     model = ChatOpenAI(
         model_name=model_name,
         base_url=base_url,
-        api_key=api_key,
+        api_key=api_key or "local-key",
         temperature=temperature,
         streaming=True,
         max_retries=1,
+        default_headers={"Origin": "https://api.negolah.my"},
         timeout=httpx.Timeout(
             LOCAL_READ_TIMEOUT,
             connect=LOCAL_CONNECT_TIMEOUT,

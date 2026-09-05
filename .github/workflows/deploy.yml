@@ -7,16 +7,20 @@ on:
       - 'README.md'
       - 'docs/**'
       - 'specs/**'
+      - 'supabase/**'
       - '.claude/**'
       - '.gitignore'
+      - 'TODO.md'
   pull_request:
     branches: [ main ]
     paths-ignore:
       - 'README.md'
       - 'docs/**'
       - 'specs/**'
+      - 'supabase/**'
       - '.claude/**'
       - '.gitignore'
+      - 'TODO.md'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -26,8 +30,32 @@ env:
   BACKEND_IMAGE: ghcr.io/terryong31/nego-lah-backend
 
 jobs:
+  changes:
+    name: Detect Changed Components
+    runs-on: ubuntu-latest
+    outputs:
+      frontend: ${{ steps.filter.outputs.frontend }}
+      backend: ${{ steps.filter.outputs.backend }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          filters: |
+            frontend:
+              - 'frontend/**'
+              - '.github/workflows/deploy.yml'
+            backend:
+              - 'backend/**'
+              - 'docker-compose.yml'
+              - 'Caddyfile'
+              - '.github/workflows/deploy.yml'
+
   backend-ci:
     name: Backend CI (ruff, pytest & pip-audit)
+    needs: [changes]
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -65,10 +93,12 @@ jobs:
           cd backend
           uv run pip-audit
 
-  frontend-ci:
-    name: Frontend CI (lint, typecheck, vitest & audit)
+  frontend-lint:
+    name: Frontend Lint & Typecheck
+    needs: [changes]
+    if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
@@ -100,20 +130,47 @@ jobs:
           cd frontend
           bun run typecheck
 
-      - name: Unit & i18n tests (Vitest)
-        run: |
-          cd frontend
-          bun run test
-
       - name: Dependency security audit (bun pm untrusted)
         run: |
           cd frontend
           bun pm untrusted
 
+  frontend-test:
+    name: Frontend Unit Tests (Vitest)
+    needs: [changes]
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Cache Bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('frontend/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+
+      - name: Install frontend dependencies
+        run: |
+          cd frontend
+          bun install --frozen-lockfile
+
+      - name: Unit & i18n tests (Vitest)
+        run: |
+          cd frontend
+          bun run test
+
   deploy-frontend:
     name: Deploy frontend to Cloudflare Pages
-    needs: [frontend-ci]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [changes, frontend-lint, frontend-test]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -158,8 +215,8 @@ jobs:
 
   build-backend:
     name: Build & push backend image
-    needs: [backend-ci]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [changes, backend-ci]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -191,8 +248,8 @@ jobs:
 
   deploy-backend:
     name: Deploy backend to Lightsail
-    needs: [build-backend]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [changes, build-backend]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

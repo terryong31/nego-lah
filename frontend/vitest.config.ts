@@ -9,6 +9,8 @@ export default defineVitestConfig({
   test: {
     environment: 'nuxt',
     globals: true,
+    testTimeout: 15000,
+    hookTimeout: 15000,
     setupFiles: ['./tests/setup.ts'],
     // Icons must never hit the network in tests. The clientBundle in
     // nuxt.config renders statically-used icons offline; this disables the

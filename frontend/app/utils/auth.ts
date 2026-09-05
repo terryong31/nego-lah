@@ -80,3 +80,25 @@ export function loginRedirect(fullPath?: string | null): { path: string, query?:
 
   return { path: '/login', query: { redirect: target } }
 }
+
+export interface AvatarUserLike {
+  user_metadata?: {
+    custom_avatar_url?: string | null
+    avatar_url?: string | null
+  } | null
+}
+
+/**
+ * The avatar to display for a user.
+ *
+ * Supabase re-syncs `user_metadata` from the identity provider's claims on every
+ * OAuth sign-in, and Google's claims include `avatar_url`. Anything we wrote
+ * there would therefore be replaced by the Google photo the next time the user
+ * signs in with Google — so a self-uploaded avatar is stored under
+ * `custom_avatar_url` (a key no provider writes) and takes precedence here.
+ * `PUT /user/{id}/profile` is the only writer of that key.
+ */
+export function resolveAvatarUrl(user: AvatarUserLike | null | undefined): string | undefined {
+  const meta = user?.user_metadata
+  return meta?.custom_avatar_url || meta?.avatar_url || undefined
+}

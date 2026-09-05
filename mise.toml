@@ -119,3 +119,17 @@ description = "Emit test telemetry across all 7 Sentry pillars (Traces, Logs, Me
 dir = "backend"
 run = "infisical run --env=prod --path=/Backend -- uv run python scripts/verify_sentry_all.py"
 
+
+# SPEC-029 one-off migration. Uploads used to be written to `avatar_url`, the
+# same key Supabase re-syncs from Google on every OAuth sign-in. Run the dry run
+# first — it prints every user it would touch. Swap --env=prod for --env=dev to
+# rehearse against staging.
+[tasks."avatars:backfill"]
+description = "Dry run: report self-uploaded avatars still needing the move to custom_avatar_url"
+dir = "backend"
+run = "infisical run --env=prod --path=/Backend -- uv run python scripts/backfill_custom_avatar.py"
+
+[tasks."avatars:backfill:apply"]
+description = "Move self-uploaded avatars to custom_avatar_url so an OAuth sign-in can no longer overwrite them (writes)"
+dir = "backend"
+run = "infisical run --env=prod --path=/Backend -- uv run python scripts/backfill_custom_avatar.py --apply"

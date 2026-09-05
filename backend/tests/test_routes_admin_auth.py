@@ -267,6 +267,31 @@ async def test_get_all_users_merges_auth_profile_and_settings(client, admin_user
     assert body["u2"]["admin_intervening"] is False
 
 
+async def test_get_all_users_prefers_custom_avatar_over_provider_avatar(client, admin_user, fake_supabase, patch_supabase):
+    """A self-uploaded avatar outranks the Google photo Supabase re-syncs on login."""
+    admin_user()
+    patch_supabase("connector", admin=fake_supabase)
+
+    user1 = make_user("u1", email="alice@example.com", metadata={
+        "custom_avatar_url": "http://cdn/uploaded.png",
+        "avatar_url": "https://lh3.googleusercontent.com/a/google-photo",
+    })
+    fake_supabase.auth.admin.list_users.return_value = [user1]
+
+    profiles_mock = MagicMock()
+    profiles_mock.select.return_value.execute.return_value = make_supabase_result([])
+    settings_mock = MagicMock()
+    settings_mock.select.return_value.execute.return_value = make_supabase_result([])
+    fake_supabase.table.side_effect = table_router(
+        {"user_profiles": profiles_mock, "chat_settings": settings_mock}
+    )
+
+    resp = await client.get("/admin/users")
+
+    assert resp.status_code == 200
+    assert resp.json()[0]["avatar_url"] == "http://cdn/uploaded.png"
+
+
 async def test_get_all_users_email_local_part_fallback_when_no_display_name(client, admin_user, fake_supabase, patch_supabase):
     admin_user()
     patch_supabase("connector", admin=fake_supabase)
@@ -658,6 +683,29 @@ async def test_get_all_chats_marks_unread_when_last_message_from_human(client, a
     assert chat["message_count"] == 2
     assert chat["last_role"] == "human"
     assert chat["unread"] is True
+
+
+async def test_get_all_chats_prefers_custom_avatar_over_provider_avatar(client, admin_user, fake_supabase, patch_supabase, monkeypatch):
+    admin_user()
+    patch_supabase("connector", admin=fake_supabase)
+    fake_supabase.table.return_value.select.return_value.execute.return_value = make_supabase_result([])
+    user_a = make_user("user-a", email="a@example.com", metadata={
+        "display_name": "Alice",
+        "custom_avatar_url": "http://cdn/uploaded.png",
+        "avatar_url": "https://lh3.googleusercontent.com/a/google-photo",
+    })
+    fake_supabase.auth.admin.list_users.return_value = [user_a]
+
+    monkeypatch.setattr(
+        conversation_memory,
+        "get_all_histories",
+        MagicMock(return_value={"user-a": [{"role": "human", "content": "hi", "source": "human"}]}),
+    )
+
+    resp = await client.get("/admin/chats")
+
+    assert resp.status_code == 200
+    assert resp.json()[0]["avatar_url"] == "http://cdn/uploaded.png"
 
 
 async def test_get_all_chats_not_unread_when_last_message_from_ai(client, admin_user, fake_supabase, patch_supabase, monkeypatch):

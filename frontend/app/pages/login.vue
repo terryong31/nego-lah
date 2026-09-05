@@ -69,6 +69,10 @@ const providers = computed(() => [{
     try {
       const safeRedirect = getSafeRedirect()
       const confirmUrl = new URL(`${window.location.origin}/confirm`)
+      // /confirm is the shared Supabase callback route, so it also receives the
+      // email-confirmation link. Those two need different screens and it can't
+      // tell them apart from the `?code=` alone — but we own this URL, so tag it.
+      confirmUrl.searchParams.set('flow', 'oauth')
       if (safeRedirect !== '/') {
         confirmUrl.searchParams.set('redirect', safeRedirect)
       }

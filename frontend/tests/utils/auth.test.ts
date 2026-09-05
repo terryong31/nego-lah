@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isAuthGuarded, loginRedirect, safeRedirectPath } from '~/utils/auth'
+import { isAuthGuarded, loginRedirect, resolveAvatarUrl, safeRedirectPath } from '~/utils/auth'
 
 describe('utils/auth.ts - isAuthGuarded', () => {
   it('returns true for routes with meta.middleware = "auth"', () => {
@@ -113,5 +113,41 @@ describe('utils/auth.ts - loginRedirect', () => {
     expect(loginRedirect('https://evil.com')).toEqual({ path: '/login' })
     expect(loginRedirect(undefined)).toEqual({ path: '/login' })
     expect(loginRedirect(null)).toEqual({ path: '/login' })
+  })
+})
+
+describe('utils/auth.ts - resolveAvatarUrl', () => {
+  // Supabase re-syncs user_metadata from the identity provider on every OAuth
+  // sign-in, so `avatar_url` belongs to Google. The self-uploaded avatar lives
+  // under `custom_avatar_url` and has to win wherever an avatar is displayed.
+  it('prefers a self-uploaded avatar over the provider photo', () => {
+    expect(resolveAvatarUrl({
+      user_metadata: {
+        custom_avatar_url: 'https://cdn.negolah.my/avatars/u1/mine.png',
+        avatar_url: 'https://lh3.googleusercontent.com/a/google-photo'
+      }
+    })).toBe('https://cdn.negolah.my/avatars/u1/mine.png')
+  })
+
+  it('falls back to the provider photo when nothing was uploaded', () => {
+    expect(resolveAvatarUrl({
+      user_metadata: { avatar_url: 'https://lh3.googleusercontent.com/a/google-photo' }
+    })).toBe('https://lh3.googleusercontent.com/a/google-photo')
+  })
+
+  it('returns undefined when neither key is set', () => {
+    expect(resolveAvatarUrl({ user_metadata: {} })).toBeUndefined()
+    expect(resolveAvatarUrl({})).toBeUndefined()
+    expect(resolveAvatarUrl(null)).toBeUndefined()
+    expect(resolveAvatarUrl(undefined)).toBeUndefined()
+  })
+
+  it('treats empty strings as absent so UAvatar falls through to initials', () => {
+    expect(resolveAvatarUrl({
+      user_metadata: { custom_avatar_url: '', avatar_url: '' }
+    })).toBeUndefined()
+    expect(resolveAvatarUrl({
+      user_metadata: { custom_avatar_url: '', avatar_url: 'https://lh3.googleusercontent.com/a/p' }
+    })).toBe('https://lh3.googleusercontent.com/a/p')
   })
 })

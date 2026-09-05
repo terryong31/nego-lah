@@ -4,7 +4,8 @@ import { mockNuxtImport, mountSuspended } from '@nuxt/test-utils/runtime'
 import { flushPromises } from '@vue/test-utils'
 import ConfirmPage from '~/pages/confirm.vue'
 
-const userRef = ref<{ id: string, email: string } | null>(null)
+type StubUser = { id: string, email: string, app_metadata?: { provider?: string } }
+const userRef = ref<StubUser | null>(null)
 const routeStub = reactive<{ query: Record<string, string | undefined>, hash?: string }>({ query: {} })
 
 mockNuxtImport('useSupabaseUser', () => () => userRef)
@@ -12,6 +13,10 @@ mockNuxtImport('useRoute', () => () => routeStub)
 
 function spyOnRouterPush(wrapper: { vm: { $router: { push: (...args: unknown[]) => unknown } } }) {
   return vi.spyOn(wrapper.vm.$router, 'push').mockImplementation(() => Promise.resolve())
+}
+
+function spyOnRouterReplace(wrapper: { vm: { $router: { replace: (...args: unknown[]) => unknown } } }) {
+  return vi.spyOn(wrapper.vm.$router, 'replace').mockImplementation(() => Promise.resolve())
 }
 
 describe('pages/confirm.vue', () => {
@@ -108,6 +113,83 @@ describe('pages/confirm.vue', () => {
     const button = wrapper.findComponent({ name: 'UButton' })
     expect(button.exists()).toBe(true)
     expect(button.props('label')).toBe('Back to Login')
+  })
+
+  // /confirm is the single Supabase auth callback route, so a Google sign-in
+  // lands here too. It is NOT an email confirmation: showing "Email Confirmed!"
+  // plus a countdown to someone who just clicked "Sign in with Google" is both
+  // wrong and a pointless interstitial.
+  describe('OAuth callback flow', () => {
+    it('redirects straight to / without showing the Email Confirmed screen', async () => {
+      routeStub.query = { flow: 'oauth' }
+      wrapper = await mountSuspended(ConfirmPage)
+      const replaceSpy = spyOnRouterReplace(wrapper)
+
+      userRef.value = { id: 'u1', email: 'user@example.com' }
+      await flushPromises()
+
+      expect(replaceSpy).toHaveBeenCalledWith('/')
+      expect(wrapper.text()).not.toContain('Email Confirmed!')
+    })
+
+    it('redirects to the safe redirect target when one is carried through', async () => {
+      routeStub.query = { flow: 'oauth', redirect: '/chat?item_id=item-1' }
+      wrapper = await mountSuspended(ConfirmPage)
+      const replaceSpy = spyOnRouterReplace(wrapper)
+
+      userRef.value = { id: 'u1', email: 'user@example.com' }
+      await flushPromises()
+
+      expect(replaceSpy).toHaveBeenCalledWith('/chat?item_id=item-1')
+    })
+
+    it('never renders the success screen when the session is already present at mount', async () => {
+      routeStub.query = { flow: 'oauth' }
+      userRef.value = { id: 'u1', email: 'user@example.com' }
+
+      wrapper = await mountSuspended(ConfirmPage)
+      await flushPromises()
+
+      expect(wrapper.text()).not.toContain('Email Confirmed!')
+      expect(wrapper.text()).not.toContain('Explore Storefront')
+    })
+
+    it('detects an untagged social callback from the session provider', async () => {
+      wrapper = await mountSuspended(ConfirmPage)
+      const replaceSpy = spyOnRouterReplace(wrapper)
+
+      userRef.value = { id: 'u1', email: 'user@example.com', app_metadata: { provider: 'google' } }
+      await flushPromises()
+
+      expect(replaceSpy).toHaveBeenCalledWith('/')
+      expect(wrapper.text()).not.toContain('Email Confirmed!')
+    })
+
+    it('still shows the success screen for an email-provider confirmation', async () => {
+      wrapper = await mountSuspended(ConfirmPage)
+      const replaceSpy = spyOnRouterReplace(wrapper)
+
+      userRef.value = { id: 'u1', email: 'user@example.com', app_metadata: { provider: 'email' } }
+      await flushPromises()
+
+      expect(replaceSpy).not.toHaveBeenCalled()
+      expect(wrapper.text()).toContain('Email Confirmed!')
+    })
+
+    it('does not start the countdown on the OAuth path', async () => {
+      routeStub.query = { flow: 'oauth' }
+      wrapper = await mountSuspended(ConfirmPage)
+      const pushSpy = spyOnRouterPush(wrapper)
+      spyOnRouterReplace(wrapper)
+
+      userRef.value = { id: 'u1', email: 'user@example.com' }
+      await flushPromises()
+
+      vi.advanceTimersByTime(6000)
+      await flushPromises()
+
+      expect(pushSpy).not.toHaveBeenCalled()
+    })
   })
 
   it('points Back to Login button to loginRedirect with redirect query when present', async () => {

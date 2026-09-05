@@ -238,6 +238,55 @@ async def test_update_profile_with_avatar_success(client, auth_user, patch_supab
     assert upload_opts["content-type"] == "image/png"
     assert upload_opts["upsert"] == "true"
 
+    # The uploaded URL goes to `custom_avatar_url`, NOT `avatar_url`. Supabase
+    # refreshes user_metadata from the identity provider on every OAuth
+    # sign-in, so anything written to a key Google also sets (`avatar_url`,
+    # `picture`) is silently replaced by the Google photo on the next login.
+    updated_metadata = fake_admin.auth.admin.update_user_by_id.call_args[0][1]["user_metadata"]
+    assert updated_metadata["custom_avatar_url"] == "https://cdn.example.com/avatars/user-1/abc.png"
+
+
+async def test_update_profile_avatar_preserves_google_avatar_url(client, auth_user, patch_supabase):
+    """Uploading an avatar must not clobber the provider-owned `avatar_url` key."""
+    auth_user("user-1")
+    fake_admin = MagicMock()
+    fake_admin.auth.admin.get_user_by_id.return_value = _existing_user_result({
+        "avatar_url": "https://lh3.googleusercontent.com/a/google-photo",
+        "picture": "https://lh3.googleusercontent.com/a/google-photo",
+    })
+    fake_admin.storage.from_.return_value.get_public_url.return_value = (
+        "https://cdn.example.com/avatars/user-1/uploaded.png"
+    )
+    patch_supabase("routes.user", admin=fake_admin, user=MagicMock())
+
+    resp = await client.put(
+        "/user/user-1/profile",
+        files={"avatar": ("photo.png", b"x" * 100, "image/png")},
+    )
+
+    assert resp.status_code == 200
+    updated_metadata = fake_admin.auth.admin.update_user_by_id.call_args[0][1]["user_metadata"]
+    assert updated_metadata["custom_avatar_url"] == "https://cdn.example.com/avatars/user-1/uploaded.png"
+    assert updated_metadata["avatar_url"] == "https://lh3.googleusercontent.com/a/google-photo"
+
+    # The response reports the *effective* avatar, which is now the upload.
+    assert resp.json()["avatar_url"] == "https://cdn.example.com/avatars/user-1/uploaded.png"
+
+
+async def test_update_profile_reports_provider_avatar_when_no_upload(client, auth_user, patch_supabase):
+    """A user who never uploaded still gets their provider photo back."""
+    auth_user("user-1")
+    fake_admin = MagicMock()
+    fake_admin.auth.admin.get_user_by_id.return_value = _existing_user_result({
+        "avatar_url": "https://lh3.googleusercontent.com/a/google-photo",
+    })
+    patch_supabase("routes.user", admin=fake_admin, user=MagicMock())
+
+    resp = await client.put("/user/user-1/profile", data={"display_name": "No Upload"})
+
+    assert resp.status_code == 200
+    assert resp.json()["avatar_url"] == "https://lh3.googleusercontent.com/a/google-photo"
+
 
 async def test_update_profile_avatar_too_large(client, auth_user, patch_supabase):
     auth_user("user-1")

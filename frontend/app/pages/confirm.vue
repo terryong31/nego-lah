@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { EmailOtpType } from '@supabase/supabase-js'
+import type { EmailOtpType, Session } from '@supabase/supabase-js'
 import { loginRedirect, safeRedirectPath } from '~/utils/auth'
 
 const { t } = useI18n()
@@ -10,6 +10,26 @@ const router = useRouter()
 const { initLanguage } = useLanguage()
 
 type ConfirmStatus = 'loading' | 'success' | 'error'
+
+// Structural, because a session's user reaches us as a `User` from the Supabase
+// client but as a `JwtPayload` from `useSupabaseUser()`. All we need is the
+// primary provider that both carry.
+type SessionUserLike = { app_metadata?: { provider?: string } | null } | null | undefined
+
+/**
+ * Supabase returns the callback params in the query string on the PKCE flow and
+ * in the URL fragment on the implicit one, and `route.query` only ever sees the
+ * former — so every param is looked up across all three sources.
+ */
+function readParam(name: string): string | null {
+  const fromRoute = route.query[name]
+  if (typeof fromRoute === 'string' && fromRoute) return fromRoute
+  if (typeof window === 'undefined') return null
+  const fromSearch = new URLSearchParams(window.location.search).get(name)
+  if (fromSearch) return fromSearch
+  if (!window.location.hash) return null
+  return new URLSearchParams(window.location.hash.replace(/^#/, '')).get(name)
+}
 
 function getLocalizedError(rawCode?: string | null, rawDesc?: string | null) {
   const code = (rawCode || '').toLowerCase()
@@ -24,149 +44,154 @@ function getLocalizedError(rawCode?: string | null, rawDesc?: string | null) {
   return null
 }
 
-const status = ref<ConfirmStatus>(route.query.error || route.query.error_code ? 'error' : 'loading')
+const status = ref<ConfirmStatus>(readParam('error') || readParam('error_code') ? 'error' : 'loading')
 const errorMessage = ref<string | null>(null)
 const countdown = ref(5)
 let timer: ReturnType<typeof setInterval> | null = null
 
-const targetRedirect = ref<string | null>(null)
+// Both are resolved during setup rather than in `onMounted`, because the
+// `watch(user, { immediate: true })` below can complete the flow before mount
+// and it needs the target and the flow marker already in hand.
+const targetRedirect = ref<string | null>(safeRedirectPath(readParam('redirect')))
+const isTaggedOAuth = readParam('flow') === 'oauth'
+
+let redirected = false
 
 function proceedToHome() {
   if (timer) clearInterval(timer)
-  if (targetRedirect.value) {
-    router.push(targetRedirect.value)
-  } else {
-    router.push('/')
+  router.push(targetRedirect.value || '/')
+}
+
+/**
+ * Whether this callback is a social sign-in rather than an email confirmation.
+ *
+ * The `flow` marker is set by `pages/login.vue` on the URL it hands the provider,
+ * so it is authoritative. The session's primary provider is the fallback for a
+ * social callback that reaches us untagged — only `email` means a real
+ * confirmation link.
+ */
+function isOAuthFlow(sessionUser: SessionUserLike): boolean {
+  if (isTaggedOAuth) return true
+  const provider = sessionUser?.app_metadata?.provider
+  return !!provider && provider !== 'email'
+}
+
+/**
+ * Single completion path for every way a session can arrive here.
+ *
+ * A social login goes straight through: someone who just clicked "Sign in with
+ * Google" gets told nothing by an "Email Confirmed!" screen they never asked
+ * for, and `replace` keeps the spent callback route out of their history.
+ */
+async function succeed(sessionUser?: SessionUserLike) {
+  if (status.value === 'success' || redirected) return
+
+  if (isOAuthFlow(sessionUser ?? user.value)) {
+    redirected = true
+    // The immediate watcher can fire during setup; wait for the mount so the
+    // navigation isn't issued from a component that doesn't exist yet.
+    await nextTick()
+    router.replace(targetRedirect.value || '/')
+    return
+  }
+
+  status.value = 'success'
+  await initLanguage()
+  startCountdown()
+}
+
+/** Never downgrade a flow that already completed. */
+function fail() {
+  if (status.value === 'loading' && !redirected) status.value = 'error'
+}
+
+/**
+ * Fall back to whatever session the Supabase client has settled on by now.
+ * Returns false when there still isn't one.
+ */
+async function succeedIfSessionExists(): Promise<boolean> {
+  const { data } = await supabase.auth.getSession()
+  const sessionUser = data?.session?.user ?? user.value
+  if (!sessionUser) return false
+  await succeed(sessionUser)
+  return true
+}
+
+/**
+ * Runs one of the Supabase verification calls and resolves the outcome.
+ *
+ * A failure here is not conclusive: `@nuxtjs/supabase` races us for the same
+ * code and often wins, which surfaces as "invalid code" even though the session
+ * is fine — hence the fallback, and the grace period for storage to sync.
+ */
+async function verify(
+  run: () => Promise<{ data: { session: Session | null } | null, error: { message: string } | null }>,
+  label: string,
+  graceMs: number
+) {
+  try {
+    const { data, error } = await run()
+    if (!error && data?.session) {
+      await succeed(data.session.user)
+      return
+    }
+    if (error) console.warn(`[confirm.vue] ${label}:`, error.message)
+  } catch (e) {
+    console.warn(`[confirm.vue] ${label} caught:`, e)
+  }
+
+  if (await succeedIfSessionExists()) return
+  if (!graceMs) {
+    fail()
+    return
+  }
+  setTimeout(async () => {
+    if (!await succeedIfSessionExists()) fail()
+  }, graceMs)
+}
+
+function cleanUrl() {
+  if (typeof window !== 'undefined' && (window.location.search || window.location.hash)) {
+    window.history.replaceState(window.history.state, '', window.location.pathname)
   }
 }
 
 let authSubscription: { unsubscribe: () => void } | null = null
 
 onMounted(async () => {
-  const searchParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null
-  const hashParams = typeof window !== 'undefined' && window.location.hash ? new URLSearchParams(window.location.hash.replace(/^#/, '')) : null
-
-  targetRedirect.value = safeRedirectPath((route.query.redirect as string) || searchParams?.get('redirect'))
-
-  const err = (route.query.error as string) || searchParams?.get('error') || hashParams?.get('error')
-  const errCode = (route.query.error_code as string) || searchParams?.get('error_code') || hashParams?.get('error_code')
-  const errDesc = (route.query.error_description as string) || searchParams?.get('error_description') || hashParams?.get('error_description')
+  const err = readParam('error')
+  const errCode = readParam('error_code')
+  const errDesc = readParam('error_description')
 
   if (err || errCode) {
     console.error('[confirm.vue] Auth provider error:', { err, errCode, errDesc })
     status.value = 'error'
     errorMessage.value = getLocalizedError(errCode, errDesc) || errDesc || null
-    if (typeof window !== 'undefined' && (window.location.search || window.location.hash)) {
-      window.history.replaceState(window.history.state, '', window.location.pathname)
-    }
+    cleanUrl()
     return
   }
 
-  // Subscribe to auth state changes in case @nuxtjs/supabase exchanges the code in the background
-  const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
-    if (session?.user && status.value !== 'success') {
-      status.value = 'success'
-      await initLanguage()
-      startCountdown()
-    }
+  // Subscribe first, in case @nuxtjs/supabase exchanges the code in the background
+  const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+    if (session?.user) succeed(session.user)
   })
   authSubscription = authListener.subscription
 
-  const code = (route.query.code as string) || searchParams?.get('code') || hashParams?.get('code')
-  const tokenHash = (route.query.token_hash as string) || searchParams?.get('token_hash') || hashParams?.get('token_hash')
-  const type = ((route.query.type as string) || searchParams?.get('type') || hashParams?.get('type') || 'email') as EmailOtpType
+  const code = readParam('code')
+  const tokenHash = readParam('token_hash')
+  const type = (readParam('type') || 'email') as EmailOtpType
 
   if (code) {
-    try {
-      const { data, error } = await supabase.auth.exchangeCodeForSession(code)
-      if (!error && data?.session) {
-        status.value = 'success'
-        await initLanguage()
-        startCountdown()
-      } else {
-        if (error) console.warn('[confirm.vue] exchangeCodeForSession:', error.message)
-        // Check if session was already established or is being established
-        const { data: sessionData } = await supabase.auth.getSession()
-        if (sessionData?.session || user.value) {
-          status.value = 'success'
-          await initLanguage()
-          startCountdown()
-        } else {
-          // Allow brief grace period for Supabase client storage sync
-          setTimeout(async () => {
-            const { data: sData } = await supabase.auth.getSession()
-            if (sData?.session || user.value) {
-              status.value = 'success'
-              await initLanguage()
-              startCountdown()
-            } else {
-              status.value = 'error'
-            }
-          }, 800)
-        }
-      }
-    } catch (e) {
-      console.warn('[confirm.vue] exchangeCodeForSession caught:', e)
-      const { data: sessionData } = await supabase.auth.getSession()
-      if (sessionData?.session || user.value) {
-        status.value = 'success'
-        await initLanguage()
-        startCountdown()
-      } else {
-        status.value = 'error'
-      }
-    }
+    await verify(() => supabase.auth.exchangeCodeForSession(code), 'exchangeCodeForSession', 800)
   } else if (tokenHash) {
-    try {
-      const { data, error } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type })
-      if (!error && data?.session) {
-        status.value = 'success'
-        await initLanguage()
-        startCountdown()
-      } else {
-        if (error) console.warn('[confirm.vue] verifyOtp:', error.message)
-        const { data: sessionData } = await supabase.auth.getSession()
-        if (sessionData?.session || user.value) {
-          status.value = 'success'
-          await initLanguage()
-          startCountdown()
-        } else {
-          status.value = 'error'
-        }
-      }
-    } catch (e) {
-      console.warn('[confirm.vue] verifyOtp caught:', e)
-      const { data: sessionData } = await supabase.auth.getSession()
-      if (sessionData?.session || user.value) {
-        status.value = 'success'
-        await initLanguage()
-        startCountdown()
-      } else {
-        status.value = 'error'
-      }
-    }
-  } else {
-    const { data: sessionData } = await supabase.auth.getSession()
-    if (sessionData?.session || user.value) {
-      status.value = 'success'
-      startCountdown()
-    } else {
-      setTimeout(async () => {
-        const { data: sData } = await supabase.auth.getSession()
-        if (sData?.session || user.value) {
-          status.value = 'success'
-          startCountdown()
-        } else {
-          status.value = 'error'
-        }
-      }, 1500)
-    }
+    await verify(() => supabase.auth.verifyOtp({ token_hash: tokenHash, type }), 'verifyOtp', 0)
+  } else if (!await succeedIfSessionExists()) {
+    setTimeout(async () => {
+      if (!await succeedIfSessionExists()) fail()
+    }, 1500)
   }
 
-  // Clean query params and hash from address bar
-  if (typeof window !== 'undefined' && (window.location.search || window.location.hash)) {
-    window.history.replaceState(window.history.state, '', window.location.pathname)
-  }
+  cleanUrl()
 })
 
 function startCountdown() {
@@ -179,12 +204,8 @@ function startCountdown() {
   }, 1000)
 }
 
-watch(user, async (newUser) => {
-  if (newUser && !errorMessage.value) {
-    status.value = 'success'
-    await initLanguage()
-    startCountdown()
-  }
+watch(user, (newUser) => {
+  if (newUser && !errorMessage.value) succeed(newUser)
 }, { immediate: true })
 
 watch(status, (newStatus) => {

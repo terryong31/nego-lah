@@ -21,6 +21,8 @@ const props = withDefaults(defineProps<{
 
 const { locale } = useI18n()
 
+const isSold = computed(() => props.item?.status === 'sold')
+
 const displayName = computed(() => localizedItemField(props.item, locale.value, 'name'))
 const displayCondition = computed(() => localizedItemField(props.item, locale.value, 'condition'))
 
@@ -58,28 +60,29 @@ const imageUrl = computed(() => {
   <UCard
     v-else-if="item"
     class="group cursor-pointer transition-all duration-300 flex flex-col overflow-hidden h-full"
-    :ui="{ body: 'p-0 flex flex-col flex-1', footer: 'p-2.5 sm:p-3 flex justify-between items-center gap-2' }"
+    :ui="{ body: 'p-2.5 sm:p-3 flex flex-col flex-1 gap-2.5 sm:gap-3', footer: 'p-2.5 sm:p-3 flex justify-between items-center gap-2' }"
     @click="navigateTo(`/items/${item.item_id}`)"
   >
-    <div class="relative overflow-hidden bg-muted aspect-square w-full">
+    <div class="relative overflow-hidden rounded-lg bg-muted aspect-square w-full">
       <img
         :src="imageUrl"
         :alt="displayName"
         class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+        :class="isSold && 'grayscale opacity-60'"
       >
       <div class="absolute top-2 right-2 flex flex-col gap-1 items-end">
         <UBadge
-          v-if="item.status === 'sold'"
+          v-if="isSold"
           color="neutral"
           variant="solid"
-          size="sm"
+          size="lg"
         >
           {{ $t('items.status.sold') }}
         </UBadge>
       </div>
     </div>
 
-    <div class="p-2.5 sm:p-3 flex flex-col gap-1 sm:gap-1.5 flex-1">
+    <div class="flex flex-col gap-1 sm:gap-1.5 flex-1">
       <h3 class="font-semibold text-sm sm:text-base line-clamp-2 sm:line-clamp-1 group-hover:text-primary transition-colors">
         {{ displayName }}
       </h3>

@@ -185,6 +185,66 @@ describe('components/ItemCard.vue', () => {
     expect(navigateToMock).toHaveBeenCalledWith(`/items/${baseItem.item_id}`)
   })
 
+  // SPEC-031: the card's own skeleton defines the intended design — one padding
+  // on the whole card, with a rounded image inset inside it. The loaded card has
+  // to match, or the grid reflows the moment data arrives.
+  describe('padding parity (SPEC-031)', () => {
+    function padding(classes: string) {
+      return classes.split(/\s+/).filter(c => /^(sm:)?p-/.test(c)).sort().join(' ')
+    }
+
+    it('gives the body and the footer the same padding', async () => {
+      const wrapper = await mountSuspended(ItemCard, { props: { item: baseItem } })
+      const ui = wrapper.findComponent({ name: 'UCard' }).props('ui') as Record<string, string>
+
+      expect(padding(ui.body)).not.toBe('')
+      expect(padding(ui.body)).toBe(padding(ui.footer))
+    })
+
+    it('does not let the title/condition wrapper set its own inset', async () => {
+      const wrapper = await mountSuspended(ItemCard, { props: { item: baseItem } })
+
+      const heading = wrapper.find('h3')
+      const textWrapper = heading.element.parentElement!
+      expect(padding(textWrapper.className)).toBe('')
+    })
+
+    it('rounds the image the same way the skeleton does', async () => {
+      const wrapper = await mountSuspended(ItemCard, { props: { item: baseItem } })
+
+      const imageWrapper = wrapper.find('img').element.parentElement!
+      expect(imageWrapper.className).toContain('rounded-lg')
+    })
+  })
+
+  describe('sold treatment (SPEC-031)', () => {
+    it('greys out the image of a sold item', async () => {
+      const wrapper = await mountSuspended(ItemCard, {
+        props: { item: { ...baseItem, status: 'sold' } }
+      })
+
+      expect(wrapper.find('img').classes()).toContain('grayscale')
+    })
+
+    it('leaves an available item in full colour', async () => {
+      const wrapper = await mountSuspended(ItemCard, {
+        props: { item: { ...baseItem, status: 'available' } }
+      })
+
+      expect(wrapper.find('img').classes()).not.toContain('grayscale')
+    })
+
+    it('renders the Sold badge larger than the previous sm', async () => {
+      const wrapper = await mountSuspended(ItemCard, {
+        props: { item: { ...baseItem, status: 'sold' } }
+      })
+
+      const badge = wrapper.findComponent({ name: 'UBadge' })
+      expect(badge.exists()).toBe(true)
+      expect(['md', 'lg', 'xl']).toContain(badge.props('size'))
+    })
+  })
+
   it('renders discounted_price and strikethrough original price when discounted', async () => {
     const discountedItem = {
       ...baseItem,

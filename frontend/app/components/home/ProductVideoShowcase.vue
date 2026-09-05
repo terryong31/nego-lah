@@ -43,6 +43,28 @@ const containerRef = useTemplateRef<HTMLElement>('containerRef')
 
 let observer: IntersectionObserver | null = null
 
+/**
+ * A transient network failure on the 13.5 MB asset used to strand the poster
+ * until the visitor happened to reload the page. Retry the load a bounded
+ * number of times so a genuinely broken asset can't spin forever.
+ */
+const MAX_LOAD_RETRIES = 2
+let loadRetries = 0
+let retryTimer: ReturnType<typeof setTimeout> | null = null
+
+function handleLoadError() {
+  if (loadRetries >= MAX_LOAD_RETRIES) return
+  loadRetries += 1
+
+  if (retryTimer) clearTimeout(retryTimer)
+  retryTimer = setTimeout(() => {
+    const el = videoRef.value
+    if (!el) return
+    el.load()
+    attemptPlay()
+  }, 600 * loadRetries)
+}
+
 function attemptPlay() {
   const el = videoRef.value
   if (!el) return
@@ -68,9 +90,15 @@ function attemptPlay() {
   }
 }
 
+function handleLoadedData() {
+  loadRetries = 0
+  attemptPlay()
+}
+
 watch(videoSource, () => {
   const el = videoRef.value
   if (el) {
+    loadRetries = 0
     el.load()
     attemptPlay()
   }
@@ -109,6 +137,7 @@ onMounted(() => {
 
   onBeforeUnmount(() => {
     if (observer) observer.disconnect()
+    if (retryTimer) clearTimeout(retryTimer)
   })
 })
 </script>
@@ -295,6 +324,8 @@ onMounted(() => {
           disablepictureinpicture
           disableremoteplayback
           :poster="poster"
+          @error="handleLoadError"
+          @loadeddata="handleLoadedData"
         >
           <source
             :src="videoSource"

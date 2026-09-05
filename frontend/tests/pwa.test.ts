@@ -52,5 +52,36 @@ describe('PWA & Cloudflare Pages Security Configuration', () => {
 
     // Must protect backend API routes and console from navigation fallback
     expect(nuxtConfig).toContain('navigateFallbackDenylist:')
+
+    // SPEC-030: runtime caching rules live in a shared, unit-tested module
+    expect(nuxtConfig).toContain('./pwa/runtime-caching')
+    expect(nuxtConfig).toContain('runtimeCaching')
+  })
+
+  it('leaves the install prompt to the browser so beforeinstallprompt is never suppressed', () => {
+    const nuxtConfig = fs.readFileSync(nuxtConfigPath, 'utf-8')
+
+    // SPEC-030: @vite-pwa/nuxt calls preventDefault() on `beforeinstallprompt`
+    // when this is enabled. Nothing in the app calls `$pwa.install()`, so Chrome
+    // suppressed its own banner and logged a console warning. Chrome's native
+    // install affordance is used instead.
+    expect(nuxtConfig).toContain('installPrompt: false')
+    expect(nuxtConfig).not.toContain('installPrompt: true')
+  })
+
+  it('polls for service worker updates so an SPA session is not pinned to an old worker', () => {
+    const nuxtConfig = fs.readFileSync(nuxtConfigPath, 'utf-8')
+
+    // SPEC-030: useRegisterSW only checks for a new worker on a hard navigation,
+    // and an ssr:false SPA never makes one. Without this, a long-lived tab keeps
+    // running the worker it booted with.
+    const match = nuxtConfig.match(/periodicSyncForUpdates:\s*(\d+)/)
+    expect(match).not.toBeNull()
+    expect(Number(match![1])).toBeGreaterThan(0)
+  })
+
+  it('registers the client plugin that purges media cached by the old catch-all rule', () => {
+    const pluginPath = path.resolve(rootDir, 'app/plugins/purge-stale-media-cache.client.ts')
+    expect(fs.existsSync(pluginPath)).toBe(true)
   })
 })

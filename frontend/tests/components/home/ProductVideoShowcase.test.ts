@@ -7,6 +7,7 @@ describe('components/home/ProductVideoShowcase.vue', () => {
     // Mock HTMLMediaElement methods for happy-dom
     window.HTMLMediaElement.prototype.play = vi.fn().mockResolvedValue(undefined)
     window.HTMLMediaElement.prototype.pause = vi.fn()
+    window.HTMLMediaElement.prototype.load = vi.fn()
   })
 
   it('renders the #how-it-works section with headline and Memphis wave', async () => {
@@ -93,5 +94,41 @@ describe('components/home/ProductVideoShowcase.vue', () => {
     expect(wrapper.text()).not.toContain('Name your price')
     expect(wrapper.text()).not.toContain('The agent counters')
     expect(wrapper.text()).not.toContain('Shake on it')
+  })
+
+  // ---- SPEC-030: recovery from a failed media load ----
+
+  it('retries loading the video after a media error, capped at 2 retries', async () => {
+    const load = vi.fn()
+    window.HTMLMediaElement.prototype.load = load
+
+    const wrapper = await mountSuspended(ProductVideoShowcase)
+    const video = wrapper.find('video')
+
+    vi.useFakeTimers()
+    try {
+      // Five failures, but recovery must stop after the configured cap so a
+      // permanently-broken asset cannot spin forever.
+      for (let i = 0; i < 5; i++) {
+        await video.trigger('error')
+        vi.advanceTimersByTime(10_000)
+      }
+    } finally {
+      vi.useRealTimers()
+    }
+
+    expect(load).toHaveBeenCalledTimes(2)
+  })
+
+  it('starts playback once media data becomes available', async () => {
+    const play = vi.fn().mockResolvedValue(undefined)
+    window.HTMLMediaElement.prototype.play = play
+
+    const wrapper = await mountSuspended(ProductVideoShowcase)
+    play.mockClear()
+
+    await wrapper.find('video').trigger('loadeddata')
+
+    expect(play).toHaveBeenCalled()
   })
 })

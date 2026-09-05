@@ -1,3 +1,5 @@
+import { runtimeCaching } from './pwa/runtime-caching'
+
 export default defineNuxtConfig({
 
   modules: [
@@ -253,58 +255,26 @@ export default defineNuxtConfig({
       cleanupOutdatedCaches: true,
       clientsClaim: true,
       skipWaiting: true,
-      runtimeCaching: [
-        {
-          urlPattern: /^https:\/\/fonts\.(?:googleapis|gstatic)\.com\/.*/i,
-          handler: 'CacheFirst',
-          options: {
-            cacheName: 'google-fonts',
-            expiration: {
-              maxEntries: 10,
-              maxAgeSeconds: 60 * 60 * 24 * 365
-            },
-            cacheableResponse: {
-              statuses: [0, 200]
-            }
-          }
-        },
-        {
-          urlPattern: /\.(?:png|jpg|jpeg|svg|gif|webp)$/i,
-          handler: 'StaleWhileRevalidate',
-          options: {
-            cacheName: 'static-images',
-            expiration: {
-              maxEntries: 100,
-              maxAgeSeconds: 60 * 60 * 24 * 30
-            },
-            cacheableResponse: {
-              statuses: [0, 200]
-            }
-          }
-        },
-        {
-          urlPattern: /.*\/storage\/v1\/object\/public\/.*/i,
-          handler: 'StaleWhileRevalidate',
-          options: {
-            cacheName: 'supabase-storage-images',
-            expiration: {
-              maxEntries: 100,
-              maxAgeSeconds: 60 * 60 * 24 * 7
-            },
-            cacheableResponse: {
-              statuses: [0, 200]
-            }
-          }
-        },
-        {
-          // Never serve stale responses for API calls or chat / negotiation
-          urlPattern: /^https:\/\/api\.negolah\.my\/api\/.*/i,
-          handler: 'NetworkOnly'
-        }
-      ]
+      // SPEC-030: media must never be routed through the service worker —
+      // see pwa/runtime-caching.ts for why. Kept in a separate module so the
+      // URL patterns can be unit-tested against real URLs.
+      runtimeCaching
     },
     client: {
-      installPrompt: true
+      // SPEC-030: `useRegisterSW` only looks for a new service worker on a hard
+      // navigation, and this is an SPA (ssr: false) — client-side routing makes
+      // none. Without this poll, a tab left open keeps running whichever worker
+      // it booted with, so a shipped fix never reaches it. Re-checks hourly;
+      // `registerType: 'autoUpdate'` plus skipWaiting/clientsClaim then
+      // activates the replacement and claims open clients immediately.
+      periodicSyncForUpdates: 3600,
+      // SPEC-030: when enabled, @vite-pwa/nuxt calls preventDefault() on
+      // `beforeinstallprompt` and stashes the event for a custom prompt. No
+      // component ever calls `$pwa.install()`, so Chrome suppressed its own
+      // banner and logged "Banner not shown: beforeinstallpromptevent
+      // .preventDefault() called." Leave installation to the browser's native
+      // affordance instead.
+      installPrompt: false
     },
     devOptions: {
       enabled: false,

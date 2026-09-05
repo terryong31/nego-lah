@@ -20,6 +20,7 @@ Welcome to the **Nego-Lah** codebase. This repository contains the full-stack ec
 1. **Spec-Driven Development (LeanSpec) First:**
    - Before implementing any new feature, substantial bugfix, or architectural change, you **MUST** create or update a spec file in `/specs/SPEC-XXX-<name>.md` following the LeanSpec YAML frontmatter format.
    - Keep specs concise (<2,000 tokens) focusing on Context, Acceptance Criteria, API Contracts, and Test Scenarios.
+   - Update docs by adding adr into docs/adr to document architectural decisions.
 
 2. **Strict Test-Driven Development (TDD):**
    - **Red:** Write automated tests asserting the spec's acceptance criteria first. Verify they fail.

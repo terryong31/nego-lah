@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { loginRedirect } from '~/utils/auth'
+import { useItemStore } from '~/stores/item'
 
 interface Item {
   item_id: string
@@ -17,13 +18,40 @@ const { call } = useApi()
 const route = useRoute()
 const toast = useToast()
 const { t, locale } = useI18n()
+const itemStore = useItemStore()
 
 const id = computed(() => route.params.id as string)
 
-const { data: item, pending, error, refresh } = useAsyncData(
+// SPEC-041: fetch through the shared item store (a no-op if the buyer already
+// negotiated a price for this item in an earlier chat this tab session — the
+// page then shows that cached, already-live price with no extra API call).
+// `item` itself is a separate computed reading live store state (below), not
+// this async function's return value, so it reflects the freshest cache even
+// if that changes after this initial load resolves.
+const { pending, error } = useAsyncData(
   `item-detail-${id.value}`,
-  () => call<Item>(`/items/${id.value}`)
+  async () => {
+    await itemStore.fetchIfMissing(id.value)
+    const state = itemStore.getItem(id.value)
+    if (!state) throw new Error('Item not found')
+    return state.item
+  }
 )
+
+const item = computed<Item | null>(() => {
+  const state = itemStore.getItem(id.value)
+  if (!state) return null
+  return {
+    ...state.item,
+    discounted_price: state.discountedPrice ?? state.item.discounted_price
+  } as Item
+})
+
+/** Unconditionally re-fetch, bypassing the store's fetchIfMissing dedup — used
+ * when the caller knows the cache may be stale (the 409 "just sold" retry). */
+async function refresh() {
+  await itemStore.refetch(id.value)
+}
 
 const localizedTitle = computed(() => localizedItemField(item.value, locale.value, 'name'))
 const localizedCondition = computed(() => localizedItemField(item.value, locale.value, 'condition'))

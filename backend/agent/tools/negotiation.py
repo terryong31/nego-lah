@@ -152,6 +152,10 @@ def evaluate_offer(item_id: str, offered_price: float, extra_discount_percent: f
                 active_price = counter
             if active_price is not None:
                 redis_client.setex(f"negotiated_price:{user_id}:{item_id}", 3 * 86400, str(active_price))
+                # SPEC-041: signal the SSE stream loop to emit a data-discount frame.
+                # ContextVar is isolated per async task so this never bleeds into other users.
+                from agent.context import pending_discount
+                pending_discount.set(active_price)
         except Exception as e:
             logger.warning(f"⚠️ Could not cache negotiated price: {e}")
 

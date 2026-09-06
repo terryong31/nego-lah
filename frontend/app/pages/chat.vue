@@ -2,6 +2,7 @@
 import { useChat } from '@ai-sdk/vue'
 import { DefaultChatTransport } from 'ai'
 import { loginRedirect } from '~/utils/auth'
+import { useItemStore } from '~/stores/item'
 
 definePageMeta({
   layout: 'chat',
@@ -25,6 +26,9 @@ const accessToken = ref('')
 // It is NOT a separate room — there is a single conversation per customer.
 const contextItemId = computed(() => (route.query.item_id as string) || '')
 
+// SPEC-041: one fetch per session; SSE discount events patch the store in place.
+const itemStore = useItemStore()
+
 interface ChatItem {
   item_id: string
   name: string
@@ -34,7 +38,19 @@ interface ChatItem {
   images?: string
   translations?: Record<string, ItemTranslation>
 }
-const contextItem = ref<ChatItem | null>(null)
+
+// contextItem is driven by the store so it updates reactively when applyDiscount
+// patches discountedPrice — no extra ref needed.
+const contextItem = computed<ChatItem | null>(() => {
+  if (!contextItemId.value) return null
+  const state = itemStore.getItem(contextItemId.value)
+  if (!state) return null
+  const { item, discountedPrice } = state
+  return {
+    ...item,
+    discounted_price: discountedPrice ?? item.discounted_price
+  } as ChatItem
+})
 
 // The pinned item shows the listing in the reader's language, same as the
 // item page — the raw `name` is whatever the seller typed.
@@ -84,7 +100,21 @@ const { messages, status, stop, sendMessage } = useChat({
         }
       }
     }
-  })
+  }),
+  // SPEC-041: handle the real-time discount signal from the SSE stream.
+  // `onData` is a `useChat` option, not a transport one -- it's invoked once
+  // per data part the stream emits (never as an array), so this must live
+  // here rather than nested inside `DefaultChatTransport`'s options, where
+  // the AI SDK would never call it at all.
+  onData(dataPart) {
+    const p = dataPart as { type?: string, id?: string, data?: { discounted_price?: number } }
+    if (p.type === 'data-discount' && p.id === 'discount' && contextItemId.value) {
+      const price = p.data?.discounted_price
+      if (typeof price === 'number') {
+        itemStore.applyDiscount(contextItemId.value, price)
+      }
+    }
+  }
 })
 
 // Holds ONLY the agent's own [[STATUS:…]] text, which the backend emits in
@@ -290,7 +320,10 @@ onMounted(async () => {
     })
   }
 
-  await Promise.all([loadContextItem(), loadChatSettings()])
+  await Promise.all([
+    contextItemId.value ? itemStore.fetchIfMissing(contextItemId.value) : Promise.resolve(),
+    loadChatSettings()
+  ])
 })
 
 // The header price mirrors what the buyer would actually pay right now. The
@@ -309,16 +342,12 @@ async function loadChatSettings() {
   } catch { /* leave the AI assumed on — the worst case is a stale indicator */ }
 }
 
-async function loadContextItem() {
-  if (!contextItemId.value) return
-  try {
-    contextItem.value = await call<ChatItem>(`/items/${contextItemId.value}`)
-  } catch { /* item may be gone — context header just won't show */ }
-}
-
+// SPEC-041: per-turn item refetch removed. The store is seeded once on mount
+// and updated reactively via the data-discount SSE handler above.
+// Only chat settings need a refresh when a stream ends (ai_enabled toggle).
 watch(status, (now, before) => {
   if ((before === 'streaming' || before === 'submitted') && now !== 'streaming' && now !== 'submitted') {
-    loadContextItem()
+    loadChatSettings()
   }
 })
 

@@ -1,6 +1,7 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mockNuxtImport, mountSuspended } from '@nuxt/test-utils/runtime'
 import ItemCard from '~/components/ItemCard.vue'
+import { useItemStore } from '~/stores/item'
 
 const { navigateToMock } = vi.hoisted(() => ({
   navigateToMock: vi.fn()
@@ -20,6 +21,12 @@ const baseItem = {
 }
 
 describe('components/ItemCard.vue', () => {
+  beforeEach(() => {
+    // SPEC-041: the item store is a shared singleton across tests in this
+    // file — clear it so a previous test's cached item never bleeds in.
+    useItemStore().clear()
+  })
+
   it('renders the skeleton when loading is true, even if an item is provided', async () => {
     const wrapper = await mountSuspended(ItemCard, {
       props: { loading: true, item: baseItem }
@@ -256,5 +263,49 @@ describe('components/ItemCard.vue', () => {
     expect(wrapper.text()).toContain('RM 120.00')
     expect(wrapper.text()).toContain('RM 150.00')
     expect(wrapper.find('.line-through').text()).toContain('RM 150.00')
+  })
+
+  // SPEC-041: the item store overlay — a card for an item already cached by
+  // the store (e.g. negotiated in an earlier chat this tab session) shows
+  // the live discount without needing its own fetch.
+  describe('item store overlay (SPEC-041)', () => {
+    // `useItemStore(fetchFn)` writes into the same shared underlying state
+    // regardless of the injected fetchFn (it's keyed by useState('item-store'),
+    // not by the store instance) — so seeding this way never makes a real
+    // network call, but the plain `useItemStore()` the component uses reads
+    // the exact same cache.
+    async function seedStore(item: Record<string, unknown>) {
+      const store = useItemStore(vi.fn().mockResolvedValue(item))
+      await store.fetchIfMissing(item.item_id as string)
+      return store
+    }
+
+    it('shows the discount from the store even though the prop carries none', async () => {
+      const store = await seedStore(baseItem)
+      store.applyDiscount(baseItem.item_id, 100)
+
+      const wrapper = await mountSuspended(ItemCard, { props: { item: baseItem } })
+
+      expect(wrapper.text()).toContain('RM 100.00')
+      expect(wrapper.find('.line-through').text()).toContain('RM 123.40')
+    })
+
+    it('falls back to the prop discount when the item is not in the store', async () => {
+      const discountedItem = { ...baseItem, price: 150, discounted_price: 120 }
+
+      const wrapper = await mountSuspended(ItemCard, { props: { item: discountedItem } })
+
+      expect(wrapper.text()).toContain('RM 120.00')
+      expect(wrapper.find('.line-through').text()).toContain('RM 150.00')
+    })
+
+    it('shows the plain listed price when neither the store nor the prop carries a discount', async () => {
+      await seedStore(baseItem)
+
+      const wrapper = await mountSuspended(ItemCard, { props: { item: baseItem } })
+
+      expect(wrapper.text()).toContain('RM 123.40')
+      expect(wrapper.find('.line-through').exists()).toBe(false)
+    })
   })
 })

@@ -66,7 +66,9 @@ Migration `20260702000000_items_column_privileges.sql`:
 at all. Service role is unaffected (bypasses RLS and holds table-level grants).
 
 Note: with the column revoked, `select=*` from the anon key now *errors* rather
-than leaking, so the explicit select lists are load-bearing, not cosmetic.
+than leaking, so the explicit select lists are load-bearing, not cosmetic — and
+so is the deploy order. Ship the code FIRST, then migrate: the old backend
+against the new grants 500s the whole storefront.
 
 # Test-Driven Development (TDD) Scenarios
 

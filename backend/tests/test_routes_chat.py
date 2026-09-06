@@ -28,6 +28,7 @@ the full rationale):
   re-resolves the name at call time).
 """
 
+import asyncio
 import json
 
 from conftest import make_supabase_result
@@ -769,3 +770,207 @@ async def test_chat_stream_is_not_turnstile_gated(client, monkeypatch, patch_sup
     assert resp.status_code == 200
     frames = parse_sse(resp.text)
     assert {"type": "text-delta", "id": "0", "delta": "pong"} in frames
+
+
+# ---------------------------------------------------------------------------
+# SPEC-041: real-time discount SSE signal
+# ---------------------------------------------------------------------------
+
+async def test_chat_stream_emits_discount_frame_when_tool_commits_price(
+    client, monkeypatch, patch_supabase, fake_supabase
+):
+    """Scenario 1: when evaluate_offer commits a negotiated price the stream
+    emits exactly one `data-discount` frame with `discounted_price` before the
+    next text-delta, and no internal keys (user_id / item_id) are exposed."""
+    user_id = "user-discount-1"
+    monkeypatch.setattr("routes.chat.verify_user_token", await fake_verify_user_token_factory(user_id))
+
+    set_chat_settings_select(fake_supabase, [])
+    patch_supabase("routes.chat", admin=fake_supabase)
+
+    async def fake_chat_stream_with_discount(user_id, message, item_id=None, files=None):
+        # Simulate evaluate_offer writing to the ContextVar mid-stream.
+        from agent.context import pending_discount
+        pending_discount.set(900.0)
+        yield "Great news — I can do RM900!"
+
+    monkeypatch.setattr("agent.bot.chat_stream", fake_chat_stream_with_discount)
+    monkeypatch.setattr("routes.chat.track_ai_tokens", lambda uid, inp, out: None)
+
+    resp = await client.post(
+        "/chat/stream",
+        json={"user_id": user_id, "message": "Can you do 900?"},
+        headers={"Authorization": "Bearer sometoken"},
+    )
+
+    assert resp.status_code == 200
+    frames = parse_sse(resp.text)
+
+    discount_frames = [f for f in frames if isinstance(f, dict) and f.get("type") == "data-discount"]
+    assert len(discount_frames) == 1
+    assert discount_frames[0] == {
+        "type": "data-discount",
+        "id": "discount",
+        "data": {"discounted_price": 900.0},
+    }
+
+    # Must not leak internal identifiers.
+    data = discount_frames[0]["data"]
+    assert "user_id" not in data
+    assert "item_id" not in data
+
+    # The discount frame must precede the first text-delta.
+    text_deltas = [f for f in frames if isinstance(f, dict) and f.get("type") == "text-delta"]
+    assert text_deltas, "expected at least one text-delta"
+    assert frames.index(discount_frames[0]) < frames.index(text_deltas[0])
+
+
+async def test_chat_stream_emits_no_discount_frame_when_no_tool_runs(
+    client, monkeypatch, patch_supabase, fake_supabase
+):
+    """Scenario 2: a normal turn with no evaluate_offer call produces zero
+    `data-discount` frames."""
+    user_id = "user-discount-2"
+    monkeypatch.setattr("routes.chat.verify_user_token", await fake_verify_user_token_factory(user_id))
+
+    set_chat_settings_select(fake_supabase, [])
+    patch_supabase("routes.chat", admin=fake_supabase)
+
+    async def fake_chat_stream_no_discount(user_id, message, item_id=None, files=None):
+        yield "Hello! How can I help?"
+
+    monkeypatch.setattr("agent.bot.chat_stream", fake_chat_stream_no_discount)
+    monkeypatch.setattr("routes.chat.track_ai_tokens", lambda uid, inp, out: None)
+
+    resp = await client.post(
+        "/chat/stream",
+        json={"user_id": user_id, "message": "Hi"},
+        headers={"Authorization": "Bearer sometoken"},
+    )
+
+    assert resp.status_code == 200
+    frames = parse_sse(resp.text)
+
+    discount_frames = [f for f in frames if isinstance(f, dict) and f.get("type") == "data-discount"]
+    assert discount_frames == [], f"expected no discount frames, got {discount_frames}"
+
+
+async def test_pending_discount_context_var_is_reset_between_sequential_turns(
+    client, monkeypatch, patch_supabase, fake_supabase
+):
+    """Scenario 3a: `pending_discount` ContextVar is reset per request via
+    `set_context()` so a price committed in one turn cannot bleed into the next
+    turn's stream on the same connection."""
+    user_id = "user-discount-3"
+    monkeypatch.setattr("routes.chat.verify_user_token", await fake_verify_user_token_factory(user_id))
+
+    set_chat_settings_select(fake_supabase, [])
+    patch_supabase("routes.chat", admin=fake_supabase)
+
+    call_count = {"n": 0}
+
+    async def fake_chat_stream_alternating(user_id, message, item_id=None, files=None):
+        from agent.context import pending_discount
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            # First turn: tool commits a discount.
+            pending_discount.set(850.0)
+        # Second turn: no tool call — pending_discount must be None (reset by set_context).
+        yield "ok"
+
+    monkeypatch.setattr("agent.bot.chat_stream", fake_chat_stream_alternating)
+    monkeypatch.setattr("routes.chat.track_ai_tokens", lambda uid, inp, out: None)
+
+    # First turn — should emit a discount frame.
+    resp1 = await client.post(
+        "/chat/stream",
+        json={"user_id": user_id, "message": "first"},
+        headers={"Authorization": "Bearer sometoken"},
+    )
+    frames1 = parse_sse(resp1.text)
+    discount_frames_1 = [f for f in frames1 if isinstance(f, dict) and f.get("type") == "data-discount"]
+    assert len(discount_frames_1) == 1
+
+    # Second turn — must NOT carry over the price from the first turn.
+    resp2 = await client.post(
+        "/chat/stream",
+        json={"user_id": user_id, "message": "second"},
+        headers={"Authorization": "Bearer sometoken"},
+    )
+    frames2 = parse_sse(resp2.text)
+    discount_frames_2 = [f for f in frames2 if isinstance(f, dict) and f.get("type") == "data-discount"]
+    assert discount_frames_2 == [], (
+        f"pending_discount bled from turn 1 into turn 2: {discount_frames_2}"
+    )
+
+
+async def test_pending_discount_context_var_is_isolated_across_concurrent_requests(
+    client, monkeypatch, patch_supabase, fake_supabase
+):
+    """Scenario 3b: two /chat/stream requests running truly concurrently (via
+    `asyncio.gather`, not one after another) never see each other's committed
+    price. Starlette runs each request in its own asyncio Task, so
+    `pending_discount` is isolated the same way
+    `test_agent_context.py::test_per_task_isolation_no_cross_contamination`
+    proves for `current_user_id`/`current_item_id` -- this test proves it end
+    to end through the actual route rather than the ContextVar in isolation."""
+    monkeypatch.setattr(
+        "routes.chat.verify_user_token", await fake_verify_user_token_factory("user-concurrent")
+    )
+    set_chat_settings_select(fake_supabase, [])
+    patch_supabase("routes.chat", admin=fake_supabase)
+    monkeypatch.setattr("routes.chat.track_ai_tokens", lambda uid, inp, out: None)
+
+    observed = {}
+
+    async def fake_chat_stream(user_id, message, item_id=None, files=None):
+        from agent.context import pending_discount
+
+        if message == "sets-900":
+            # Yield control first so "reads-only" (below) starts and takes its
+            # own mid-flight reading before this task commits anything.
+            await asyncio.sleep(0.01)
+            pending_discount.set(900.0)
+            await asyncio.sleep(0.02)
+            yield "priced at 900"
+        else:
+            # Starts, then waits -- squarely inside the window where the other
+            # task has already called pending_discount.set(900.0) above, so a
+            # leak would be caught here rather than by luck of scheduling.
+            await asyncio.sleep(0.02)
+            observed["mid_flight_read"] = pending_discount.get()
+            yield "just chatting"
+
+    monkeypatch.setattr("agent.bot.chat_stream", fake_chat_stream)
+
+    resp_discount, resp_plain = await asyncio.gather(
+        client.post(
+            "/chat/stream",
+            json={"user_id": "user-concurrent", "message": "sets-900"},
+            headers={"Authorization": "Bearer sometoken"},
+        ),
+        client.post(
+            "/chat/stream",
+            json={"user_id": "user-concurrent", "message": "reads-only"},
+            headers={"Authorization": "Bearer sometoken"},
+        ),
+    )
+
+    assert observed["mid_flight_read"] is None, (
+        "pending_discount leaked from the concurrent 'sets-900' request into "
+        "'reads-only' -- ContextVar isolation between concurrent requests is broken"
+    )
+
+    discount_frames = [
+        f for f in parse_sse(resp_discount.text) if isinstance(f, dict) and f.get("type") == "data-discount"
+    ]
+    assert discount_frames == [{
+        "type": "data-discount",
+        "id": "discount",
+        "data": {"discounted_price": 900.0},
+    }]
+
+    plain_discount_frames = [
+        f for f in parse_sse(resp_plain.text) if isinstance(f, dict) and f.get("type") == "data-discount"
+    ]
+    assert plain_discount_frames == []

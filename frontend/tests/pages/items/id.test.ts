@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 import { mockNuxtImport, mountSuspended } from '@nuxt/test-utils/runtime'
 import ItemDetailPage from '~/pages/items/[id].vue'
+import { useItemStore } from '~/stores/item'
 
 interface Item {
   item_id: string
@@ -57,7 +58,15 @@ mockNuxtImport('navigateTo', () => navigateToMock)
 mockNuxtImport('useToast', () => () => ({ add: toastAddMock }))
 
 async function mountAtItem(id = 'item-1') {
-  return mountSuspended(ItemDetailPage, { route: `/items/${id}` })
+  const wrapper = await mountSuspended(ItemDetailPage, { route: `/items/${id}` })
+  // SPEC-041: the item now resolves through an extra store hop
+  // (fetchIfMissing -> _load -> the mocked call), one more microtask than a
+  // bare `await call(...)` -- flush the queue so an already-resolved mock
+  // (the common case in this file) is reflected before assertions run. Safe
+  // for the still-pending/deferred-promise tests too: there's nothing new to
+  // flush until their promise is explicitly resolved.
+  await flushPromises()
+  return wrapper
 }
 
 describe('pages/items/[id].vue', () => {
@@ -70,6 +79,10 @@ describe('pages/items/[id].vue', () => {
     // instance backing every test in this file, so without clearing it only
     // the first test to use a given id would ever actually invoke the fetcher.
     clearNuxtData()
+    // SPEC-041: the item store is a shared singleton across tests in this
+    // file — clear it too, or a previous test's cached item (and price)
+    // leaks into the next one.
+    useItemStore().clear()
   })
 
   describe('loading / error / not-found states', () => {
@@ -462,5 +475,42 @@ describe('pages/items/[id].vue', () => {
       expect(wrapper.text()).not.toContain('%')
       expect(wrapper.find('.line-through').exists()).toBe(false)
     })
+  })
+
+  // SPEC-041: the page fetches through the shared item store.
+  describe('item store wiring (SPEC-041)', () => {
+    it('skips the API call and shows the cached price when the item is already in the store', async () => {
+      callMock.mockResolvedValueOnce(makeItem({ item_id: 'item-1' }))
+      const store = useItemStore()
+      await store.fetchIfMissing('item-1')
+      store.applyDiscount('item-1', 90)
+      callMock.mockClear() // the seed above is the only fetch that should have happened
+
+      const wrapper = await mountAtItem('item-1')
+
+      expect(callMock).not.toHaveBeenCalled()
+      expect(wrapper.text()).toContain('RM 90.00')
+    })
+
+    it('reactively reflects a discount applied to the store after mount', async () => {
+      callMock.mockResolvedValue(makeItem({ price: 200 }))
+
+      const wrapper = await mountAtItem('item-1')
+      expect(wrapper.text()).not.toContain('%')
+
+      useItemStore().applyDiscount('item-1', 150)
+      await flushPromises()
+
+      expect(wrapper.text()).toContain('RM 150.00')
+      expect(wrapper.find('.line-through').text()).toContain('RM 200.00')
+    })
+
+    // The existing "shows a 'no longer available' toast and refreshes the
+    // item on a 409 response" test above already pins the exact regression
+    // this wiring risked: `refresh()` must call the store's unconditional
+    // `refetch` (a fresh API call every time), not `fetchIfMissing` (which
+    // would no-op on the item already cached from the initial mount and
+    // leave the page stuck showing "available"). It still passes with the
+    // store wired in, so that guarantee holds.
   })
 })

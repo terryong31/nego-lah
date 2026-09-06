@@ -113,6 +113,11 @@ value is always NULL for a row the storefront can see.
 - Two places to edit when the storefront genuinely needs a new field: the Python
   tuple and the SQL grant. The drift test converts that from a latent leak into
   a failing build.
-- The migration must be applied before the code that depends on it; a deploy
-  that runs the new backend against the old grants still works (it just selects
-  fewer columns), which is the safe ordering.
+- **Deploy order is load-bearing, and it is code-first.** The new backend runs
+  fine against the old grants (it just names fewer columns), but the OLD backend
+  against the NEW grants is an outage: its `select('*')` on the anon key returns
+  `permission denied for column min_price` (SQLSTATE 42501) and every storefront
+  request 500s. So: ship the code, confirm it is live, then apply the migration.
+  Rolling the backend back after the migration re-breaks the storefront — the
+  rollback for the migration itself is
+  `grant select on public.items to anon, authenticated`.

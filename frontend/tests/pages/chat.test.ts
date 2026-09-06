@@ -3,6 +3,7 @@ import { nextTick, reactive, ref } from 'vue'
 import { flushPromises } from '@vue/test-utils'
 import { mockNuxtImport, mountSuspended } from '@nuxt/test-utils/runtime'
 import ChatPage from '~/pages/chat.vue'
+import { useItemStore } from '~/stores/item'
 
 // ---------------------------------------------------------------------------
 // @ai-sdk/vue is a plain npm package (not a Nuxt auto-import), so it's mocked
@@ -48,6 +49,32 @@ vi.mock('@ai-sdk/vue', () => ({
     }
   }
 }))
+
+// Mock the `ai` package so we can capture the DefaultChatTransport options
+// without needing a real HTTP connection. The mock class spreads all
+// constructor options as instance properties so that
+// `chatTransport().headers()` / `chatTransport().prepareSendMessagesRequest()`
+// below still work. `onData` is NOT among these -- it's a top-level `useChat`
+// option (see `useChatConfigHolder` above), not a transport one.
+const { capturedTransportOptions } = vi.hoisted(() => ({
+  capturedTransportOptions: { value: null as Record<string, unknown> | null }
+}))
+
+vi.mock('ai', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('ai')>()
+  return {
+    ...actual,
+    DefaultChatTransport: class {
+      [key: string]: unknown
+      constructor(opts: Record<string, unknown>) {
+        capturedTransportOptions.value = opts
+        // Spread all options as direct properties so chatTransport().headers()
+        // and chatTransport().prepareSendMessagesRequest() still work.
+        Object.assign(this, opts)
+      }
+    }
+  }
+})
 
 interface UIMessageLike {
   id: string
@@ -195,6 +222,10 @@ describe('pages/chat.vue', () => {
     routeStub.query = {}
     routeStub.fullPath = '/chat'
     navigateToMock.mockReset()
+
+    // SPEC-041: clear the shared item store between tests so a previous test's
+    // cached item never bleeds into the next one.
+    useItemStore().clear()
   })
 
   afterEach(() => {
@@ -495,7 +526,9 @@ describe('pages/chat.vue', () => {
       const wrapper = await mountPage()
 
       expect(callMock).toHaveBeenCalledWith('/items/item-1')
-      expect(vm(wrapper).contextItem).toEqual({ item_id: 'item-1', name: 'Vintage Lamp', price: 45.5, status: 'available' })
+      // contextItem is a computed from the store — it maps discountedPrice onto
+      // discounted_price so callers don't care about the internal shape.
+      expect(vm(wrapper).contextItem).toMatchObject({ item_id: 'item-1', name: 'Vintage Lamp', price: 45.5, status: 'available' })
     })
 
     it('does not fetch a context item when there is no item_id in the route', async () => {
@@ -552,24 +585,24 @@ describe('pages/chat.vue', () => {
       expect(wrapper.find('.line-through').exists()).toBe(false)
     })
 
-    it('refetches the context item once a reply finishes streaming, so a price agreed mid-chat shows in the header', async () => {
+    it('applies a negotiated discount in real-time via the onData SSE handler, so the header shows the discounted price immediately', async () => {
       routeStub.query = { item_id: 'item-1' }
       userRef.value = { id: 'user-1' }
-      let price: Record<string, unknown> = { item_id: 'item-1', name: 'AirPods Max', price: 1199, status: 'available' }
       callMock.mockImplementation((path: string) => {
-        if (path === '/items/item-1') return Promise.resolve(price)
+        if (path === '/items/item-1') return Promise.resolve({ item_id: 'item-1', name: 'AirPods Max', price: 1199, status: 'available' })
         return Promise.resolve({ messages: [] })
       })
 
       const wrapper = await mountPage()
       expect(wrapper.text()).toContain('RM 1199.00')
 
-      // The agent settles on RM1000 during this turn.
-      price = { item_id: 'item-1', name: 'AirPods Max', price: 1199, discounted_price: 1000, status: 'available' }
-      statusRef.value = 'streaming'
-      await nextTick()
-      statusRef.value = 'ready'
-      await flushPromises()
+      // Simulate the SSE data-discount frame arriving via useChat's own onData
+      // callback -- the AI SDK invokes it once per data part received (never
+      // as an array), and it's a top-level useChat option, not nested inside
+      // DefaultChatTransport's options.
+      const onData = (useChatConfigHolder.value as { onData?: (part: unknown) => void } | undefined)?.onData
+      expect(onData, 'onData should be registered as a top-level useChat option').toBeDefined()
+      onData?.({ type: 'data-discount', id: 'discount', data: { discounted_price: 1000 } })
       await nextTick()
 
       expect(vm(wrapper).contextItem?.discounted_price).toBe(1000)
@@ -577,7 +610,7 @@ describe('pages/chat.vue', () => {
       expect(wrapper.text()).toContain('-17%')
     })
 
-    it('does not refetch the context item while a reply is still streaming', async () => {
+    it('does not call the items API again while a reply is streaming (store handles it via SSE)', async () => {
       routeStub.query = { item_id: 'item-1' }
       userRef.value = { id: 'user-1' }
       callMock.mockImplementation((path: string) => {

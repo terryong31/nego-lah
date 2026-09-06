@@ -21,10 +21,31 @@ negotiation floor and is revoked from anon/authenticated at the column level
 `agent.context.set_context(item_id=...)` first.
 """
 
+import pytest
+
 from agent import context
 from agent.config import DISCOUNT_SCORING_GUIDE
 from agent.tools.negotiation import assess_discount_eligibility, evaluate_offer
+from cache import redis_client
 from conftest import make_supabase_result
+
+
+@pytest.fixture(autouse=True)
+def _reset_context_vars():
+    """`evaluate_offer` reads `user_id` from `agent.context.get_user_id()` and,
+    per SPEC-041, writes `agent.context.pending_discount` -- both ContextVars
+    live on the ambient (non-Task) context for a plain sync test, so without a
+    reset they'd leak into whichever test runs next (same rationale as
+    `test_agent_context.py`'s `_reset_context_vars` fixture)."""
+    user_token = context.current_user_id.set(None)
+    item_token = context.current_item_id.set(None)
+    discount_token = context.pending_discount.set(None)
+    try:
+        yield
+    finally:
+        context.current_user_id.reset(user_token)
+        context.current_item_id.reset(item_token)
+        context.pending_discount.reset(discount_token)
 
 
 def _chain(fake_supabase):
@@ -374,3 +395,82 @@ def test_invoke_via_langchain_structured_tool_interface(fake_supabase, patch_sup
     )
 
     assert result == "ACCEPT: Offer of RM100.0 meets or exceeds listed price of RM100.0."
+
+
+# --- evaluate_offer: negotiated price persistence (SPEC-041) ----------------
+#
+# These exercise the branch previously left untested by every test above:
+# `_invoke_offer` never sets a user_id, so `if user_id and item_id:` was
+# always False and the Redis write (and now `pending_discount`) never ran.
+
+
+def test_accept_below_listed_price_commits_price_and_sets_pending_discount(fake_supabase, patch_supabase):
+    """ACCEPT at a price below listing writes negotiated_price to Redis and
+    signals the SSE stream loop via `pending_discount` -- the exact value the
+    route drains and forwards as `data-discount`."""
+    _set_item(fake_supabase, {"price": 100, "min_price": 70})
+    patch_supabase("connector", admin=fake_supabase)
+    context.set_context(user_id="user-1", item_id="i")
+
+    result = _invoke_offer(item_id="i", offered_price=75.0, current_price=50.0)
+
+    assert result.startswith("ACCEPT:")
+    assert redis_client.get("negotiated_price:user-1:i") == "75.0"
+    assert context.pending_discount.get() == 75.0
+
+
+def test_counter_commits_counter_price_and_sets_pending_discount(fake_supabase, patch_supabase):
+    """COUNTER also commits -- the counter is the new standing price, so it's
+    what the buyer should see reflected everywhere in real time, not just the
+    final accepted price."""
+    _set_item(fake_supabase, {"price": 100, "min_price": 70})
+    patch_supabase("connector", admin=fake_supabase)
+    context.set_context(user_id="user-1", item_id="i")
+
+    result = _invoke_offer(item_id="i", offered_price=80.0)
+
+    assert result.startswith("COUNTER:")
+    assert redis_client.get("negotiated_price:user-1:i") == "90.0"
+    assert context.pending_discount.get() == 90.0
+
+
+def test_accept_at_full_listed_price_does_not_commit_or_signal(fake_supabase, patch_supabase):
+    """ACCEPT at (or above) the listed price is not a discount -- nothing is
+    written to Redis and no discount frame should fire."""
+    _set_item(fake_supabase, {"price": 100, "min_price": 70})
+    patch_supabase("connector", admin=fake_supabase)
+    context.set_context(user_id="user-1", item_id="i")
+
+    result = _invoke_offer(item_id="i", offered_price=100.0)
+
+    assert result.startswith("ACCEPT:")
+    assert redis_client.get("negotiated_price:user-1:i") is None
+    assert context.pending_discount.get() is None
+
+
+def test_reject_floor_does_not_commit_or_signal(fake_supabase, patch_supabase):
+    """REJECT_FLOOR never reaches the commit branch at all."""
+    _set_item(fake_supabase, {"price": 100, "min_price": 70})
+    patch_supabase("connector", admin=fake_supabase)
+    context.set_context(user_id="user-1", item_id="i")
+
+    result = _invoke_offer(item_id="i", offered_price=50.0)
+
+    assert result.startswith("REJECT_FLOOR:")
+    assert redis_client.get("negotiated_price:user-1:i") is None
+    assert context.pending_discount.get() is None
+
+
+def test_no_user_id_in_context_skips_redis_write_and_pending_discount(fake_supabase, patch_supabase):
+    """Without a request-scoped user_id (`if user_id and item_id:` is False),
+    the tool must not crash, write to Redis, or set `pending_discount` -- it
+    just can't identify whose negotiation this is."""
+    _set_item(fake_supabase, {"price": 100, "min_price": 70})
+    patch_supabase("connector", admin=fake_supabase)
+    context.set_context(user_id=None, item_id="i")
+
+    result = _invoke_offer(item_id="i", offered_price=75.0, current_price=50.0)
+
+    assert result.startswith("ACCEPT:")
+    assert redis_client.get("negotiated_price:user-1:i") is None
+    assert context.pending_discount.get() is None

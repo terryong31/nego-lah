@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useItemStore } from '~/stores/item'
+
 interface Item {
   item_id: string
   name: string
@@ -19,11 +21,27 @@ const props = withDefaults(defineProps<{
 })
 
 const { locale } = useI18n()
+const itemStore = useItemStore()
 
 const isSold = computed(() => props.item?.status === 'sold')
 
 const displayName = computed(() => localizedItemField(props.item, locale.value, 'name'))
 const displayCondition = computed(() => localizedItemField(props.item, locale.value, 'condition'))
+
+// SPEC-041: if this item was already fetched into the store (e.g. the buyer
+// negotiated a price mid-chat, in the same tab session), overlay its live
+// discounted price so the card reflects it without a fresh fetch — falls
+// back to the item prop's own discounted_price otherwise.
+const displayItem = computed<Item | undefined>(() => {
+  const item = props.item
+  if (!item) return item
+  const cached = itemStore.getItem(item.item_id)
+  if (!cached) return item
+  return {
+    ...item,
+    discounted_price: cached.discountedPrice ?? item.discounted_price
+  }
+})
 
 const imageUrl = computed(() => {
   const item = props.item
@@ -94,21 +112,21 @@ const imageUrl = computed(() => {
       <div class="flex flex-col min-w-0">
         <span class="text-xs text-muted">{{ $t('items.price') }}</span>
         <div
-          v-if="hasDiscount(item)"
+          v-if="hasDiscount(displayItem)"
           class="flex flex-wrap items-baseline gap-x-1.5"
         >
           <span class="font-bold text-base sm:text-lg text-primary">
-            {{ formatPrice(effectivePrice(item)) }}
+            {{ formatPrice(effectivePrice(displayItem)) }}
           </span>
           <span class="text-xs line-through text-muted">
-            {{ formatPrice(item.price) }}
+            {{ formatPrice(displayItem?.price) }}
           </span>
         </div>
         <span
           v-else
           class="font-bold text-base sm:text-lg text-highlighted"
         >
-          {{ formatPrice(item.price) }}
+          {{ formatPrice(displayItem?.price) }}
         </span>
       </div>
       <UButton

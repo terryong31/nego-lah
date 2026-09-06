@@ -5,6 +5,7 @@ import json
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
+from agent.context import pending_discount
 from auth_middleware import get_user_id_from_body_or_token, verify_user_token
 from cache import check_ai_token_limit, check_rate_limit, track_ai_tokens
 from connector import admin_supabase
@@ -242,6 +243,15 @@ async def chat_stream(request: Request):
             ):
                 if not delta:
                     continue
+
+                # SPEC-041: drain any discount committed by evaluate_offer before
+                # forwarding the chunk. The ContextVar is set by the tool and reset
+                # to None here so it fires at most once per turn.
+                discount = pending_discount.get()
+                if discount is not None:
+                    pending_discount.set(None)
+                    yield _sse({"type": "data-discount", "id": "discount", "data": {"discounted_price": discount}})
+
                 if isinstance(delta, dict):
                     # SPEC-020: which engine served this turn (self-hosted Apple
                     # M5 vs Gemini overflow). Emitted as an AI SDK data part —

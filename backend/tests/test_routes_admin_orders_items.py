@@ -1,5 +1,5 @@
 """
-Tests for routes/admin.py -- Stripe cleanup, Orders CRUD, AI image analysis,
+Tests for the admin router -- Stripe cleanup, Orders CRUD, AI image analysis,
 market valuation, dashboard summary, and Items CRUD (admin-only endpoints).
 
 NOTE: auth/users/chats admin endpoints are covered by a different test file --
@@ -10,7 +10,7 @@ Mocking seam notes (see conftest.py docstring for the general rules):
 - Every route in this file lives under the `protected` router
   (`Depends(verify_admin)`), so every test uses the `admin_user` fixture to
   bypass that dependency.
-- routes/admin.py does a *lazy* `from connector import admin_supabase` inside
+- the routes/admin/* modules do a *lazy* `from connector import admin_supabase` inside
   each function body for its own Supabase calls, so `patch_supabase("connector",
   admin=...)` takes effect at call time.
 - `write_audit` (called on every successful mutation) lives in admin_session.py,
@@ -50,7 +50,7 @@ from conftest import make_supabase_result
 
 # ---------------------------------------------------------------------------
 # Local composite fixture: patches BOTH connector.admin_supabase (used by
-# routes/admin.py's own lazy imports) and admin_session.admin_supabase (used
+# the routes/admin/* modules' own lazy imports) and admin_session.admin_supabase (used
 # by write_audit) with the same fake, since a successful mutation touches both.
 # ---------------------------------------------------------------------------
 
@@ -561,7 +561,7 @@ async def test_encode_images_defaults_a_missing_content_type_to_jpeg():
 
     from fastapi import UploadFile
 
-    from routes.admin import _encode_images
+    from routes.admin.listings import _encode_images
 
     upload = UploadFile(filename="mystery", file=io.BytesIO(b"data"))
     assert upload.content_type is None

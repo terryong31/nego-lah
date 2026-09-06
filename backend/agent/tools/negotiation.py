@@ -59,7 +59,10 @@ def evaluate_offer(item_id: str, offered_price: float, extra_discount_percent: f
         Recommendation on whether to accept, counter, or reject the offer
     """
 
-    from connector import user_supabase
+    # Service role, not the anon key: `min_price` is revoked from anon /
+    # authenticated at the column level (SPEC-036), so the floor is only
+    # readable by a client that bypasses RLS.
+    from connector import admin_supabase
 
     # LOG: Tool was called
     logger.info(f"\n{'='*50}")
@@ -74,13 +77,13 @@ def evaluate_offer(item_id: str, offered_price: float, extra_discount_percent: f
     from agent.context import get_item_id
     context_item_id = get_item_id()
 
-    response = user_supabase.table('items').select('*').eq('id', item_id).execute()
+    response = admin_supabase.table('items').select('*').eq('id', item_id).execute()
 
     # Fallback: if lookup failed and context ID exists, try that
     if not response.data and context_item_id and item_id != context_item_id:
         logger.info(f"⚠️ Lookup for '{item_id}' failed, falling back to context ID: {context_item_id}")
         item_id = context_item_id
-        response = user_supabase.table('items').select('*').eq('id', item_id).execute()
+        response = admin_supabase.table('items').select('*').eq('id', item_id).execute()
 
     if not response.data:
         logger.info("❌ Item not found!")

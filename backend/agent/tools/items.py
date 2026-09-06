@@ -1,5 +1,6 @@
 from langchain_core.tools import tool
 
+from items import PUBLIC_ITEM_SELECT
 from logger import logger
 
 
@@ -24,7 +25,7 @@ def get_item_info(item_id: str) -> str:
 
     # Exclude soft-deleted items, matching search_items / list_all_items so the
     # agent never answers questions about an item that was removed.
-    response = user_supabase.table('items').select('*').eq('id', item_id).is_('deleted_at', 'null').execute()
+    response = user_supabase.table('items').select(PUBLIC_ITEM_SELECT).eq('id', item_id).is_('deleted_at', 'null').execute()
 
     logger.info(f"📊 Query result: {len(response.data) if response.data else 0} items found")
     if response.data:

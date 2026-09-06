@@ -55,7 +55,7 @@ def check_anomalies():
                 created_at = datetime.strptime(created_at_str, "%Y-%m-%dT%H:%M:%S.%f%z")
             else:
                 created_at = datetime.strptime(created_at_str, "%Y-%m-%dT%H:%M:%S%z")
-        except Exception:
+        except (TypeError, ValueError):
             created_at = now
 
         age = now - created_at

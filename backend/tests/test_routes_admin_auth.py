@@ -1,6 +1,13 @@
 """
-Tests for routes/admin.py -- ONLY the auth section (public /admin/auth/*),
+Tests for the admin router -- ONLY the auth section (public /admin/auth/*),
 /admin/users/*, and /admin/chats/*.
+
+routes/admin is a PACKAGE, one module per concern (SPEC-037). This file covers
+`routes/admin/auth.py`, `routes/admin/users.py` and `routes/admin/chats.py`;
+the aliases `admin_auth` / `admin_users` / `admin_chats` below are the patch
+targets, one per module. Patching `routes.admin` (the package) does nothing:
+a handler resolves `write_audit` in ITS OWN module namespace, so the patch has
+to land on the module that defines the route under test.
 
 /admin/orders, /admin/items, /admin/analyze-image, /admin/market-valuation,
 /admin/summary, /admin/cleanup-stripe are covered by a separate test file --
@@ -8,21 +15,24 @@ deliberately not duplicated here.
 
 Mocking seam notes specific to this file:
 - The auth endpoints (`/auth/login`, `/auth/verify-2fa`) call
-  `password_then_send_otp` / `verify_otp_and_open_session`, which routes/admin.py
-  imports at module level (`from admin_session import ...`), binding those names
-  directly into `routes.admin`'s namespace. admin_session.py's own internals
-  (password/OTP verification, session store, rate limiting) already have deep
-  unit coverage in tests/test_admin_session.py, so here we only verify the
-  *route wiring*: monkeypatch `routes.admin.password_then_send_otp` /
-  `routes.admin.verify_otp_and_open_session` / `routes.admin.clear_session` /
-  `routes.admin.write_audit` directly. `enforce_login_rate_limit` is left real
+  `password_then_send_otp` / `verify_otp_and_open_session`, which
+  routes/admin/auth.py imports at module level (`from admin_session import ...`),
+  binding those names directly into `routes.admin.auth`'s namespace.
+  admin_session.py's own internals (password/OTP verification, session store,
+  rate limiting) already have deep unit coverage in tests/test_admin_session.py,
+  so here we only verify the *route wiring*: monkeypatch
+  `admin_auth.password_then_send_otp` / `admin_auth.verify_otp_and_open_session`
+  / `admin_auth.clear_session` / `admin_auth.write_audit` directly.
+  `write_audit` for a /users/* route is patched on `admin_users`, and for a
+  /chats/* route on `admin_chats` -- same reason.
+  `enforce_login_rate_limit` is left real
   (it's cheap and backed by the safe in-memory fake redis) so we can also
   exercise the 429 path for free.
 - Every `/admin/users/*` and `/admin/chats/*` handler does a *lazy*
   `from connector import admin_supabase` inside the function body, so we patch
   `connector.admin_supabase` via `patch_supabase("connector", admin=...)`
-  (NOT `patch_supabase("routes.admin", ...)`, which would be a no-op since
-  routes.admin never binds that name at module scope).
+  (NOT `patch_supabase("routes.admin.users", ...)`, which would be a no-op
+  since those modules never bind that name at module scope).
 - `agent.memory.conversation_memory` is a process-wide singleton with a lazily
   memoized `.supabase` property (`self._supabase` is cached after first
   access). If some earlier test let that property resolve for real, patching
@@ -45,7 +55,9 @@ from unittest.mock import MagicMock
 from fastapi import HTTPException
 
 import admin_session
-import routes.admin as routes_admin
+import routes.admin.auth as admin_auth
+import routes.admin.chats as admin_chats
+import routes.admin.users as admin_users
 from agent.memory import conversation_memory
 from conftest import make_supabase_result
 
@@ -81,7 +93,7 @@ def make_user(user_id, email=None, metadata=None, created_at="2024-01-01T00:00:0
 
 async def test_admin_login_success_returns_handle(client, monkeypatch):
     mock_send_otp = MagicMock(return_value="preauth-handle-xyz")
-    monkeypatch.setattr(routes_admin, "password_then_send_otp", mock_send_otp)
+    monkeypatch.setattr(admin_auth, "password_then_send_otp", mock_send_otp)
 
     resp = await client.post(
         "/admin/auth/login",
@@ -98,7 +110,7 @@ async def test_admin_login_success_returns_handle(client, monkeypatch):
 
 async def test_admin_login_invalid_credentials_returns_401(client, monkeypatch):
     monkeypatch.setattr(
-        routes_admin,
+        admin_auth,
         "password_then_send_otp",
         MagicMock(side_effect=HTTPException(status_code=401, detail="Invalid credentials")),
     )
@@ -116,7 +128,7 @@ async def test_admin_login_rate_limited_after_max_attempts(client, monkeypatch):
     # Leave enforce_login_rate_limit real (backed by the safe in-memory fake
     # redis) and only stub out the OTP-sending side effect, so we can drive
     # the real 429 path for free.
-    monkeypatch.setattr(routes_admin, "password_then_send_otp", MagicMock(return_value="h"))
+    monkeypatch.setattr(admin_auth, "password_then_send_otp", MagicMock(return_value="h"))
 
     email = "ratelimited-route@example.com"
     last_resp = None
@@ -136,7 +148,7 @@ async def test_admin_login_rate_limited_after_max_attempts(client, monkeypatch):
 
 async def test_admin_verify_2fa_success(client, monkeypatch):
     monkeypatch.setattr(
-        routes_admin,
+        admin_auth,
         "verify_otp_and_open_session",
         MagicMock(return_value={"user_id": "admin-1", "email": "admin@example.com"}),
     )
@@ -152,7 +164,7 @@ async def test_admin_verify_2fa_success(client, monkeypatch):
 
 async def test_admin_verify_2fa_strips_code_before_verifying(client, monkeypatch):
     mock_verify = MagicMock(return_value={"user_id": "admin-1", "email": "a@example.com"})
-    monkeypatch.setattr(routes_admin, "verify_otp_and_open_session", mock_verify)
+    monkeypatch.setattr(admin_auth, "verify_otp_and_open_session", mock_verify)
 
     await client.post("/admin/auth/verify-2fa", json={"handle": "h1", "code": " 000111 "})
 
@@ -163,7 +175,7 @@ async def test_admin_verify_2fa_strips_code_before_verifying(client, monkeypatch
 
 async def test_admin_verify_2fa_invalid_code_returns_401(client, monkeypatch):
     monkeypatch.setattr(
-        routes_admin,
+        admin_auth,
         "verify_otp_and_open_session",
         MagicMock(side_effect=HTTPException(status_code=401, detail="Invalid or expired code")),
     )
@@ -185,8 +197,8 @@ async def test_admin_logout_success(client, admin_user, monkeypatch):
     admin_user(user_id="admin-42", email="admin42@example.com", ip="1.2.3.4")
     mock_clear = MagicMock()
     mock_audit = MagicMock()
-    monkeypatch.setattr(routes_admin, "clear_session", mock_clear)
-    monkeypatch.setattr(routes_admin, "write_audit", mock_audit)
+    monkeypatch.setattr(admin_auth, "clear_session", mock_clear)
+    monkeypatch.setattr(admin_auth, "write_audit", mock_audit)
 
     resp = await client.post("/admin/auth/logout")
 
@@ -326,7 +338,7 @@ async def test_update_user_profile_with_both_fields(client, admin_user, fake_sup
     admin_user(user_id="admin-1", email="admin@example.com", ip="9.9.9.9")
     patch_supabase("connector", admin=fake_supabase)
     mock_audit = MagicMock()
-    monkeypatch.setattr(routes_admin, "write_audit", mock_audit)
+    monkeypatch.setattr(admin_users, "write_audit", mock_audit)
 
     resp = await client.put(
         "/admin/users/target-user/profile",
@@ -347,7 +359,7 @@ async def test_update_user_profile_with_both_fields(client, admin_user, fake_sup
 async def test_update_user_profile_no_fields_provided_omits_optional_keys(client, admin_user, fake_supabase, patch_supabase, monkeypatch):
     admin_user()
     patch_supabase("connector", admin=fake_supabase)
-    monkeypatch.setattr(routes_admin, "write_audit", MagicMock())
+    monkeypatch.setattr(admin_users, "write_audit", MagicMock())
 
     resp = await client.put("/admin/users/target-user/profile", json={})
 
@@ -368,7 +380,7 @@ async def test_update_user_profile_requires_admin(client):
 async def test_upload_user_avatar_storage_success(client, admin_user, fake_supabase, patch_supabase, monkeypatch):
     admin_user()
     patch_supabase("connector", admin=fake_supabase)
-    monkeypatch.setattr(routes_admin, "write_audit", MagicMock())
+    monkeypatch.setattr(admin_users, "write_audit", MagicMock())
     fake_supabase.storage.from_.return_value.get_public_url.return_value = "https://cdn.example.com/avatars/x.png"
 
     resp = await client.post(
@@ -389,7 +401,7 @@ async def test_upload_user_avatar_storage_success(client, admin_user, fake_supab
 async def test_upload_user_avatar_storage_failure_falls_back_to_base64(client, admin_user, fake_supabase, patch_supabase, monkeypatch):
     admin_user()
     patch_supabase("connector", admin=fake_supabase)
-    monkeypatch.setattr(routes_admin, "write_audit", MagicMock())
+    monkeypatch.setattr(admin_users, "write_audit", MagicMock())
     fake_supabase.storage.from_.return_value.upload.side_effect = Exception("storage unavailable")
 
     resp = await client.post(
@@ -418,7 +430,7 @@ async def test_upload_user_avatar_requires_admin(client):
 async def test_ban_user_cannot_ban_self(client, admin_user, monkeypatch):
     admin_user(user_id="admin-self")
     mock_audit = MagicMock()
-    monkeypatch.setattr(routes_admin, "write_audit", mock_audit)
+    monkeypatch.setattr(admin_users, "write_audit", mock_audit)
 
     resp = await client.put("/admin/users/admin-self/ban", json={"is_banned": True})
 
@@ -435,7 +447,7 @@ async def test_ban_user_cannot_ban_another_admin(client, admin_user, fake_supaba
         user=make_user("other-admin", email="other-admin@example.com")
     )
     mock_audit = MagicMock()
-    monkeypatch.setattr(routes_admin, "write_audit", mock_audit)
+    monkeypatch.setattr(admin_users, "write_audit", mock_audit)
 
     resp = await client.put("/admin/users/other-admin/ban", json={"is_banned": True})
 
@@ -453,7 +465,7 @@ async def test_ban_user_success_bans_normal_user(client, admin_user, fake_supaba
         user=make_user("normal-user")
     )
     mock_audit = MagicMock()
-    monkeypatch.setattr(routes_admin, "write_audit", mock_audit)
+    monkeypatch.setattr(admin_users, "write_audit", mock_audit)
 
     resp = await client.put("/admin/users/normal-user/ban", json={"is_banned": True})
 
@@ -470,7 +482,7 @@ async def test_ban_user_success_bans_normal_user(client, admin_user, fake_supaba
 async def test_ban_user_unban_lifts_ban(client, admin_user, fake_supabase, patch_supabase, monkeypatch):
     admin_user()
     patch_supabase("connector", admin=fake_supabase)
-    monkeypatch.setattr(routes_admin, "write_audit", MagicMock())
+    monkeypatch.setattr(admin_users, "write_audit", MagicMock())
 
     resp = await client.put("/admin/users/normal-user/ban", json={"is_banned": False})
 
@@ -487,7 +499,7 @@ async def test_ban_user_admin_lookup_exception_is_swallowed_and_ban_still_procee
     admin_user()
     patch_supabase("connector", admin=fake_supabase)
     fake_supabase.auth.admin.get_user_by_id.side_effect = Exception("lookup service down")
-    monkeypatch.setattr(routes_admin, "write_audit", MagicMock())
+    monkeypatch.setattr(admin_users, "write_audit", MagicMock())
 
     resp = await client.put("/admin/users/some-user/ban", json={"is_banned": True})
 
@@ -514,7 +526,7 @@ async def test_toggle_user_ai_enable_broadcasts_via_supabase(client, admin_user,
     patch_supabase("connector", admin=fake_supabase)
     mock_add_message = MagicMock()
     monkeypatch.setattr(conversation_memory, "add_message", mock_add_message)
-    monkeypatch.setattr(routes_admin, "write_audit", MagicMock())
+    monkeypatch.setattr(admin_users, "write_audit", MagicMock())
 
     import requests
     mock_post = MagicMock(return_value=SimpleNamespace(status_code=200, text="ok"))
@@ -556,7 +568,7 @@ async def test_toggle_user_ai_disable_sets_admin_intervening(client, admin_user,
     patch_supabase("connector", admin=fake_supabase)
     mock_add_message = MagicMock()
     monkeypatch.setattr(conversation_memory, "add_message", mock_add_message)
-    monkeypatch.setattr(routes_admin, "write_audit", MagicMock())
+    monkeypatch.setattr(admin_users, "write_audit", MagicMock())
 
     import requests
     monkeypatch.setattr(requests, "post", MagicMock(return_value=SimpleNamespace(status_code=200, text="ok")))
@@ -607,7 +619,7 @@ async def test_admin_delete_user_success(client, admin_user, fake_supabase, patc
     admin_user(user_id="admin-1", email="admin@example.com", ip="2.2.2.2")
     patch_supabase("connector", admin=fake_supabase)
     mock_audit = MagicMock()
-    monkeypatch.setattr(routes_admin, "write_audit", mock_audit)
+    monkeypatch.setattr(admin_users, "write_audit", mock_audit)
 
     resp = await client.delete("/admin/users/doomed-user")
 
@@ -620,7 +632,7 @@ async def test_admin_delete_user_success(client, admin_user, fake_supabase, patc
 async def test_admin_delete_user_cleanup_exceptions_are_swallowed(client, admin_user, fake_supabase, patch_supabase, monkeypatch):
     admin_user()
     patch_supabase("connector", admin=fake_supabase)
-    monkeypatch.setattr(routes_admin, "write_audit", MagicMock())
+    monkeypatch.setattr(admin_users, "write_audit", MagicMock())
     # One of the three best-effort cleanup tables blows up.
     fake_supabase.table.return_value.delete.return_value.eq.return_value.execute.side_effect = Exception("row locked")
 
@@ -633,7 +645,7 @@ async def test_admin_delete_user_cleanup_exceptions_are_swallowed(client, admin_
 async def test_admin_delete_user_auth_delete_failure_returns_500(client, admin_user, fake_supabase, patch_supabase, monkeypatch):
     admin_user()
     patch_supabase("connector", admin=fake_supabase)
-    monkeypatch.setattr(routes_admin, "write_audit", MagicMock())
+    monkeypatch.setattr(admin_users, "write_audit", MagicMock())
     fake_supabase.auth.admin.delete_user.side_effect = Exception("cannot delete")
 
     resp = await client.delete("/admin/users/doomed-user")
@@ -799,7 +811,7 @@ async def test_admin_send_message_success(client, admin_user, monkeypatch):
     mock_add_message = MagicMock()
     monkeypatch.setattr(conversation_memory, "add_message", mock_add_message)
     mock_audit = MagicMock()
-    monkeypatch.setattr(routes_admin, "write_audit", mock_audit)
+    monkeypatch.setattr(admin_chats, "write_audit", mock_audit)
 
     resp = await client.post("/admin/chats/user-x/message", json={"message": "Hi from the seller"})
 

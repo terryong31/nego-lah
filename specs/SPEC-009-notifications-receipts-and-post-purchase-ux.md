@@ -1,4 +1,5 @@
 ---
+id: SPEC-009
 title: "SPEC-009: Real-Time SSE Notifications, Purchase Email Receipts & Post-Purchase UX"
 status: "Draft"
 created_at: "2026-09-04"

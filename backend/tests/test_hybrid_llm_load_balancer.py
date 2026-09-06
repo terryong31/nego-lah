@@ -83,22 +83,26 @@ def test_acquire_lease_sets_key_with_ttl():
     """First acquirer wins and the key carries the deadlock-breaking TTL."""
     from cache import redis_client
 
-    assert try_acquire_local_llm_lease() is True
-    assert redis_client.get(LOCAL_LLM_LEASE_KEY) == "1"
+    token = try_acquire_local_llm_lease()
+    assert token is not None
+    # The stored value is the owner token — that is what makes a release
+    # checkable (SPEC-037), so it must be the token and not a constant.
+    assert redis_client.get(LOCAL_LLM_LEASE_KEY) == token
 
 
 def test_second_acquire_fails_while_lease_held():
-    assert try_acquire_local_llm_lease() is True
-    assert try_acquire_local_llm_lease() is False
+    assert try_acquire_local_llm_lease() is not None
+    assert try_acquire_local_llm_lease() is None
 
 
 def test_release_lease_allows_reacquisition():
-    assert try_acquire_local_llm_lease() is True
-    release_local_llm_lease()
+    token = try_acquire_local_llm_lease()
+    assert token is not None
+    release_local_llm_lease(token)
 
     from cache import redis_client
     assert redis_client.get(LOCAL_LLM_LEASE_KEY) is None
-    assert try_acquire_local_llm_lease() is True
+    assert try_acquire_local_llm_lease() is not None
 
 
 def test_lease_acquisition_survives_redis_outage(monkeypatch):
@@ -109,13 +113,16 @@ def test_lease_acquisition_survives_redis_outage(monkeypatch):
         def set(self, *a, **kw):
             raise ConnectionError("redis down")
 
+        def eval(self, *a, **kw):
+            raise ConnectionError("redis down")
+
         def delete(self, *a, **kw):
             raise ConnectionError("redis down")
 
     monkeypatch.setattr("agent.llm_factory.redis_client", BrokenRedis())
 
-    assert try_acquire_local_llm_lease() is False
-    release_local_llm_lease()  # must not raise
+    assert try_acquire_local_llm_lease() is None
+    release_local_llm_lease("some-token")  # must not raise
 
 
 # ---------------------------------------------------------------------------
@@ -130,7 +137,7 @@ async def test_scenario_1_idle_dispatches_to_local_qwen(local_env, tunnel_up):
         assert info.provider == PROVIDER_LOCAL
         assert info.model == "mlx-community/Qwen3.6-35B-A3B-4bit"
         # Lease is held for the duration of the turn.
-        assert redis_client.get(LOCAL_LLM_LEASE_KEY) == "1"
+        assert redis_client.get(LOCAL_LLM_LEASE_KEY) is not None
 
         model = get_chat_model(temperature=0.7)
         assert isinstance(model, ChatOpenAI)
@@ -143,7 +150,7 @@ async def test_scenario_1_idle_dispatches_to_local_qwen(local_env, tunnel_up):
 
 async def test_scenario_2_busy_overflows_to_gemini(local_env, tunnel_up):
     """A lease already held by another turn pushes this one straight to Gemini."""
-    assert try_acquire_local_llm_lease() is True
+    assert try_acquire_local_llm_lease() is not None
 
     async with hybrid_llm_session() as info:
         assert info.provider == PROVIDER_CLOUD
@@ -163,7 +170,7 @@ async def test_scenario_2_overflow_makes_no_http_call_to_the_tunnel(local_env, m
         return True
 
     monkeypatch.setattr("agent.llm_factory.is_local_llm_available", _probe)
-    assert try_acquire_local_llm_lease() is True
+    assert try_acquire_local_llm_lease() is not None
 
     async with hybrid_llm_session() as info:
         assert info.provider == PROVIDER_CLOUD
@@ -204,7 +211,7 @@ async def test_scenario_3_lease_released_after_normal_completion(local_env, tunn
 
     assert redis_client.get(LOCAL_LLM_LEASE_KEY) is None
     # The next turn can go local again.
-    assert try_acquire_local_llm_lease() is True
+    assert try_acquire_local_llm_lease() is not None
 
 
 async def test_scenario_3_lease_released_when_the_turn_raises(local_env, tunnel_up):
@@ -294,7 +301,7 @@ async def test_scenario_5_same_history_regardless_of_provider(local_env, tunnel_
         pass
 
     # Turn B: laptop busy -> Gemini overflow.
-    assert try_acquire_local_llm_lease() is True
+    assert try_acquire_local_llm_lease() is not None
     async for _ in bot.chat_stream(user_id="u1", message="how much?"):
         pass
 
@@ -316,18 +323,18 @@ def test_scenario_6_lease_expires_after_ttl_when_holder_dies(monkeypatch):
     fake_now = [1_000_000.0]
     monkeypatch.setattr(cache.time, "time", lambda: fake_now[0])
 
-    assert try_acquire_local_llm_lease() is True
+    assert try_acquire_local_llm_lease() is not None
     # Holder "crashes" here — no release_local_llm_lease() call.
-    assert try_acquire_local_llm_lease() is False
+    assert try_acquire_local_llm_lease() is None
 
     # Just before expiry it's still held.
     fake_now[0] += LEASE_TTL_SECONDS - 1
-    assert try_acquire_local_llm_lease() is False
+    assert try_acquire_local_llm_lease() is None
 
     # Past the TTL, Redis drops it and the laptop is back in rotation.
     fake_now[0] += 2
     assert redis_client.get(LOCAL_LLM_LEASE_KEY) is None
-    assert try_acquire_local_llm_lease() is True
+    assert try_acquire_local_llm_lease() is not None
 
 
 def test_lease_ttl_matches_spec():

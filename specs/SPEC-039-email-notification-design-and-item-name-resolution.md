@@ -1,5 +1,5 @@
 ---
-id: SPEC-018
+id: SPEC-039
 title: Transactional Email Design Overhaul & Item Name Resolution
 status: complete
 priority: high
@@ -7,6 +7,9 @@ created: 2026-09-05
 tags: [backend, email, stripe, fulfillment, branding]
 assigned: agent
 ---
+
+> Renumbered from SPEC-018: three pairs of specs had been filed under the same
+> number, which broke traceability. Content unchanged.
 
 # Context & Objectives
 In Nego-Lah's admin/seller sale notification emails:
@@ -54,7 +57,7 @@ This specification establishes:
 - [x] **Scenario 3 (`test_email_service.py`):** Assert email templates contain `#10b981`, `#059669`, inline `color: #ffffff`, and zero instances of `#f97316`.
 
 # Implementation Files
-- `specs/SPEC-018-email-notification-design-and-item-name-resolution.md` - Specification
+- `specs/SPEC-039-email-notification-design-and-item-name-resolution.md` - Specification
 - `backend/agent/tools/payment.py` - PaymentLink metadata
 - `backend/payment/fulfillment.py` - Database item name fallback
 - `backend/payment/webhooks.py` - Webhook item name resolution

@@ -4,13 +4,17 @@ evaluate_offer langchain tools).
 `assess_discount_eligibility` is pure -- it just formats a scoring-guide
 string, no DB/network access.
 
-`evaluate_offer` does `from connector import user_supabase` **inside the
+`evaluate_offer` does `from connector import admin_supabase` **inside the
 function body** (a lazy import), not at module import time. Per conftest's
-mocking-seam docs, that means patching `connector.user_supabase` itself DOES
+mocking-seam docs, that means patching `connector.admin_supabase` itself DOES
 take effect (the import re-resolves at call time) -- unlike modules that do
 `from connector import ... ` at module level, we do NOT patch
-`agent.tools.negotiation.user_supabase` (there is no such module attribute).
-So here `patch_supabase("connector", user=fake_supabase)` is the right target.
+`agent.tools.negotiation.admin_supabase` (there is no such module attribute).
+So here `patch_supabase("connector", admin=fake_supabase)` is the right target.
+
+It reads the item with the SERVICE ROLE, not the anon key: `min_price` is the
+negotiation floor and is revoked from anon/authenticated at the column level
+(SPEC-036), so an anon-key read could not see the floor it is enforcing.
 
 `evaluate_offer` also reads a request-scoped fallback item id via
 `agent.context.get_item_id()`, so tests exercising that fallback path call
@@ -88,7 +92,7 @@ def test_evaluate_offer_is_langchain_tool_with_expected_name():
 def test_item_not_found_no_context_returns_not_found_message(fake_supabase, patch_supabase):
     context.set_context(item_id=None)
     _chain(fake_supabase).execute.return_value = make_supabase_result([])
-    patch_supabase("connector", user=fake_supabase)
+    patch_supabase("connector", admin=fake_supabase)
 
     result = _invoke_offer(item_id="missing-id", offered_price=100.0)
 
@@ -103,7 +107,7 @@ def test_item_not_found_context_id_same_as_item_id_skips_fallback(fake_supabase,
     skipped -- item_id != context_item_id guards against a redundant retry."""
     context.set_context(item_id="same-id")
     _chain(fake_supabase).execute.return_value = make_supabase_result([])
-    patch_supabase("connector", user=fake_supabase)
+    patch_supabase("connector", admin=fake_supabase)
 
     result = _invoke_offer(item_id="same-id", offered_price=100.0)
 
@@ -118,7 +122,7 @@ def test_item_not_found_falls_back_to_context_item_id_and_succeeds(fake_supabase
         make_supabase_result([]),
         make_supabase_result([{"id": "ctx-99", "price": 100, "min_price": 70}]),
     ]
-    patch_supabase("connector", user=fake_supabase)
+    patch_supabase("connector", admin=fake_supabase)
 
     result = _invoke_offer(item_id="missing-id", offered_price=100.0)
 
@@ -135,7 +139,7 @@ def test_item_not_found_fallback_to_context_id_also_fails(fake_supabase, patch_s
         make_supabase_result([]),
         make_supabase_result([]),
     ]
-    patch_supabase("connector", user=fake_supabase)
+    patch_supabase("connector", admin=fake_supabase)
 
     result = _invoke_offer(item_id="missing-id", offered_price=100.0)
 
@@ -146,7 +150,7 @@ def test_item_not_found_fallback_to_context_id_also_fails(fake_supabase, patch_s
 def test_queries_items_table_scoped_to_item_id(fake_supabase, patch_supabase):
     context.set_context(item_id=None)
     _set_item(fake_supabase, {"id": "item-1", "price": 100, "min_price": 70})
-    patch_supabase("connector", user=fake_supabase)
+    patch_supabase("connector", admin=fake_supabase)
 
     _invoke_offer(item_id="item-1", offered_price=100.0)
 
@@ -160,7 +164,7 @@ def test_queries_items_table_scoped_to_item_id(fake_supabase, patch_supabase):
 
 def test_offer_meets_listed_price_is_accept(fake_supabase, patch_supabase):
     _set_item(fake_supabase, {"price": 100, "min_price": 70})
-    patch_supabase("connector", user=fake_supabase)
+    patch_supabase("connector", admin=fake_supabase)
 
     result = _invoke_offer(item_id="i", offered_price=100.0)
 
@@ -169,7 +173,7 @@ def test_offer_meets_listed_price_is_accept(fake_supabase, patch_supabase):
 
 def test_offer_exceeds_listed_price_is_accept(fake_supabase, patch_supabase):
     _set_item(fake_supabase, {"price": 100, "min_price": 70})
-    patch_supabase("connector", user=fake_supabase)
+    patch_supabase("connector", admin=fake_supabase)
 
     result = _invoke_offer(item_id="i", offered_price=150.0)
 
@@ -183,7 +187,7 @@ def test_offer_matches_prior_anchor_is_accept(fake_supabase, patch_supabase):
     """current_price=85 becomes the anchor (clamped into [min_price, listed]);
     an offer meeting it exactly (and above min_price) is a plain ACCEPT."""
     _set_item(fake_supabase, {"price": 100, "min_price": 70})
-    patch_supabase("connector", user=fake_supabase)
+    patch_supabase("connector", admin=fake_supabase)
 
     result = _invoke_offer(item_id="i", offered_price=85.0, current_price=85.0)
 
@@ -196,7 +200,7 @@ def test_extra_discount_lowers_threshold_enough_to_accept_below_anchor(fake_supa
     anchor, above min_price) is accepted via the threshold branch rather than
     countered."""
     _set_item(fake_supabase, {"price": 100, "min_price": 50})
-    patch_supabase("connector", user=fake_supabase)
+    patch_supabase("connector", admin=fake_supabase)
 
     result = _invoke_offer(item_id="i", offered_price=80.0, extra_discount_percent=20)
 
@@ -210,7 +214,7 @@ def test_offer_at_anchor_equal_to_min_price_is_accept_floor(fake_supabase, patch
     """current_price=70 clamps the anchor up to min_price (70); an offer of
     exactly 70 both meets the anchor and sits at the absolute floor."""
     _set_item(fake_supabase, {"price": 100, "min_price": 70})
-    patch_supabase("connector", user=fake_supabase)
+    patch_supabase("connector", admin=fake_supabase)
 
     result = _invoke_offer(item_id="i", offered_price=70.0, current_price=70.0)
 
@@ -226,7 +230,7 @@ def test_large_extra_discount_clamps_threshold_to_min_price_triggers_accept_floo
     threshold and equals the floor -> ACCEPT_FLOOR, even though the anchor
     (unset current_price -> listed price 100) was not met."""
     _set_item(fake_supabase, {"price": 100, "min_price": 70})
-    patch_supabase("connector", user=fake_supabase)
+    patch_supabase("connector", admin=fake_supabase)
 
     result = _invoke_offer(item_id="i", offered_price=70.0, extra_discount_percent=50)
 
@@ -241,7 +245,7 @@ def test_large_extra_discount_clamps_threshold_to_min_price_triggers_accept_floo
 
 def test_offer_below_anchor_above_floor_is_countered(fake_supabase, patch_supabase):
     _set_item(fake_supabase, {"price": 100, "min_price": 70})
-    patch_supabase("connector", user=fake_supabase)
+    patch_supabase("connector", admin=fake_supabase)
 
     result = _invoke_offer(item_id="i", offered_price=80.0)
 
@@ -257,7 +261,7 @@ def test_counter_never_exceeds_anchor_even_when_average_would(fake_supabase, pat
     but bumping to offered+1 (=100) is then clamped back down to the anchor
     (100) -- the counter must never exceed the anchor."""
     _set_item(fake_supabase, {"price": 100, "min_price": 70})
-    patch_supabase("connector", user=fake_supabase)
+    patch_supabase("connector", admin=fake_supabase)
 
     result = _invoke_offer(item_id="i", offered_price=99.0)
 
@@ -270,7 +274,7 @@ def test_counter_never_exceeds_anchor_even_when_average_would(fake_supabase, pat
 
 def test_offer_below_min_price_is_reject_floor(fake_supabase, patch_supabase):
     _set_item(fake_supabase, {"price": 100, "min_price": 70})
-    patch_supabase("connector", user=fake_supabase)
+    patch_supabase("connector", admin=fake_supabase)
 
     result = _invoke_offer(item_id="i", offered_price=50.0)
 
@@ -283,7 +287,7 @@ def test_offer_below_min_price_is_reject_floor(fake_supabase, patch_supabase):
 def test_min_price_defaults_to_70_percent_of_listed_when_unset(fake_supabase, patch_supabase):
     """No `min_price` key on the item row -> falls back to listed_price * 0.7."""
     _set_item(fake_supabase, {"price": 100})
-    patch_supabase("connector", user=fake_supabase)
+    patch_supabase("connector", admin=fake_supabase)
 
     result = _invoke_offer(item_id="i", offered_price=50.0)
 
@@ -297,7 +301,7 @@ def test_explicit_min_price_overrides_70_percent_default(fake_supabase, patch_su
     """An explicit min_price of 40 (well below the 70% default of 70) is
     honored -- an offer of 50 clears the explicit floor and is not rejected."""
     _set_item(fake_supabase, {"price": 100, "min_price": 40})
-    patch_supabase("connector", user=fake_supabase)
+    patch_supabase("connector", admin=fake_supabase)
 
     result = _invoke_offer(item_id="i", offered_price=50.0)
 
@@ -313,7 +317,7 @@ def test_anchor_clamps_down_to_listed_price_when_current_price_exceeds_it(fake_s
     shouldn't happen in practice, but the anchor must clamp to listed_price,
     never exceed it."""
     _set_item(fake_supabase, {"price": 100, "min_price": 70})
-    patch_supabase("connector", user=fake_supabase)
+    patch_supabase("connector", admin=fake_supabase)
 
     result = _invoke_offer(item_id="i", offered_price=90.0, current_price=200.0)
 
@@ -327,7 +331,7 @@ def test_anchor_clamps_up_to_min_price_when_current_price_is_below_it(fake_supab
     """current_price=50 is below the min_price floor (70) -- the anchor must
     clamp UP to min_price, not stay at the (invalid) lower value."""
     _set_item(fake_supabase, {"price": 100, "min_price": 70})
-    patch_supabase("connector", user=fake_supabase)
+    patch_supabase("connector", admin=fake_supabase)
 
     result = _invoke_offer(item_id="i", offered_price=75.0, current_price=50.0)
 
@@ -336,7 +340,7 @@ def test_anchor_clamps_up_to_min_price_when_current_price_is_below_it(fake_supab
 
 def test_zero_current_price_means_no_prior_anchor_uses_listed_price(fake_supabase, patch_supabase):
     _set_item(fake_supabase, {"price": 100, "min_price": 70})
-    patch_supabase("connector", user=fake_supabase)
+    patch_supabase("connector", admin=fake_supabase)
 
     result = _invoke_offer(item_id="i", offered_price=80.0, current_price=0.0)
 
@@ -348,7 +352,7 @@ def test_negative_current_price_is_treated_as_no_prior_anchor(fake_supabase, pat
     truthy but fails the `> 0` check, so the whole condition is False and the
     anchor falls back to the listed price (not clamped up to min_price)."""
     _set_item(fake_supabase, {"price": 100, "min_price": 70})
-    patch_supabase("connector", user=fake_supabase)
+    patch_supabase("connector", admin=fake_supabase)
 
     result = _invoke_offer(item_id="i", offered_price=80.0, current_price=-10.0)
 
@@ -363,7 +367,7 @@ def test_negative_current_price_is_treated_as_no_prior_anchor(fake_supabase, pat
 
 def test_invoke_via_langchain_structured_tool_interface(fake_supabase, patch_supabase):
     _set_item(fake_supabase, {"price": 100, "min_price": 70})
-    patch_supabase("connector", user=fake_supabase)
+    patch_supabase("connector", admin=fake_supabase)
 
     result = evaluate_offer.invoke(
         {"item_id": "i", "offered_price": 100.0, "extra_discount_percent": 0, "current_price": 0.0}

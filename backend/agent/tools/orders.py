@@ -1,6 +1,7 @@
 from langchain_core.tools import tool
 
 from connector import admin_supabase
+from logger import logger
 
 
 @tool
@@ -50,4 +51,5 @@ def check_user_orders(query: str = "") -> str:
         return "\n".join(result_lines)
 
     except Exception as e:
+        logger.error(f"Order lookup failed for user {user_id}: {e}")
         return f"Error accessing order database: {str(e)}"

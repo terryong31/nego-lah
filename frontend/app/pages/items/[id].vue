@@ -9,7 +9,6 @@ interface Item {
   images: string
   price?: number
   discounted_price?: number
-  min_price?: number
   status?: string
   translations?: Record<string, ItemTranslation>
 }

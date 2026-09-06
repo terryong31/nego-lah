@@ -21,7 +21,9 @@ def create_checkout_link(item_id: str, agreed_price: float) -> str:
     """
     import stripe
 
-    from connector import user_supabase
+    # Service role, not the anon key: the floor check below reads
+    # `min_price`, which anon / authenticated cannot select (SPEC-036).
+    from connector import admin_supabase
     from env import FRONTEND_URL, STRIPE_API_KEY
     from payment.payment_state import get_pending_payment, store_pending_payment
 
@@ -56,14 +58,14 @@ def create_checkout_link(item_id: str, agreed_price: float) -> str:
         return f"A payment link already exists for this item at RM{existing['agreed_price']:.2f}. The price is locked - please complete the payment or say 'cancel' to start over. Link: {existing['payment_url']}"
 
     # Get item details
-    response = user_supabase.table('items').select('*').eq('id', item_id).execute()
+    response = admin_supabase.table('items').select('*').eq('id', item_id).execute()
     logger.info(f"📊 Item lookup result: {len(response.data) if response.data else 0} items")
 
     # Double check: if lookup failed and we haven't tried context_item_id yet, try it now
     if (not response.data) and context_item_id and (item_id != context_item_id):
         logger.info(f"⚠️ Lookup failed for '{item_id}', trying context_item_id: {context_item_id}")
         item_id = context_item_id
-        response = user_supabase.table('items').select('*').eq('id', item_id).execute()
+        response = admin_supabase.table('items').select('*').eq('id', item_id).execute()
         logger.info(f"📊 Retry lookup result: {len(response.data) if response.data else 0} items")
 
     if not response.data:

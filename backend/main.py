@@ -147,7 +147,8 @@ cors_origins_str = os.environ.get("CORS_ORIGINS")
 if cors_origins_str:
     try:
         origins = json.loads(cors_origins_str)
-    except Exception:
+    except (TypeError, ValueError):
+        # CORS_ORIGINS is also accepted as a plain comma-separated list.
         origins = cors_origins_str.split(",")
 else:
     origins = _PROD_ORIGINS if IS_PROD else _DEV_ORIGINS + _PROD_ORIGINS

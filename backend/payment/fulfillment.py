@@ -75,12 +75,35 @@ def broadcast_to_chat(user_id: str, content: str, role: str = "ai", source: str 
         logger.debug(f"Notification broker publish skipped: {e}")
 
 
+# Postgres SQLSTATE for unique_violation. This is the idempotency anchor for the
+# whole payment webhook: orders.stripe_payment_id is UNIQUE, so a duplicate
+# insert means "already processed", not "broken".
+UNIQUE_VIOLATION_SQLSTATE = "23505"
+
+
 def _is_unique_violation(err: Exception) -> bool:
-    """Best-effort detection of a Postgres unique-constraint violation."""
+    """True when `err` is a Postgres unique-constraint violation.
+
+    Prefers the structured SQLSTATE that PostgREST's `APIError` carries in
+    `.code`. Matching on the message text instead is guesswork on a string
+    formatted for humans: a row whose own data contains "already exists" reads
+    as a duplicate, and a foreign-key violation that quotes a duplicate key in
+    its detail line reads as one too — either way the webhook would swallow a
+    real failure as successful idempotency (SPEC-037).
+
+    A code that is present but *not* 23505 is positive evidence this is some
+    other error, so it short-circuits to False. Text matching survives only as
+    a fallback for exceptions carrying no code at all (transport failures, and
+    the plain `Exception`s raised by test doubles).
+    """
+    code = getattr(err, "code", None)
+    if code:
+        return str(code) == UNIQUE_VIOLATION_SQLSTATE
+
     text = str(err).lower()
     return (
         "duplicate key" in text
-        or "23505" in text
+        or UNIQUE_VIOLATION_SQLSTATE in text
         or "already exists" in text
         or "unique constraint" in text
     )

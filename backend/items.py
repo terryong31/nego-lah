@@ -16,6 +16,42 @@ from connector import admin_supabase, user_supabase
 from env import STORAGE_BUCKET
 from logger import logger
 
+# ---------------------------------------------------------------------------
+# Column boundary (SPEC-036)
+# ---------------------------------------------------------------------------
+# `items` holds seller-confidential data alongside the storefront's own fields.
+# `min_price` is the negotiation floor — publishing it hands every buyer the
+# reserve and makes the agent's haggling theatre. `buyer_id` names the
+# purchaser, and `deleted_at` is bookkeeping.
+#
+# This is the allowlist, and it is closed: a column added to the table later
+# does NOT start shipping publicly until it is named here. Postgres enforces
+# the same split via column-level grants (see the items_column_privileges
+# migration), so the anon key cannot read the confidential columns even by
+# talking to PostgREST directly. Because of that revoke, `select('*')` on the
+# anon client is now an *error*, not just a leak — the explicit select lists
+# below are load-bearing.
+PUBLIC_ITEM_COLUMNS: tuple[str, ...] = (
+    "id",
+    "name",
+    "description",
+    "condition",
+    "price",
+    "image_path",
+    "status",
+    "created_at",
+    "translations",
+)
+
+CONFIDENTIAL_ITEM_COLUMNS: frozenset[str] = frozenset({
+    "min_price",
+    "buyer_id",
+    "deleted_at",
+})
+
+# PostgREST select list for every query issued with the anon key.
+PUBLIC_ITEM_SELECT = ", ".join(PUBLIC_ITEM_COLUMNS)
+
 
 def compute_items_hash(count: int, max_created_at: str) -> str:
     """Compute SHA hash from item count and latest timestamp"""
@@ -80,7 +116,7 @@ def get_items(keyword: str = None) -> list[str]:
 
         # Cache miss or stale - get full data from DB
         # Order by status (available first) then by created_at (newest first)
-        retrieve = user_supabase.table('items').select('*').is_('deleted_at', 'null').order('status', desc=False).order('created_at', desc=True).execute()
+        retrieve = user_supabase.table('items').select(PUBLIC_ITEM_SELECT).is_('deleted_at', 'null').order('status', desc=False).order('created_at', desc=True).execute()
         if retrieve.data:
             # Compute hash and cache with it
             count = len(retrieve.data)
@@ -91,7 +127,7 @@ def get_items(keyword: str = None) -> list[str]:
         return []
     else:
         # Keyword search - don't cache as results vary
-        retrieve = user_supabase.table('items').select('*').is_('deleted_at', 'null').ilike('description', f'%{keyword}%').order('status', desc=False).order('created_at', desc=True).execute()
+        retrieve = user_supabase.table('items').select(PUBLIC_ITEM_SELECT).is_('deleted_at', 'null').ilike('description', f'%{keyword}%').order('status', desc=False).order('created_at', desc=True).execute()
         if retrieve.data:
             return retrieve.data
         return []
@@ -107,7 +143,7 @@ def get_featured_items(limit: int = 6) -> list[dict]:
     try:
         retrieve = (
             user_supabase.table('items')
-            .select('*')
+            .select(PUBLIC_ITEM_SELECT)
             .eq('status', 'available')
             .is_('deleted_at', 'null')
             .order('created_at', desc=True)

@@ -1,5 +1,5 @@
 ---
-id: SPEC-020
+id: SPEC-021
 title: Modular Email Template Architecture with Jinja2
 status: complete
 priority: medium

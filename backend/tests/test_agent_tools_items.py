@@ -22,6 +22,7 @@ answer questions about a removed item queried directly by ID.
 
 from agent.tools.items import get_item_info, list_all_items, search_items
 from conftest import make_supabase_result
+from items import PUBLIC_ITEM_SELECT
 
 
 # ---------------------------------------------------------------------------
@@ -135,7 +136,10 @@ def test_get_item_info_queries_expected_table_and_filters(fake_supabase, patch_s
     get_item_info.func("item-42")
 
     fake_supabase.table.assert_called_with("items")
-    fake_supabase.table.return_value.select.assert_called_with("*")
+    # Explicit public column list, never "*": this tool runs on the anon key,
+    # which no longer holds SELECT on min_price / buyer_id (SPEC-036), so a
+    # wildcard select would be a permission error rather than a leak.
+    fake_supabase.table.return_value.select.assert_called_with(PUBLIC_ITEM_SELECT)
     fake_supabase.table.return_value.select.return_value.eq.assert_called_with("id", "item-42")
     fake_supabase.table.return_value.select.return_value.eq.return_value.is_.assert_called_with(
         "deleted_at", "null"

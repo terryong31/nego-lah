@@ -223,7 +223,7 @@ def fake_supabase():
 def patch_supabase(monkeypatch):
     """patch_supabase("items", admin=fake, user=fake2) patches `<module>.admin_supabase` /
     `<module>.user_supabase` on the given already-imported module name (import path relative
-    to backend/, e.g. "items", "routes.admin", "agent.tools.items")."""
+    to backend/, e.g. "items", "routes.admin.users", "agent.tools.items")."""
     import importlib
 
     def _patch(module_name, *, admin=None, user=None):

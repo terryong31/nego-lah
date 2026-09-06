@@ -6,7 +6,6 @@ interface Item {
   condition: string
   images: string
   price?: number
-  min_price?: number
   status?: string
 }
 

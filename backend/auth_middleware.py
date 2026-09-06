@@ -14,6 +14,7 @@ from cache import (
     get_cached_user_by_token,
 )
 from connector import admin_supabase
+from logger import logger
 
 
 def _is_user_banned(user_id: str) -> bool:
@@ -35,7 +36,10 @@ def _is_user_banned(user_id: str) -> bool:
             .execute()
         )
         banned = bool(res.data and res.data[0].get("is_banned"))
-    except Exception:
+    except Exception as e:
+        # Fail open: a ban lookup that errors must not lock every user out. But
+        # it does mean a banned user gets through, so it is not a silent event.
+        logger.warning(f"Ban lookup failed for {user_id}, treating as not banned: {e}")
         banned = False
 
     cache_ban_status(user_id, banned)
@@ -130,7 +134,10 @@ async def get_optional_user_id(request: Request) -> str | None:
             uid = user_response.user.id
             cache_token_user(token, uid)
             return uid
-    except Exception:
+    except Exception as e:
+        # An unusable token is a 401, not a 500 — but a *broken* Supabase looks
+        # identical from here, so leave a trace to tell them apart.
+        logger.debug(f"Token verification failed: {e}")
         return None
     return None
 

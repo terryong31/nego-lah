@@ -9,12 +9,12 @@ _.python.venv = { path = "backend/.venv", create = true }
 [tasks."dev:backend"]
 description = "Start FastAPI backend server with Infisical secrets"
 dir = "backend"
-run = "infisical run --env=dev --path=/Backend -- uv run uvicorn main:app --host 127.0.0.1 --port 8000 --reload || uv run uvicorn main:app --host 127.0.0.1 --port 8000 --reload"
+run = "infisical run --env=dev --path=/Backend -- uv run uvicorn main:app --host 127.0.0.1 --port 8000 --reload || { echo 'Infisical login expired — run: infisical login'; exit 1; }"
 
 [tasks."dev:frontend"]
 description = "Start Nuxt frontend dev server with Infisical secrets"
 dir = "frontend"
-run = "infisical run --env=dev --path=/Frontend -- bun dev || bun dev"
+run = "infisical run --env=dev --path=/Frontend -- bun dev || { echo 'Infisical login expired — run: infisical login'; exit 1; }"
 
 [tasks."dev:redis"]
 description = "Start local Redis if not running"
@@ -68,12 +68,12 @@ depends = ["audit:backend", "audit:frontend"]
 [tasks."build:frontend"]
 description = "Generate static SPA using Infisical dev secrets"
 dir = "frontend"
-run = "infisical run --env=dev --path=/Frontend -- bun run generate || bun run generate"
+run = "infisical run --env=dev --path=/Frontend -- bun run generate || { echo 'Infisical login expired — run: infisical login'; exit 1; }"
 
 [tasks."build:frontend:prod"]
 description = "Generate static SPA using Infisical prod secrets"
 dir = "frontend"
-run = "infisical run --env=prod --path=/Frontend -- bun run generate || bun run generate"
+run = "infisical run --env=prod --path=/Frontend -- bun run generate || { echo 'Infisical login expired — run: infisical login'; exit 1; }"
 
 [tasks."db:migrate:staging"]
 description = "Apply Supabase migrations to staging database"

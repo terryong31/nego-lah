@@ -5,6 +5,7 @@ import time
 import redis
 
 from env import REDIS_URL
+from logger import logger
 
 
 class _InMemoryRedis:
@@ -63,6 +64,44 @@ class _InMemoryRedis:
             self._purge(key)
         all_keys = set(self._store) | set(self._hash_store) | set(self._zset_store)
         return [k for k in all_keys if fnmatch.fnmatch(k, pattern)]
+
+    def scan_iter(self, match: str = "*", count: int | None = None):
+        """Cursored scan. Production code must use this rather than `keys()`,
+        which is O(N) over the whole keyspace and blocks the real server.
+
+        The double has nothing to page over, so it yields the same set in one
+        go — the point of matching the API here is that the call sites are
+        exercised as written."""
+        yield from self.keys(match)
+
+    def eval(self, script: str, numkeys: int, *keys_and_args: str):
+        """Run one of the Lua scripts this codebase ships.
+
+        Real Redis executes these atomically server-side, which is the whole
+        reason they are Lua and not two round trips. The double cannot run Lua,
+        so it recognises the exact scripts in use and reproduces their
+        semantics; an unknown script raises rather than silently no-opping, so
+        adding one without teaching this double fails loudly in tests.
+        """
+        keys = list(keys_and_args[:numkeys])
+        args = list(keys_and_args[numkeys:])
+        normalized = " ".join(script.split())
+
+        # Compare-and-delete (agent/llm_factory.RELEASE_LEASE_SCRIPT): release a
+        # lease only while it still carries the caller's token.
+        if normalized == (
+            "if redis.call('get', KEYS[1]) == ARGV[1] then "
+            "return redis.call('del', KEYS[1]) end return 0"
+        ):
+            key, token = keys[0], args[0]
+            if self.get(key) == token:
+                self.delete(key)
+                return 1
+            return 0
+
+        raise NotImplementedError(
+            f"_InMemoryRedis.eval does not know this script: {normalized!r}"
+        )
 
     def zadd(self, key: str, mapping: dict[str, float]):
         self._purge(key)
@@ -123,7 +162,11 @@ def _create_redis_client():
         client = redis.from_url(REDIS_URL, decode_responses=True)
         client.ping()
         return client
-    except Exception:
+    except Exception as e:
+        # Falling back to the in-memory double means caches, rate limits and
+        # leases stop being shared between workers — degraded, not broken, but
+        # never something to discover by accident.
+        logger.warning(f"Redis unavailable at startup, falling back to in-memory cache: {e}")
         return _InMemoryRedis()
 
 

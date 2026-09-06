@@ -38,3 +38,9 @@ This directory houses all engineering specifications for **Nego-Lah** following 
 - [SPEC-017-chat-notification-fanout-and-handover-indicator.md](./SPEC-017-chat-notification-fanout-and-handover-indicator.md) - Duplicate/self notifications and the AI hand-over indicator in the buyer chat.
 - [SPEC-020-dual-llm-hybrid-cloud-local-architecture.md](./SPEC-020-dual-llm-hybrid-cloud-local-architecture.md) - Dual LLM Hybrid Cloud + Local Edge Architecture & Concurrency Load Balancer.
 - [SPEC-025-motion-vue-negotiation-demo.md](./SPEC-025-motion-vue-negotiation-demo.md) - Motion for Vue Negotiation Demo Upgrade.
+- [SPEC-036-confidential-item-fields.md](./SPEC-036-confidential-item-fields.md) - Keep `min_price` and other seller-confidential columns off the public API and out of PostgREST's reach.
+- [SPEC-037-lease-ownership-and-hygiene.md](./SPEC-037-lease-ownership-and-hygiene.md) - Token-owned local-LLM lease, cursored Redis scans, SQLSTATE error detection, coverage gate, module splits.
+
+> This index is not exhaustive — `ls specs/` is the source of truth. Spec numbers
+> are unique and match their frontmatter `id:`; `backend/tests/test_spec_registry.py`
+> enforces both.

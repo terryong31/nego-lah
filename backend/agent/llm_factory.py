@@ -19,6 +19,7 @@ and one turn never holds two leases.
 """
 
 import os
+import uuid
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -188,29 +189,56 @@ async def is_local_llm_available(timeout: float = 1.5) -> bool:
 # Atomic concurrency lease
 # ---------------------------------------------------------------------------
 
-def try_acquire_local_llm_lease() -> bool:
+# Compare-and-delete: drop the lease key only if it still holds OUR token.
+# The GET and the DEL have to be one operation — checking ownership in Python
+# and then deleting leaves a window in which the lease expires and is
+# re-acquired between the two round trips, which is the very race this guards.
+RELEASE_LEASE_SCRIPT = """
+if redis.call('get', KEYS[1]) == ARGV[1] then
+    return redis.call('del', KEYS[1])
+end
+return 0
+"""
+
+
+def try_acquire_local_llm_lease() -> str | None:
     """Claim the laptop's single generation slot. Never blocks.
 
-    `SET key 1 NX EX 45` is one atomic round-trip, so this is correct across
-    uvicorn workers and processes. Returns False when the slot is already taken
-    — the caller must then overflow to the cloud rather than queue.
+    `SET key <token> NX EX 45` is one atomic round-trip, so this is correct
+    across uvicorn workers and processes. Returns the owner token on success,
+    or None when the slot is already taken — the caller must then overflow to
+    the cloud rather than queue.
 
-    A Redis failure returns False (fail-closed): losing the lease guarantee is
+    The value is a fresh random token rather than a constant, because the TTL
+    means a holder can outlive its own lease: generation overruns 45s, the key
+    expires, another worker legitimately acquires the slot. The token is what
+    lets `release_local_llm_lease` tell "my lease" from "the lease that replaced
+    mine" — see SPEC-037.
+
+    A Redis failure returns None (fail-closed): losing the lease guarantee is
     worse than overflowing, because two concurrent streams would tank the
     laptop's throughput for both buyers.
     """
+    token = uuid.uuid4().hex
     try:
-        acquired = redis_client.set(LOCAL_LLM_LEASE_KEY, "1", nx=True, ex=LEASE_TTL_SECONDS)
+        acquired = redis_client.set(LOCAL_LLM_LEASE_KEY, token, nx=True, ex=LEASE_TTL_SECONDS)
     except Exception as e:
         logger.warning(f"⚠️ Redis unavailable for local LLM lease, overflowing to cloud: {e}")
-        return False
-    return bool(acquired)
+        return None
+    return token if acquired else None
 
 
-def release_local_llm_lease() -> None:
-    """Hand the laptop's generation slot back. Safe to call when not held."""
+def release_local_llm_lease(token: str | None) -> None:
+    """Hand back the slot held under `token`. Safe to call when not held.
+
+    A no-op unless the key still carries this exact token, so a holder whose
+    TTL already expired can never delete the lease of whichever worker took the
+    slot next. Passing None (the caller never held one) does nothing.
+    """
+    if not token:
+        return
     try:
-        redis_client.delete(LOCAL_LLM_LEASE_KEY)
+        redis_client.eval(RELEASE_LEASE_SCRIPT, 1, LOCAL_LLM_LEASE_KEY, token)
     except Exception as e:
         logger.warning(f"⚠️ Failed to release local LLM lease (TTL will reclaim it): {e}")
 
@@ -219,8 +247,12 @@ def release_local_llm_lease() -> None:
 # Per-request provider selection
 # ---------------------------------------------------------------------------
 
-async def resolve_provider() -> tuple[ProviderInfo, bool]:
-    """Pick the engine for this turn. Returns (info, holds_lease).
+async def resolve_provider() -> tuple[ProviderInfo, str | None]:
+    """Pick the engine for this turn. Returns (info, lease_token).
+
+    `lease_token` is None whenever this turn does not hold the laptop's slot;
+    it must be handed back to `release_local_llm_lease` so the release can
+    prove ownership.
 
     Order matters: the cheap checks (explicit override, cached health) run
     before the lease is touched, so we never acquire a lease we won't use.
@@ -228,19 +260,20 @@ async def resolve_provider() -> tuple[ProviderInfo, bool]:
     preference = os.getenv("LLM_PROVIDER", "auto").lower()
 
     if preference not in ("local", "auto"):
-        return cloud_provider_info(), False
+        return cloud_provider_info(), None
 
     if not await is_local_llm_available():
         logger.warning("⚠️ Local LLM endpoint unreachable or tunnel down. Overflowing to Gemini.")
-        return cloud_provider_info(), False
+        return cloud_provider_info(), None
 
-    if not try_acquire_local_llm_lease():
+    lease_token = try_acquire_local_llm_lease()
+    if lease_token is None:
         logger.info("🔁 Local Qwen busy generating — overflowing this turn to Gemini (0ms wait).")
-        return cloud_provider_info(), False
+        return cloud_provider_info(), None
 
     info = local_provider_info()
     logger.info(f"🧠 Routing turn to Local Multimodal LLM: {info.model} on {info.hardware}")
-    return info, True
+    return info, lease_token
 
 
 @asynccontextmanager
@@ -251,14 +284,13 @@ async def hybrid_llm_session():
     agrees, and releases the lease in `finally` so a crashed or client-cancelled
     generation frees the laptop immediately rather than waiting out the TTL.
     """
-    info, holds_lease = await resolve_provider()
+    info, lease_token = await resolve_provider()
     token = current_provider.set(info)
     try:
         yield info
     finally:
         current_provider.reset(token)
-        if holds_lease:
-            release_local_llm_lease()
+        release_local_llm_lease(lease_token)
 
 
 # ---------------------------------------------------------------------------

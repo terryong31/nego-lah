@@ -64,6 +64,12 @@ omit = [
 ]
 
 [tool.coverage.report]
+# The gate. Coverage was being *collected* and then ignored, which meant it
+# could rot a point at a time without anything going red. Set one below the
+# current total so ordinary work has headroom but a real regression fails the
+# build; raise it when the number climbs. Running a subset of the suite trips
+# this by design — use `pytest --no-cov` for that.
+fail_under = 88
 exclude_lines = [
     "pragma: no cover",
     "if __name__ == .__main__.:",

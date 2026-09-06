@@ -7,7 +7,6 @@ interface Item {
   images: string // JSON array string or comma separated URLs
   price?: number
   discounted_price?: number
-  min_price?: number
   status?: string // 'available' or 'sold' or other properties
   translations?: Record<string, ItemTranslation>
 }

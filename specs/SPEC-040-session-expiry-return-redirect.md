@@ -1,5 +1,5 @@
 ---
-id: SPEC-024
+id: SPEC-040
 title: Session-Expiry Return Redirect — Land Back on the Page You Were Kicked Off
 status: completed
 priority: high
@@ -7,6 +7,9 @@ created: 2026-09-05
 tags: [frontend, nuxt, auth, routing, chat]
 assigned: agent
 ---
+
+> Renumbered from SPEC-024: three pairs of specs had been filed under the same
+> number, which broke traceability. Content unchanged.
 
 # Context & Objectives
 A buyer sitting on `/chat` (often `/chat?item_id=…`, mid-negotiation) whose Supabase

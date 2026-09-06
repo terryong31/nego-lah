@@ -4,10 +4,12 @@ collect_shipping_info, web_search langchain tools).
 Mocking notes specific to this module (see conftest.py's module docstring for the
 general rules):
 
-- ``create_checkout_link`` does ``from connector import user_supabase`` *inside*
-  the function body (a lazy import), so we patch ``connector.user_supabase``
-  directly (via the ``patch_supabase("connector", user=...)`` fixture) rather
-  than ``agent.tools.payment.user_supabase`` -- no such module-level name exists
+- ``create_checkout_link`` does ``from connector import admin_supabase`` *inside*
+  the function body (a lazy import), so we patch ``connector.admin_supabase``
+  directly (via the ``patch_supabase("connector", admin=...)`` fixture) rather
+  than ``agent.tools.payment.admin_supabase`` -- no such module-level name exists.
+  It uses the SERVICE ROLE because its price floor check reads ``min_price``,
+  which anon/authenticated cannot select (SPEC-036)
   on ``agent.tools.payment``, since the import is re-resolved on every call.
 - It also does ``from payment.payment_state import get_pending_payment,
   store_pending_payment`` lazily. To simulate an existing pending payment we
@@ -108,7 +110,7 @@ def test_create_checkout_hallucinated_item_id_falls_back_to_context(
 ):
     context.set_context(user_id="user-1", item_id="real-item-42")
     _no_existing_payment(monkeypatch)
-    patch_supabase("connector", user=fake_supabase)
+    patch_supabase("connector", admin=fake_supabase)
     _set_item_lookup(fake_supabase, items=[])  # doesn't matter for this test; we inspect which id was queried
 
     _checkout(item_id=placeholder, agreed_price=80.0)
@@ -121,7 +123,7 @@ def test_create_checkout_hallucinated_item_id_falls_back_to_context(
 def test_create_checkout_item_not_found_no_context_fallback(patch_supabase, fake_supabase, monkeypatch):
     context.set_context(user_id="user-1", item_id=None)
     _no_existing_payment(monkeypatch)
-    patch_supabase("connector", user=fake_supabase)
+    patch_supabase("connector", admin=fake_supabase)
     _set_item_lookup(fake_supabase, items=[])
 
     result = _checkout(item_id="missing-item", agreed_price=80.0)
@@ -134,7 +136,7 @@ def test_create_checkout_item_lookup_retries_with_context_item_id(
 ):
     context.set_context(user_id="user-1", item_id="context-item-99")
     _no_existing_payment(monkeypatch)
-    patch_supabase("connector", user=fake_supabase)
+    patch_supabase("connector", admin=fake_supabase)
 
     empty = MagicMock(data=[])
     found = MagicMock(data=[dict(ITEM, id="context-item-99")])
@@ -151,7 +153,7 @@ def test_create_checkout_item_lookup_retries_with_context_item_id(
 def test_create_checkout_item_not_available(patch_supabase, fake_supabase, monkeypatch):
     context.set_context(user_id="user-1", item_id=None)
     _no_existing_payment(monkeypatch)
-    patch_supabase("connector", user=fake_supabase)
+    patch_supabase("connector", admin=fake_supabase)
     sold_item = dict(ITEM, status="sold")
     _set_item_lookup(fake_supabase, item=sold_item)
 
@@ -163,7 +165,7 @@ def test_create_checkout_item_not_available(patch_supabase, fake_supabase, monke
 def test_create_checkout_price_below_min_rejected(patch_supabase, fake_supabase, monkeypatch):
     context.set_context(user_id="user-1", item_id=None)
     _no_existing_payment(monkeypatch)
-    patch_supabase("connector", user=fake_supabase)
+    patch_supabase("connector", admin=fake_supabase)
     _set_item_lookup(fake_supabase, item=ITEM)  # min_price=60, price=100
 
     result = _checkout(item_id="item-1", agreed_price=50.0)
@@ -176,7 +178,7 @@ def test_create_checkout_price_below_min_rejected(patch_supabase, fake_supabase,
 def test_create_checkout_price_non_positive_rejected(patch_supabase, fake_supabase, monkeypatch):
     context.set_context(user_id="user-1", item_id=None)
     _no_existing_payment(monkeypatch)
-    patch_supabase("connector", user=fake_supabase)
+    patch_supabase("connector", admin=fake_supabase)
     # min_price falls back to price via `item.get('min_price') or item.get('price', 0)`,
     # and 0 is falsy, so an item priced at 0 with an explicit min_price of 0 gives
     # min_price == 0 -- letting a price of exactly 0 clear the min_price check and
@@ -192,7 +194,7 @@ def test_create_checkout_price_non_positive_rejected(patch_supabase, fake_supaba
 def test_create_checkout_price_suspiciously_high_rejected(patch_supabase, fake_supabase, monkeypatch):
     context.set_context(user_id="user-1", item_id=None)
     _no_existing_payment(monkeypatch)
-    patch_supabase("connector", user=fake_supabase)
+    patch_supabase("connector", admin=fake_supabase)
     _set_item_lookup(fake_supabase, item=ITEM)  # asking price=100 -> cap at 1000
 
     result = _checkout(item_id="item-1", agreed_price=1500.0)
@@ -203,7 +205,7 @@ def test_create_checkout_price_suspiciously_high_rejected(patch_supabase, fake_s
 def test_create_checkout_success(patch_supabase, fake_supabase, fake_stripe, monkeypatch):
     context.set_context(user_id="user-1", item_id=None)
     _no_existing_payment(monkeypatch)
-    patch_supabase("connector", user=fake_supabase)
+    patch_supabase("connector", admin=fake_supabase)
     _set_item_lookup(fake_supabase, item=ITEM)
 
     fake_stripe.Product.create.return_value = MagicMock(id="prod_123")
@@ -236,7 +238,7 @@ def test_create_checkout_success(patch_supabase, fake_supabase, fake_stripe, mon
 def test_create_checkout_stripe_error_returns_message(patch_supabase, fake_supabase, fake_stripe, monkeypatch):
     context.set_context(user_id="user-1", item_id=None)
     _no_existing_payment(monkeypatch)
-    patch_supabase("connector", user=fake_supabase)
+    patch_supabase("connector", admin=fake_supabase)
     _set_item_lookup(fake_supabase, item=ITEM)
 
     fake_stripe.Product.create.side_effect = Exception("stripe is down")

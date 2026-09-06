@@ -15,3 +15,4 @@ changes an earlier one, add a new ADR and mark the old one's status.
 | [0006](0006-sentry-session-replay-and-distributed-tracing.md) | Sentry Session Replay and Distributed Tracing Architecture | Accepted |
 | [0007](0007-hybrid-edge-cloud-llm-load-balancer.md) | Hybrid Edge-Cloud LLM Load Balancer with Atomic Concurrency Leases | Accepted |
 | [0008](0008-build-time-content-injection-for-legal-pages.md) | Build-Time Content Injection for Crawler-Readable Legal Pages | Accepted |
+| [0009](0009-confidential-columns-enforced-in-postgres.md) | Seller-Confidential Columns Enforced in Postgres, Not Just in the API | Accepted |

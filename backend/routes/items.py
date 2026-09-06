@@ -4,7 +4,7 @@ import json
 from fastapi import APIRouter, HTTPException, Request, status
 
 from auth_middleware import get_optional_user_id
-from items import get_featured_items, get_items
+from items import PUBLIC_ITEM_COLUMNS, PUBLIC_ITEM_SELECT, get_featured_items, get_items
 from logger import logger
 
 # Public items API — READ ONLY.
@@ -14,13 +14,19 @@ router = APIRouter(prefix="/items", tags=["Items"])
 
 
 def _to_public(row: dict) -> dict:
-    """Shape a raw DB row for the storefront.
+    """Project a raw DB row onto the fields the storefront is allowed to see.
+
+    This is an allowlist, not a copy. `dict(row)` would forward whatever the
+    query happened to return — which is how `min_price`, the negotiation floor,
+    used to ship in every public items response (SPEC-036). Building the payload
+    up from `PUBLIC_ITEM_COLUMNS` means a column added to the table later stays
+    server-side until someone deliberately adds it to that list.
 
     The DB stores `id` and `image_path` (a JSON map {filename: url}); the
     frontend expects `item_id` and `images` (a JSON array of URLs). We add those
-    aliases without dropping the originals.
+    aliases alongside the originals.
     """
-    out = dict(row)
+    out = {column: row[column] for column in PUBLIC_ITEM_COLUMNS if column in row}
     out['item_id'] = row.get('id')
 
     urls: list = []
@@ -123,7 +129,7 @@ async def get_item_by_id(item_id: str, request: Request) -> dict:
         # Soft-deleted items are hidden from the public storefront (treated as 404).
         response = await asyncio.to_thread(
             lambda: user_supabase.table('items')
-            .select('*').eq('id', item_id).is_('deleted_at', 'null').execute()
+            .select(PUBLIC_ITEM_SELECT).eq('id', item_id).is_('deleted_at', 'null').execute()
         )
     except Exception:
         # e.g. malformed UUID ("undefined") — treat as not found, not a 500.

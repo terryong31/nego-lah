@@ -1,5 +1,5 @@
 ---
-id: SPEC-017
+id: SPEC-038
 title: Progressive Web App (PWA), Cloudflare Pages Headers, CSP, and CORS Security
 status: complete
 priority: high
@@ -7,6 +7,9 @@ created: 2026-09-05
 tags: [frontend, backend, pwa, security, cloudflare]
 assigned: agent
 ---
+
+> Renumbered from SPEC-017: three pairs of specs had been filed under the same
+> number, which broke traceability. Content unchanged.
 
 # Context & Objectives
 Nego-Lah is deployed as a Single Page Application (`ssr: false`) on Cloudflare Pages with an autonomous AI bargaining backend on AWS Lightsail. To deliver an installable, resilient native-like experience while avoiding false-positive blocks from Cloudflare's Web Application Firewall (WAF), Page Shield, or Bot Management:
@@ -60,7 +63,7 @@ Nego-Lah is deployed as a Single Page Application (`ssr: false`) on Cloudflare P
 - [x] **Scenario 3 (`test_cors.py`):** Assert CORS preflight and requests from `https://nego-lah.pages.dev` and `https://pr-123.nego-lah.pages.dev` receive `Access-Control-Allow-Origin` and `Access-Control-Allow-Credentials: true`.
 
 # Implementation Files
-- `specs/SPEC-017-pwa-service-worker-cloudflare-headers.md` - Specification
+- `specs/SPEC-038-pwa-service-worker-cloudflare-headers.md` - Specification
 - `frontend/package.json` - `@vite-pwa/nuxt` dependency
 - `frontend/nuxt.config.ts` - PWA and Workbox configuration
 - `frontend/public/_headers` - Cloudflare Pages security & service worker headers

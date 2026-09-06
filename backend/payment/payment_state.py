@@ -12,6 +12,7 @@ import stripe
 
 from cache import redis_client
 from env import STRIPE_API_KEY
+from logger import logger
 
 stripe.api_key = STRIPE_API_KEY
 
@@ -64,7 +65,7 @@ def store_pending_payment(
 
         return True
     except Exception as e:
-        print(f"Error storing payment: {e}")
+        logger.error(f"Failed to store pending payment for {user_id}/{item_id}: {e}")
         return False
 
 
@@ -89,11 +90,12 @@ def get_active_payments_for_user(user_id: str) -> list:
     Returns:
         List of active payment URLs
     """
+    # SCAN, not KEYS: Redis is single-threaded and `KEYS` walks the whole
+    # keyspace, blocking every other client until it finishes.
     pattern = f"payment:{user_id}:*"
-    keys = redis_client.keys(pattern)
 
     urls = []
-    for key in keys:
+    for key in redis_client.scan_iter(match=pattern, count=100):
         if key != "payment:cleanup_queue":
             data = redis_client.get(key)
             if data:
@@ -133,7 +135,7 @@ def delete_pending_payment(user_id: str, item_id: str, cleanup_stripe: bool = Tr
                     payment["payment_link_id"],
                     active=False
                 )
-                print(f"✅ Deactivated PaymentLink: {payment['payment_link_id']}")
+                logger.info(f"✅ Deactivated PaymentLink: {payment['payment_link_id']}")
 
             # Archive product
             if payment.get("product_id"):
@@ -141,10 +143,12 @@ def delete_pending_payment(user_id: str, item_id: str, cleanup_stripe: bool = Tr
                     payment["product_id"],
                     active=False
                 )
-                print(f"✅ Archived Product: {payment['product_id']}")
+                logger.info(f"✅ Archived Product: {payment['product_id']}")
 
         except Exception as e:
-            print(f"Error cleaning up Stripe: {e}")
+            # A live PaymentLink left behind in Stripe is exactly the kind of
+            # thing an operator has to find out about, so this is error level.
+            logger.error(f"Failed to clean up Stripe objects for {user_id}/{item_id}: {e}")
 
     # Delete from Redis
     redis_client.delete(key)
@@ -185,7 +189,7 @@ def cleanup_expired_payments() -> int:
                         payment["payment_link_id"],
                         active=False
                     )
-                    print(f"🧹 Cleaned up expired PaymentLink: {payment['payment_link_id']}")
+                    logger.info(f"🧹 Cleaned up expired PaymentLink: {payment['payment_link_id']}")
 
                 # Archive product
                 if payment.get("product_id"):
@@ -193,18 +197,18 @@ def cleanup_expired_payments() -> int:
                         payment["product_id"],
                         active=False
                     )
-                    print(f"🧹 Archived expired Product: {payment['product_id']}")
+                    logger.info(f"🧹 Archived expired Product: {payment['product_id']}")
 
                 cleaned += 1
             except Exception as e:
-                print(f"Error cleaning up expired payment: {e}")
+                logger.error(f"Failed to clean up expired payment {key}: {e}")
 
         # Remove from cleanup queue regardless
         redis_client.zrem("payment:cleanup_queue", key)
         redis_client.delete(key)
 
     if cleaned > 0:
-        print(f"🧹 Cleaned up {cleaned} expired payment links")
+        logger.info(f"🧹 Cleaned up {cleaned} expired payment links")
 
     return cleaned
 
@@ -216,11 +220,11 @@ def get_all_pending_payments() -> list:
     Returns:
         List of all pending payment dicts
     """
+    # SCAN, not KEYS — see get_active_payments_for_user.
     pattern = "payment:*:*"
-    keys = redis_client.keys(pattern)
 
     payments = []
-    for key in keys:
+    for key in redis_client.scan_iter(match=pattern, count=100):
         if key != "payment:cleanup_queue":
             data = redis_client.get(key)
             if data:

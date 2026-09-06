@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RouteLocationNormalized } from 'vue-router'
 import { mockNuxtImport } from '@nuxt/test-utils/runtime'
 
@@ -11,7 +11,11 @@ beforeEach(() => {
 })
 
 function makeRoute(path: string, query: Record<string, string | undefined> = {}, hash: string = '') {
-  return { path, query, hash } as unknown as RouteLocationNormalized
+  const qs = new URLSearchParams(
+    Object.entries(query).filter((e): e is [string, string] => typeof e[1] === 'string')
+  ).toString()
+  const fullPath = `${path}${qs ? `?${qs}` : ''}${hash}`
+  return { path, query, hash, fullPath } as unknown as RouteLocationNormalized
 }
 
 describe('middleware/auth-redirect.global.ts', () => {
@@ -104,5 +108,60 @@ describe('middleware/auth-redirect.global.ts', () => {
 
     expect(result).toBeUndefined()
     expect(navigateToMock).not.toHaveBeenCalled()
+  })
+
+  // Regression (SPEC-032): the middleware used to consult `window.location` on
+  // EVERY navigation. The browser URL only catches up once a navigation
+  // commits, so while confirm.vue was navigating away it still read
+  // `/confirm?code=...` — and bounced the visitor straight back to /confirm,
+  // stranding a signed-in Google user on the "Confirming your session" spinner.
+  describe('stale browser URL', () => {
+    const originalLocation = window.location
+
+    function stubLocation(pathname: string, search: string, hash = '') {
+      // @ts-expect-error - reassigning location is allowed in the test DOM
+      delete window.location
+      // @ts-expect-error - a partial Location is enough for this middleware
+      window.location = { ...originalLocation, pathname, search, hash }
+    }
+
+    afterEach(() => {
+      // @ts-expect-error - restore the real Location object
+      delete window.location
+      // @ts-expect-error - restore the real Location object
+      window.location = originalLocation
+    })
+
+    it('does not bounce back when leaving /confirm while the URL still carries the code', async () => {
+      const middleware = (await import('~/middleware/auth-redirect.global')).default
+      stubLocation('/confirm', '?flow=oauth&code=test-code-123')
+
+      const result = middleware(
+        makeRoute('/'),
+        makeRoute('/confirm', { flow: 'oauth', code: 'test-code-123' })
+      )
+
+      expect(result).toBeUndefined()
+      expect(navigateToMock).not.toHaveBeenCalled()
+    })
+
+    it('ignores a stale window.location on an in-app navigation', async () => {
+      const middleware = (await import('~/middleware/auth-redirect.global')).default
+      stubLocation('/items', '?code=test-code-123')
+
+      const result = middleware(makeRoute('/orders'), makeRoute('/items'))
+
+      expect(result).toBeUndefined()
+      expect(navigateToMock).not.toHaveBeenCalled()
+    })
+
+    it('still reads window.location on the initial navigation', async () => {
+      const middleware = (await import('~/middleware/auth-redirect.global')).default
+      stubLocation('/', '', '#access_token=abc&refresh_token=def')
+
+      middleware(makeRoute('/'), makeRoute('/'))
+
+      expect(navigateToMock).toHaveBeenCalledWith(expect.objectContaining({ path: '/confirm' }))
+    })
   })
 })

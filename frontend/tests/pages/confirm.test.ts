@@ -30,6 +30,24 @@ function spyOnRouterReplace(wrapper: { vm: { $router: { replace: (...args: unkno
   return vi.spyOn(wrapper.vm.$router, 'replace').mockImplementation(() => Promise.resolve())
 }
 
+/**
+ * Swaps in a partial `Location` so the page sees a real callback URL. Returns
+ * the restore function — the real object has to come back before the next test.
+ */
+function stubLocation(pathname: string, search: string, hash = '', replace = vi.fn()) {
+  const original = window.location
+  // @ts-expect-error - reassigning location is allowed in the test DOM
+  delete window.location
+  // @ts-expect-error - a partial Location is enough for these assertions
+  window.location = { ...original, pathname, search, hash, replace }
+  return () => {
+    // @ts-expect-error - restore the real Location object
+    delete window.location
+    // @ts-expect-error - restore the real Location object
+    window.location = original
+  }
+}
+
 describe('pages/confirm.vue', () => {
   let wrapper: Awaited<ReturnType<typeof mountSuspended>> | undefined
 
@@ -223,6 +241,52 @@ describe('pages/confirm.vue', () => {
       await flushPromises()
 
       expect(replaceSpy).toHaveBeenCalledWith('/')
+    })
+
+    // Regression (SPEC-032): the visitor stayed on the spinner forever after a
+    // Google login. `auth-redirect.global` reads `window.location` on the first
+    // navigation, and the browser URL is still the spent `/confirm?code=...`
+    // until the outgoing navigation commits — so the redirect away from here
+    // was bounced straight back. Clearing the params first closes that window.
+    it('clears the callback params from the URL before navigating away', async () => {
+      routeStub.query = { flow: 'oauth', code: 'abc' }
+      wrapper = await mountSuspended(ConfirmPage)
+
+      const restore = stubLocation('/confirm', '?flow=oauth&code=abc')
+      const replaceStateSpy = vi.spyOn(window.history, 'replaceState')
+      const replaceSpy = spyOnRouterReplace(wrapper)
+
+      userRef.value = { id: 'u1', email: 'user@example.com' }
+      await flushPromises()
+
+      expect(replaceStateSpy).toHaveBeenCalled()
+      expect(replaceSpy).toHaveBeenCalledWith('/')
+      expect(replaceStateSpy.mock.invocationCallOrder[0]!)
+        .toBeLessThan(replaceSpy.mock.invocationCallOrder[0]!)
+
+      restore()
+    })
+
+    // Belt and braces: if the router navigation is swallowed for any reason,
+    // the callback page must not leave the visitor stranded on the spinner.
+    it('falls back to a hard navigation when the router redirect is swallowed', async () => {
+      routeStub.query = { flow: 'oauth', code: 'abc' }
+      wrapper = await mountSuspended(ConfirmPage)
+
+      const hardReplace = vi.fn()
+      const restore = stubLocation('/confirm', '', '', hardReplace)
+      spyOnRouterReplace(wrapper)
+
+      userRef.value = { id: 'u1', email: 'user@example.com' }
+      await flushPromises()
+      expect(hardReplace).not.toHaveBeenCalled()
+
+      vi.advanceTimersByTime(3000)
+      await flushPromises()
+
+      expect(hardReplace).toHaveBeenCalledWith('/')
+
+      restore()
     })
 
     it('does not start the countdown on the OAuth path', async () => {

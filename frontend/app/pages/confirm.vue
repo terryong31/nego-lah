@@ -46,6 +46,10 @@ const errorMessage = ref<string | null>(null)
 const countdown = ref(5)
 let timer: ReturnType<typeof setInterval> | null = null
 
+// How long to give the router redirect before forcing a hard navigation.
+const WATCHDOG_MS = 2500
+let watchdog: ReturnType<typeof setTimeout> | null = null
+
 // Both are resolved during setup rather than in `onMounted`, because the
 // `watch(user, { immediate: true })` below can complete the flow before mount
 // and it needs the target and the flow marker already in hand.
@@ -110,13 +114,36 @@ async function succeed() {
     // The immediate watcher can fire during setup; wait for the mount so the
     // navigation isn't issued from a component that doesn't exist yet.
     await nextTick()
-    router.replace(targetRedirect.value || '/')
+    const target = targetRedirect.value || '/'
+    // Strip the spent callback params BEFORE navigating, not after. Until this
+    // navigation commits the browser URL still reads `/confirm?code=...`, and
+    // `auth-redirect.global` inspects it — leaving them on is what used to
+    // bounce this very redirect back here and hang the page on the spinner.
+    cleanUrl()
+    router.replace(target)
+    armRedirectWatchdog(target)
     return
   }
 
   status.value = 'success'
   await initLanguage()
   startCountdown()
+}
+
+/**
+ * Last resort for a router redirect that never lands.
+ *
+ * `redirected` latches, so a swallowed navigation would otherwise leave a
+ * signed-in visitor on the loading spinner with nothing left to retry. A full
+ * page load to an already-cleaned URL cannot be intercepted by a route guard,
+ * and the established session means it won't come back here.
+ */
+function armRedirectWatchdog(target: string) {
+  if (typeof window === 'undefined') return
+  if (watchdog) clearTimeout(watchdog)
+  watchdog = setTimeout(() => {
+    if (window.location.pathname === '/confirm') window.location.replace(target)
+  }, WATCHDOG_MS)
 }
 
 /** Never downgrade a flow that already completed. */
@@ -235,6 +262,7 @@ watch(status, (newStatus) => {
 
 onUnmounted(() => {
   if (timer) clearInterval(timer)
+  if (watchdog) clearTimeout(watchdog)
   if (authSubscription) authSubscription.unsubscribe()
 })
 </script>

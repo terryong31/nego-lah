@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { mountSuspended } from '@nuxt/test-utils/runtime'
 import TermsPage from '~/pages/terms.vue'
+import { TERMS_OF_SERVICE } from '~/utils/legal'
 
 describe('pages/terms.vue', () => {
   it('renders the terms of service heading and last-updated date', async () => {
     const wrapper = await mountSuspended(TermsPage)
     expect(wrapper.find('h1').text()).toBe('Terms of Service')
-    expect(wrapper.text()).toContain('Last updated: June 2026')
+    expect(wrapper.text()).toContain(`Last updated: ${TERMS_OF_SERVICE.lastUpdated}`)
   })
 
   it('renders all numbered section headings', async () => {

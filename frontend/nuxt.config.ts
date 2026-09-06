@@ -1,4 +1,5 @@
 import { runtimeCaching } from './pwa/runtime-caching'
+import { injectLegalDocument } from './build/legal-prerender'
 
 export default defineNuxtConfig({
 
@@ -75,6 +76,18 @@ export default defineNuxtConfig({
   // The catch-all '/**' rule adds security headers that mirror production (Caddy / Cloudflare Pages).
   // Includes full CSP and Service Worker directives.
   routeRules: {
+    // The legal pages are the one part of this SPA that has to be readable
+    // WITHOUT JavaScript. Google's OAuth verification reviewer (and every
+    // crawler) fetches https://negolah.my/privacy and reads the raw HTML; under
+    // `ssr: false` that is the empty app shell, which is why verification came
+    // back with "your privacy policy page does not have sufficient content".
+    // Prerendering them emits a real file per route so Cloudflare Pages stops
+    // falling back to the shell; the `nitro:init` hook below is what fills that
+    // file with the policy text (a per-route `ssr: true` does NOT work here —
+    // a global `ssr: false` build has no server renderer, so it still writes an
+    // empty shell). Every other route stays client-rendered.
+    '/privacy': { prerender: true },
+    '/terms': { prerender: true },
     '/**': {
       headers: {
         'X-Content-Type-Options': 'nosniff',
@@ -116,6 +129,24 @@ export default defineNuxtConfig({
   },
 
   hooks: {
+    // Put the legal text into the prerendered HTML itself.
+    //
+    // With `ssr: false` the prerenderer writes an empty `#__nuxt` shell, so
+    // https://negolah.my/privacy served no policy at all to anything that does
+    // not run JavaScript — Google's OAuth verification read that empty page and
+    // failed the app for a privacy policy without "sufficient content".
+    //
+    // Vue's `mount()` clears the container before rendering (it is not
+    // hydrating), so the injected markup is replaced the moment the app boots:
+    // people get the normal SPA, crawlers get the full text, and both come from
+    // the one string in app/utils/legal.ts.
+    'nitro:init'(nitro) {
+      nitro.hooks.hook('prerender:generate', (route) => {
+        if (typeof route.contents !== 'string') return
+        const injected = injectLegalDocument(route.route, route.contents)
+        if (injected) route.contents = injected
+      })
+    },
     'components:extend'(components) {
       const pageHero = components.find(c => c.pascalName === 'UPageHero')
       if (pageHero) {

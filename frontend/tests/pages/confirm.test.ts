@@ -22,6 +22,9 @@ mockNuxtImport('useRoute', () => () => routeStub)
 const { initLanguageMock } = vi.hoisted(() => ({ initLanguageMock: vi.fn() }))
 mockNuxtImport('useLanguage', () => () => ({ initLanguage: initLanguageMock }))
 
+const { toastAddMock } = vi.hoisted(() => ({ toastAddMock: vi.fn() }))
+mockNuxtImport('useToast', () => () => ({ add: toastAddMock }))
+
 function spyOnRouterPush(wrapper: { vm: { $router: { push: (...args: unknown[]) => unknown } } }) {
   return vi.spyOn(wrapper.vm.$router, 'push').mockImplementation(() => Promise.resolve())
 }
@@ -54,6 +57,7 @@ describe('pages/confirm.vue', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     initLanguageMock.mockReset().mockResolvedValue(undefined)
+    toastAddMock.mockReset()
     userRef.value = null
     routeStub.query = {}
     routeStub.hash = ''
@@ -287,6 +291,86 @@ describe('pages/confirm.vue', () => {
       expect(hardReplace).toHaveBeenCalledWith('/')
 
       restore()
+    })
+
+    // SPEC-034: the password login ends on a "Welcome back!" toast. A Google
+    // login has to raise it here — `signInWithOAuth` navigates the browser to
+    // Google, so login.vue is gone long before the sign-in succeeds.
+    describe('success toast', () => {
+      const SUCCESS_TOAST = {
+        title: 'Welcome back!',
+        description: 'You have logged in successfully.',
+        color: 'success'
+      }
+
+      it('raises the same success toast as the password login', async () => {
+        routeStub.query = { flow: 'oauth' }
+        wrapper = await mountSuspended(ConfirmPage)
+        spyOnRouterReplace(wrapper)
+
+        userRef.value = { id: 'u1', email: 'user@example.com' }
+        await flushPromises()
+
+        expect(toastAddMock).toHaveBeenCalledWith(SUCCESS_TOAST)
+      })
+
+      it('toasts an untagged social callback detected from amr', async () => {
+        routeStub.query = { code: 'abc' }
+        wrapper = await mountSuspended(ConfirmPage)
+        spyOnRouterReplace(wrapper)
+
+        userRef.value = { id: 'u1', email: 'user@example.com', amr: [{ method: 'oauth', timestamp: 1 }] }
+        await flushPromises()
+
+        expect(toastAddMock).toHaveBeenCalledWith(SUCCESS_TOAST)
+      })
+
+      // `onAuthStateChange`, the user watcher and the code exchange can all
+      // report the same sign-in. One login, one toast.
+      it('toasts once however many signals report the session', async () => {
+        routeStub.query = { flow: 'oauth', code: 'abc' }
+        wrapper = await mountSuspended(ConfirmPage)
+        spyOnRouterReplace(wrapper)
+
+        userRef.value = { id: 'u1', email: 'user@example.com' }
+        await flushPromises()
+        userRef.value = { id: 'u1', email: 'user@example.com', amr: ['oauth'] }
+        await flushPromises()
+        vi.advanceTimersByTime(2000)
+        await flushPromises()
+
+        expect(toastAddMock).toHaveBeenCalledTimes(1)
+      })
+
+      it('stays silent on an email confirmation', async () => {
+        routeStub.query = { token_hash: 'tok', type: 'signup' }
+        wrapper = await mountSuspended(ConfirmPage)
+
+        userRef.value = { id: 'u1', email: 'user@example.com', amr: [{ method: 'otp', timestamp: 1 }] }
+        await flushPromises()
+
+        expect(wrapper.text()).toContain('Email Confirmed!')
+        expect(toastAddMock).not.toHaveBeenCalled()
+      })
+
+      // Nothing was signed in here, so announcing a login would be untrue.
+      it('stays silent on a stray visit with an existing password session', async () => {
+        wrapper = await mountSuspended(ConfirmPage)
+        spyOnRouterReplace(wrapper)
+
+        userRef.value = { id: 'u1', email: 'user@example.com', amr: [{ method: 'password', timestamp: 1 }] }
+        await flushPromises()
+
+        expect(toastAddMock).not.toHaveBeenCalled()
+      })
+
+      it('stays silent when the provider returns an error', async () => {
+        routeStub.query = { flow: 'oauth', error: 'access_denied', error_code: 'otp_expired' }
+        wrapper = await mountSuspended(ConfirmPage)
+        await flushPromises()
+
+        expect(toastAddMock).not.toHaveBeenCalled()
+      })
     })
 
     it('does not start the countdown on the OAuth path', async () => {

@@ -7,6 +7,7 @@ const user = useSupabaseUser()
 const supabase = useSupabaseClient()
 const route = useRoute()
 const router = useRouter()
+const toast = useToast()
 const { initLanguage } = useLanguage()
 
 type ConfirmStatus = 'loading' | 'success' | 'error'
@@ -99,6 +100,21 @@ function isEmailConfirmation(): boolean {
 }
 
 /**
+ * Whether this callback completed a social sign-in, as opposed to an email
+ * confirmation or a stray navigation to the route.
+ *
+ * `flow=oauth` is set only by login.vue, on the redirect URL it hands Supabase,
+ * so the tag on its own is proof. Without it — a callback configured to return
+ * here untagged — a verification param plus an `amr` of `oauth` says the same
+ * thing. A stray visit has neither and must stay silent: nothing was signed in,
+ * so announcing a login would be as untrue as the "Email Confirmed!" screen.
+ */
+function isSocialLogin(): boolean {
+  if (status.value === 'error') return false
+  return isTaggedOAuth || (hasVerificationParam && signedInWithOAuth())
+}
+
+/**
  * Single completion path for every way a session can arrive here.
  *
  * Only a genuine email confirmation stops on the success screen. A social login
@@ -111,6 +127,21 @@ async function succeed() {
 
   if (!isEmailConfirmation()) {
     redirected = true
+
+    // The password login signs off with this toast (login.vue). A Google login
+    // cannot raise it there — `signInWithOAuth` navigates that page away to the
+    // provider long before the sign-in succeeds — so the callback owns it. The
+    // `redirected` latch above is what keeps the several signals that can
+    // complete a callback from announcing the same login more than once, and
+    // the toaster lives in the app root, so it outlives the redirect below.
+    if (isSocialLogin()) {
+      toast.add({
+        title: t('auth.loginSuccess'),
+        description: t('auth.loginSuccessDesc'),
+        color: 'success'
+      })
+    }
+
     // The immediate watcher can fire during setup; wait for the mount so the
     // navigation isn't issued from a component that doesn't exist yet.
     await nextTick()

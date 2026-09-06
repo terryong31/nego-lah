@@ -244,7 +244,7 @@ describe('pages/login.vue', () => {
   })
 
   describe('Google OAuth', () => {
-    it('calls signInWithOAuth with the google provider and a /confirm redirectTo tagged as the OAuth flow', async () => {
+    it('calls signInWithOAuth with the google provider and a root redirectTo tagged as the OAuth flow', async () => {
       const wrapper = await mountSuspended(LoginPage)
 
       const googleButton = wrapper.findAll('button').find(b => b.text().includes('Google'))
@@ -256,11 +256,13 @@ describe('pages/login.vue', () => {
       const [args] = signInWithOAuthMock.mock.calls[0]
       expect(args.provider).toBe('google')
 
-      // /confirm serves both the email-confirmation link and this callback, and
-      // the two need different screens. We own this URL, so tag it rather than
-      // leaving /confirm to infer the flow.
+      // Supabase returns to the site root, and the global auth-redirect
+      // middleware forwards any page carrying `?code=` on to /confirm with the
+      // query intact. Pointing Google straight at /confirm broke the callback,
+      // so the root is the registered redirect and `flow=oauth` rides along to
+      // tell /confirm this is the OAuth flow, not an email confirmation.
       const redirectTo = new URL(args.options.redirectTo)
-      expect(redirectTo.pathname).toBe('/confirm')
+      expect(redirectTo.pathname).toBe('/')
       expect(redirectTo.searchParams.get('flow')).toBe('oauth')
       expect(toastAddMock).not.toHaveBeenCalled()
     })

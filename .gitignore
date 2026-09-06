@@ -36,6 +36,8 @@ dist/
 build/
 *.egg-info/
 *.egg
+# Build-time source, not a build artifact: imported by frontend/nuxt.config.ts.
+!frontend/build/
 
 # ===== Logs =====
 *.log

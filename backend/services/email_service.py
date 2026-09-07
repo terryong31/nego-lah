@@ -70,6 +70,18 @@ def _send_email_via_resend(to_email: str, subject: str, html_content: str) -> bo
     seen = set()
     unique_senders = [s for s in senders if s and not (s in seen or seen.add(s))]
 
+    logger.info(
+        f"📧 _send_email_via_resend — to={to_email!r} subject={subject!r} "
+        f"senders={unique_senders}"
+    )
+
+    # NOTE (sandbox / dev): Resend's onboarding@resend.dev test sender can ONLY
+    # deliver to the verified Resend account owner's email address. Any other
+    # recipient will be silently rejected (HTTP 2xx but no delivery). If you're
+    # hitting this in development, set RESEND_FORWARD_FROM to a custom domain
+    # you've verified in Resend, or set RESEND_TEST_OVERRIDE_TO to redirect all
+    # outbound mail to your own inbox.
+
     for sender in unique_senders:
         payload = {
             "from": sender,
@@ -83,10 +95,14 @@ def _send_email_via_resend(to_email: str, subject: str, html_content: str) -> bo
                 if resp.status_code < 300:
                     logger.info(f"📧 Email '{subject}' delivered to {to_email} via Resend (sender: {sender})")
                     return True
-                logger.warning(f"Resend send attempt from {sender} returned {resp.status_code}: {resp.text}")
+                logger.warning(
+                    f"⚠️ Resend send attempt from {sender!r} → {to_email!r} "
+                    f"returned HTTP {resp.status_code}: {resp.text}"
+                )
         except Exception as err:
             logger.warning(f"Resend send attempt from {sender} failed: {err}")
 
+    logger.error(f"❌ All Resend send attempts failed for {to_email!r} (subject: {subject!r})")
     return False
 
 

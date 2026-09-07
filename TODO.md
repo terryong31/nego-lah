@@ -33,3 +33,4 @@
 33. [x] check i18n coverage ensure everything is i18n covered
 34. [x] integrate security audit and check using static analysis library and running defense middleware
 35. [x] put video and branding icon in supabase storage as cdn. branding icon for email logo and video for faster loading (is it possible to make video streaming?)
+36. support@negolah.my not sent to my email via relay

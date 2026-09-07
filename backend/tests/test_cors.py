@@ -40,3 +40,38 @@ def test_cors_rejects_unauthorized_domain():
         },
     )
     assert response.headers.get("access-control-allow-origin") is None
+
+
+def test_defense_middleware_413_still_carries_cors_headers():
+    """
+    Regression: RequestDefenseMiddleware short-circuits oversized uploads with
+    a 413 *before* calling call_next. If CORSMiddleware is mounted inward of
+    it, that 413 never gets Access-Control-* headers and the browser reports
+    a CORS failure instead of "Payload too large" (see SPEC-042 — this is why
+    sellers couldn't upload items with photos attached).
+    """
+    oversized = 16 * 1024 * 1024  # over the 15MB upload cap that /admin/items gets
+    response = client.post(
+        "/admin/items",
+        headers={
+            "Origin": "https://negolah.my",
+            "Content-Length": str(oversized),
+        },
+        content=b"x" * 100,
+    )
+    assert response.status_code == 413
+    assert response.headers.get("access-control-allow-origin") == "https://negolah.my"
+
+
+def test_defense_middleware_413_omits_cors_headers_for_disallowed_origin():
+    oversized = 16 * 1024 * 1024
+    response = client.post(
+        "/admin/items",
+        headers={
+            "Origin": "https://malicious-site.com",
+            "Content-Length": str(oversized),
+        },
+        content=b"x" * 100,
+    )
+    assert response.status_code == 413
+    assert response.headers.get("access-control-allow-origin") is None

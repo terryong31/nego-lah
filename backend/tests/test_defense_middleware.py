@@ -136,3 +136,63 @@ def test_null_byte_in_url_rejected_with_400(defense_test_app):
     res = client.get("/health%00evil")
     assert res.status_code == 400
     assert "Invalid request path" in res.json()["detail"]
+
+
+def test_upload_path_prefix_accepts_tuple_of_prefixes():
+    app = FastAPI()
+    app.add_middleware(
+        RequestDefenseMiddleware,
+        max_content_length=1024 * 1024,
+        upload_path_prefix=("/admin/analyze-image", "/admin/items"),
+        max_upload_content_length=2 * 1024 * 1024,
+    )
+
+    @app.post("/admin/items")
+    async def create_item(request: Request):
+        body = await request.body()
+        return {"received": len(body)}
+
+    @app.post("/admin/other")
+    async def other(request: Request):
+        body = await request.body()
+        return {"received": len(body)}
+
+    client = TestClient(app)
+
+    # 1.5MB allowed on /admin/items (2MB upload limit applies to both prefixes)
+    size = int(1.5 * 1024 * 1024)
+    res = client.post(
+        "/admin/items",
+        headers={"Content-Length": str(size)},
+        content=b"x" * 100,
+    )
+    assert res.status_code == 200
+
+    # A path not in the tuple still falls back to the default 1MB limit
+    res_default_limit = client.post(
+        "/admin/other",
+        headers={"Content-Length": str(size)},
+        content=b"x" * 100,
+    )
+    assert res_default_limit.status_code == 413
+
+
+def test_admin_items_upload_gets_larger_default_limit():
+    """POST /admin/items must get the 15MB upload ceiling by default, not the 10MB one."""
+    app = FastAPI()
+    app.add_middleware(RequestDefenseMiddleware)
+
+    @app.post("/admin/items")
+    async def create_item(request: Request):
+        body = await request.body()
+        return {"received": len(body)}
+
+    client = TestClient(app)
+
+    over_default_under_upload = 12 * 1024 * 1024  # > 10MB default, < 15MB upload ceiling
+    res = client.post(
+        "/admin/items",
+        headers={"Content-Length": str(over_default_under_upload)},
+        content=b"x" * 100,
+    )
+    assert res.status_code == 200

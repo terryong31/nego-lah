@@ -234,10 +234,39 @@ def _finalize_won_sale(item_id, user_id, payment_intent, amount, item_name, buye
                 elif user_res and isinstance(user_res, dict):
                     resolved_buyer_email = user_res.get("email") or (user_res.get("user") or {}).get("email")
             except Exception as auth_err:
-                logger.warning(f"⚠️ Could not lookup buyer email for notification: {auth_err}")
+                # Elevated to error: a failed lookup means the receipt is not
+                # deliverable — this should be visible in monitoring, not just
+                # a yellow line in the log stream.
+                logger.error(f"❌ Auth admin lookup failed for buyer {user_id}: {auth_err}")
 
-        from env import RESEND_FORWARD_TO
+        from env import RESEND_FORWARD_TO, STRIPE_API_KEY
         from services.email_service import send_purchase_receipt, send_seller_sale_alert
+
+        # In sandbox / dev mode (Stripe test key) the buyer email typed at
+        # checkout is synthetic and Resend won't deliver to it via the
+        # onboarding@resend.dev test sender. Fall back to RESEND_FORWARD_TO so
+        # the receipt always reaches the developer's inbox during testing.
+        is_sandbox = bool(STRIPE_API_KEY and STRIPE_API_KEY.startswith("sk_test_"))
+        effective_buyer_email = resolved_buyer_email
+        if is_sandbox and not effective_buyer_email and RESEND_FORWARD_TO:
+            logger.info(
+                f"ℹ️ Sandbox mode: no resolved buyer email for {user_id}; "
+                f"redirecting receipt to RESEND_FORWARD_TO ({RESEND_FORWARD_TO})"
+            )
+            effective_buyer_email = RESEND_FORWARD_TO
+        elif is_sandbox and effective_buyer_email and RESEND_FORWARD_TO:
+            logger.info(
+                f"ℹ️ Sandbox mode: buyer email is {effective_buyer_email!r}. "
+                f"Note — onboarding@resend.dev can only deliver to your Resend account "
+                f"owner email. If receipts aren't arriving, set RESEND_FORWARD_FROM to "
+                f"a verified custom domain, or check your Resend dashboard logs."
+            )
+
+        logger.info(
+            f"📧 Preparing order emails — buyer={effective_buyer_email!r} "
+            f"order_id={order_id} item={item_name!r} amount=RM{amount:.2f}"
+        )
+
         order_info = {
             "id": order_id or "N/A",
             "item_name": item_name,
@@ -245,8 +274,13 @@ def _finalize_won_sale(item_id, user_id, payment_intent, amount, item_name, buye
             "buyer_email": resolved_buyer_email,
             "buyer_id": user_id,
         }
-        if resolved_buyer_email:
-            send_purchase_receipt(resolved_buyer_email, order_info)
+        if effective_buyer_email:
+            send_purchase_receipt(effective_buyer_email, order_info)
+        else:
+            logger.warning(
+                f"⚠️ No buyer email resolved for order {order_id} — receipt not sent. "
+                f"Set RESEND_FORWARD_TO to catch receipts in dev/sandbox mode."
+            )
         seller_target = RESEND_FORWARD_TO
         if seller_target:
             send_seller_sale_alert(seller_target, order_info)

@@ -153,6 +153,17 @@ if cors_origins_str:
 else:
     origins = _PROD_ORIGINS if IS_PROD else _DEV_ORIGINS + _PROD_ORIGINS
 
+# Defense middleware — OWASP security headers & request body / path guards.
+# Registered before CORSMiddleware: Starlette wraps middleware in reverse
+# registration order, so the last one added ends up outermost. CORSMiddleware
+# must be outermost — RequestDefenseMiddleware short-circuits (returns a
+# response directly, without calling call_next) on oversized/malformed
+# requests, and a response that never reaches CORSMiddleware carries no
+# Access-Control-* headers, which the browser reports as a CORS failure
+# instead of the real 413/400 (see SPEC-042).
+app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(RequestDefenseMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -171,10 +182,6 @@ app.add_middleware(
     ],
     expose_headers=["X-CSRF-Token", "sentry-trace", "baggage"],
 )
-
-# Defense middleware — OWASP security headers & request body / path guards
-app.add_middleware(SecurityHeadersMiddleware)
-app.add_middleware(RequestDefenseMiddleware)
 
 # Include routers
 app.include_router(user_router)

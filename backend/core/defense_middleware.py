@@ -62,7 +62,7 @@ class RequestDefenseMiddleware(BaseHTTPMiddleware):
         self,
         app,
         max_content_length: int = 10 * 1024 * 1024,  # 10 MB default
-        upload_path_prefix: str = "/admin/analyze-image",
+        upload_path_prefix: str | tuple[str, ...] = ("/admin/analyze-image", "/admin/items"),
         max_upload_content_length: int = 15 * 1024 * 1024,  # 15 MB for image uploads
     ):
         super().__init__(app)

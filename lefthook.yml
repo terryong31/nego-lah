@@ -1,0 +1,28 @@
+# Lefthook — monorepo git hooks
+# https://github.com/evilmartians/lefthook
+#
+# Install (once per clone):   mise run hooks:install
+# Skip hooks for a commit:    LEFTHOOK=0 git commit -m "..."
+# Skip a specific job:        lefthook run pre-commit --exclude backend-lint
+
+pre-commit:
+  parallel: true
+  jobs:
+    - name: backend-lint
+      glob: "backend/**/*.py"
+      run: cd backend && uv run ruff check .
+
+    - name: frontend-lint
+      glob: "frontend/**/*.{ts,vue,js,mjs}"
+      run: cd frontend && bun run lint
+
+pre-push:
+  parallel: true
+  jobs:
+    - name: backend-test
+      # -x stops on first failure; --no-cov skips coverage to stay fast.
+      # Full coverage enforcement runs in CI via `mise run test`.
+      run: cd backend && uv run pytest --no-cov -q -x
+
+    - name: frontend-typecheck
+      run: cd frontend && bun run typecheck

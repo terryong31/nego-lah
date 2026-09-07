@@ -2,6 +2,7 @@
 uv = "latest"
 bun = "latest"
 infisical = "latest"
+lefthook = "latest"
 
 [env]
 _.python.venv = { path = "backend/.venv", create = true }
@@ -133,3 +134,7 @@ run = "infisical run --env=prod --path=/Backend -- uv run python scripts/backfil
 description = "Move self-uploaded avatars to custom_avatar_url so an OAuth sign-in can no longer overwrite them (writes)"
 dir = "backend"
 run = "infisical run --env=prod --path=/Backend -- uv run python scripts/backfill_custom_avatar.py --apply"
+
+[tasks."hooks:install"]
+description = "Install lefthook git hooks (run once after cloning or after updating lefthook.yml)"
+run = "lefthook install"

@@ -4,7 +4,7 @@ import time
 
 import redis
 
-from env import REDIS_URL
+from env import REDIS_MAX_CONNECTIONS, REDIS_URL
 from logger import logger
 
 
@@ -54,6 +54,16 @@ class _InMemoryRedis:
 
     def expire(self, key: str, ttl: int):
         self._exp[key] = time.time() + ttl
+
+    def ttl(self, key: str) -> int:
+        """Mirrors Redis: -2 when the key is gone, -1 when it never expires."""
+        self._purge(key)
+        if key not in self._store and key not in self._hash_store and key not in self._zset_store:
+            return -2
+        exp = self._exp.get(key)
+        if exp is None:
+            return -1
+        return max(0, int(round(exp - time.time())))
 
     def hgetall(self, key: str) -> dict[str, str]:
         self._purge(key)
@@ -159,7 +169,11 @@ def _create_redis_client():
     if not REDIS_URL:
         return _InMemoryRedis()
     try:
-        client = redis.from_url(REDIS_URL, decode_responses=True)
+        client = redis.from_url(
+            REDIS_URL,
+            decode_responses=True,
+            max_connections=REDIS_MAX_CONNECTIONS,
+        )
         client.ping()
         return client
     except Exception as e:
@@ -292,6 +306,23 @@ def get_rate_limit_remaining(key: str, max_requests: int = 10) -> int:
     if current:
         return max(0, max_requests - int(current))
     return max_requests
+
+
+def get_rate_limit_retry_after(key: str, default: int = 60) -> int:
+    """Seconds until the current window resets — what a client should wait.
+
+    Reads the counter's own TTL, so the countdown a caller shows matches when
+    the limiter will actually let them through. Redis returns -2 for a missing
+    key and -1 for one with no expiry; both mean "no useful TTL", so callers
+    get `default` rather than a nonsensical negative countdown.
+    """
+    try:
+        ttl = redis_client.ttl(f"rate:{key}")
+    except Exception:
+        return default
+    if ttl is None or ttl < 0:
+        return default
+    return int(ttl)
 
 
 # ============================================

@@ -17,18 +17,26 @@ from admin_session import (
     verify_otp_and_open_session,
     write_audit,
 )
+from core.security import verify_turnstile
 from csrf import generate_csrf_token, set_csrf_cookie
 from schemas import Admin2FARequest, AdminLoginRequest
 
 router = APIRouter()
 
 
-@router.post("/auth/login")
+@router.post("/auth/login", dependencies=[Depends(verify_turnstile)])
 def admin_login(request: AdminLoginRequest, req: Request):
     """Factor 1. Verify password + admin role, then email a 6-digit OTP.
 
     Returns an opaque pre-auth handle to use with /auth/verify-2fa. The response
     is intentionally identical whether or not the email is a real admin.
+
+    Turnstile-gated (SPEC-044 D): the only unauthenticated credential endpoint
+    in the system, and the one whose per-IP throttle was bypassable by rotating
+    `X-Forwarded-For` until `client_ip` stopped reading that header. Unlike
+    /chat/stream this is a one-shot submission, so a single-use siteverify
+    token is the right shape for it. Bypassed in development, and open rather
+    than closed when Cloudflare itself is unreachable — see verify_turnstile.
     """
     email = request.email.strip().lower()
     enforce_login_rate_limit(email, client_ip(req))

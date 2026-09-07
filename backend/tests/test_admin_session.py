@@ -390,19 +390,22 @@ async def test_verify_admin_unknown_session_raises_401():
     assert exc_info.value.detail == "Not authenticated"
 
 
-async def test_verify_admin_valid_session_returns_data_and_uses_forwarded_ip():
+async def test_verify_admin_valid_session_records_the_resolved_ip():
     sid = _create_session("admin-valid", "valid@example.com")
     grant_admin("admin-valid", "valid@example.com")
 
+    # The audit trail has to record where the request actually came from, not
+    # an address the caller nominated for themselves.
     request = make_request(
         cookies={admin_session.ADMIN_COOKIE_NAME: sid},
         headers={"X-Forwarded-For": "5.6.7.8, 9.9.9.9"},
+        ip="203.0.113.7",
     )
     result = await verify_admin(request)
 
     assert result["user_id"] == "admin-valid"
     assert result["email"] == "valid@example.com"
-    assert result["ip"] == "5.6.7.8"
+    assert result["ip"] == "203.0.113.7"
     # Session must survive a valid check (sliding TTL, not deleted).
     assert redis_client.get(f"{_SESS_KEY}{sid}") is not None
 
@@ -482,9 +485,18 @@ def test_clear_session_without_cookie_is_a_no_op_but_still_deletes_cookie():
 # client_ip
 # ---------------------------------------------------------------------------
 
-def test_client_ip_prefers_first_x_forwarded_for_entry():
-    request = make_request(headers={"X-Forwarded-For": "1.1.1.1, 2.2.2.2"})
-    assert client_ip(request) == "1.1.1.1"
+def test_client_ip_ignores_a_client_supplied_forwarded_header():
+    """This used to return "1.1.1.1" — the first X-Forwarded-For entry, which
+    is whatever the client sent, since Caddy appends rather than replaces.
+    That made the admin login limiter (keyed on this IP) bypassable by
+    rotating one header, and forged the audit log's IP.
+
+    Resolving the real address is uvicorn's job, via `--forwarded-allow-ips`;
+    by the time it reaches here, `request.client.host` is the answer and the
+    raw header is not to be trusted. See `test_client_ip_trust.py`.
+    """
+    request = make_request(headers={"X-Forwarded-For": "1.1.1.1, 2.2.2.2"}, ip="3.3.3.3")
+    assert client_ip(request) == "3.3.3.3"
 
 
 def test_client_ip_falls_back_to_request_client_host():

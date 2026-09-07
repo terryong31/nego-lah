@@ -271,7 +271,16 @@
     "payRm": "Pay RM {price}",
     "paymentCompleted": "Payment Completed",
     "placeholder": "Type a message...",
-    "verifyingHuman": "Verifying you are human..."
+    "verifyingHuman": "Verifying you are human...",
+    "cooldown": {
+      "slowDown": "Let's slow down a little. You can send another message in {seconds}s.",
+      "canSendAgain": "You can send messages again.",
+      "almostAtLimit": "You're sending messages quickly — {count} more before a short pause.",
+      "waitingPlaceholder": "Waiting {seconds}s…",
+      "takingLonger": "Still cooking — this one's taking a little longer…",
+      "turnTimedOut": "That took longer than expected.",
+      "tryAgain": "Try again"
+    }
   },
   "orders": {
     "purchaseHistory": "Purchase History",

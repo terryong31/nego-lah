@@ -178,6 +178,26 @@ def _flush_in_memory_redis():
         cache.redis_client.delete(key)
 
 
+@pytest.fixture(autouse=True)
+def _disable_ip_rate_limits():
+    """SPEC-043: the per-IP limits are off during tests.
+
+    Every request in the suite arrives from the same client address, so a
+    session-wide counter would make unrelated tests fail each other depending
+    on ordering. Tests that assert limiting behaviour turn `limiter.enabled`
+    back on for their own scope (see test_request_path_backpressure.py).
+    """
+    from limiter import limiter
+
+    was_enabled = limiter.enabled
+    limiter.enabled = False
+    try:
+        yield
+    finally:
+        limiter.enabled = was_enabled
+        limiter.reset()
+
+
 # --- 3. Auth override fixtures ----------------------------------------------
 @pytest.fixture
 def auth_user(app):
@@ -235,6 +255,15 @@ def patch_supabase(monkeypatch):
         return mod
 
     return _patch
+
+
+# --- 4b. Upload fixtures ------------------------------------------------------
+# Avatar uploads are validated by sniffing magic bytes (SPEC-044 C), so a test
+# that posts filler bytes now gets a 400 rather than exercising the route. These
+# are a real file header followed by padding — enough for the sniffer, which
+# reads only the header, and honest about being less than a whole image.
+PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+JPEG_BYTES = b"\xff\xd8\xff\xe0" + b"\x00" * 64
 
 
 # --- 5. Stripe mocking -------------------------------------------------------

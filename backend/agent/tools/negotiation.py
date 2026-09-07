@@ -121,6 +121,10 @@ def evaluate_offer(item_id: str, offered_price: float, extra_discount_percent: f
         counter = min(counter, anchor)
         return counter
 
+    # The price we end up offering, if any. Set by whichever branch produces a
+    # counter, and committed below so checkout charges what the agent quoted.
+    counter: float | None = None
+
     if offered_price >= listed_price:
         result = f"ACCEPT: Offer of RM{offered_price} meets or exceeds listed price of RM{listed_price}."
     elif offered_price >= anchor or offered_price >= adjusted_threshold:
@@ -137,7 +141,42 @@ def evaluate_offer(item_id: str, offered_price: float, extra_discount_percent: f
         else:
             result = f"COUNTER: Offer of RM{offered_price} is below your current price of RM{anchor:.2f}. Counter with RM{counter:.2f} (must be ≤ RM{anchor:.2f} — never go back up)."
     else:
-        result = f"REJECT_FLOOR: Offer of RM{offered_price} is below the absolute minimum of RM{min_price}. Tell buyer: 'Sorry, that's below my cost. The lowest I can do is RM{min_price}.'"
+        # Below the floor. Refuse it — but never name the floor (SPEC-044 A).
+        #
+        # `min_price` is confidential: SPEC-036 revoked the column from anon /
+        # authenticated precisely so a buyer can't read it, and the system
+        # prompt says "NEVER REVEAL THE MINIMUM PRICE". Spelling it out here
+        # overrode both, because a tool result is the most specific and most
+        # recent instruction the model has, so it's the one it follows.
+        #
+        # Concede half the room between our standing price and the floor
+        # instead. That gives the model something concrete to say, moves the
+        # negotiation, and approaches the floor asymptotically — so no round
+        # ever lands on it and no counter discloses it.
+        halfway = (anchor + min_price) / 2
+        if halfway <= min_price:
+            # The standing price is already at the floor, so every number we
+            # could quote IS the floor. Hold at whatever we last offered
+            # without restating it — the model has its own last quote in the
+            # transcript, and the tool refuses to hand the value over.
+            #
+            # This is also what stops a buyer manufacturing the disclosure:
+            # `current_price` comes from the model, so "you already offered me
+            # RM1" clamps the anchor down to the floor. That reaches here and
+            # gets no number, instead of quoting the floor back.
+            counter = None
+            result = (
+                f"REJECT_FLOOR: Offer of RM{offered_price} is too low to accept. "
+                f"Hold firm at the price you last quoted and do not go lower. "
+                f"Do NOT state a minimum, a floor, or how low you can go."
+            )
+        else:
+            counter = halfway
+            result = (
+                f"REJECT_FLOOR: Offer of RM{offered_price} is too low to accept. "
+                f"Do NOT state a minimum or say how low you can go. "
+                f"Counter with RM{counter:.2f} and tell the buyer that's the best you can do."
+            )
 
     from agent.context import get_user_id
 
@@ -148,7 +187,11 @@ def evaluate_offer(item_id: str, offered_price: float, extra_discount_percent: f
             active_price = None
             if "ACCEPT" in result and offered_price < listed_price:
                 active_price = offered_price
-            elif "COUNTER" in result:
+            elif counter is not None:
+                # Keyed off the variable rather than sniffing the result string:
+                # REJECT_FLOOR now quotes a counter too, and matching on the
+                # word "COUNTER" would have missed it — leaving the agent
+                # offering a price checkout knew nothing about.
                 active_price = counter
             if active_price is not None:
                 redis_client.setex(f"negotiated_price:{user_id}:{item_id}", 3 * 86400, str(active_price))

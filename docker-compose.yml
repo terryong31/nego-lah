@@ -1,3 +1,9 @@
+# SPEC-043 workstream C: all three services share one 2 GB / 1–2 vCPU Lightsail
+# box. Without limits Docker lets them compete first-come, so an API spike
+# starves the Redis the API itself depends on for auth and rate limiting — and
+# every request slows, not just the busy ones. The two sidecars get hard
+# ceilings (they're cheap and must stay cheap); the API gets the remaining
+# memory and is left CPU-uncapped so it can use whatever is genuinely spare.
 services:
   caddy:
     image: caddy:2.7
@@ -10,6 +16,8 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile
       - caddy_data:/data
       - caddy_config:/config
+    mem_limit: 128m
+    cpus: 0.4
     depends_on:
       - backend
 
@@ -27,6 +35,15 @@ services:
       - PYTHONUNBUFFERED=1
       - ENV=production
       - REDIS_URL=redis://redis:6379/0
+      # Pinned rather than inherited: the Dockerfile's fallback is 4, which put
+      # four worker processes on a box with one or two cores. Matching the
+      # worker count to the cores means less context-switching between workers
+      # and more CPU left for the Redis and Caddy sitting beside them.
+      - WEB_CONCURRENCY=2
+    # The API is the one process that legitimately needs room, so it takes the
+    # memory the sidecars don't and stays CPU-uncapped — a ceiling here would
+    # idle capacity that nothing else is asking for.
+    mem_limit: 1200m
     depends_on:
       redis:
         condition: service_healthy
@@ -45,6 +62,14 @@ services:
       - "6379"
     volumes:
       - redis_data:/data
+    # `maxmemory` sits below `mem_limit` on purpose: Redis has to start evicting
+    # before the kernel starts killing, or the cap just relocates the crash.
+    # `volatile-ttl` suits this keyspace — sessions, rate counters, leases and
+    # cached items nearly all carry a TTL already, so eviction drops whatever
+    # was closest to expiring anyway rather than guessing.
+    command: ["redis-server", "--maxmemory", "192mb", "--maxmemory-policy", "volatile-ttl"]
+    mem_limit: 256m
+    cpus: 0.4
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s

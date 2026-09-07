@@ -1,20 +1,34 @@
 """
-Conversation Memory - Supabase-based storage
-No more SQLite! All data goes directly to Supabase.
+Conversation Memory - Supabase-backed, append-only.
 
-Table structure (conversations):
-- id: uuid
-- user_id: text
-- item_id: text (optional)
-- messages: jsonb array [{role, content, source, timestamp}]
-- created_at: timestamp
-- updated_at: timestamp
+Table structure (messages), one row per message:
+- id: bigint identity (also the chronological order — see below)
+- user_id: uuid
+- item_id: uuid | null (the listing being discussed, if any)
+- role: text ('human', 'ai', 'system', 'admin')
+- content: text
+- source: text ('ai' | 'admin' | 'system' | 'human')
+- created_at: timestamptz
+
+SPEC-043 replaced the previous shape — one `conversations` row per user
+holding the whole transcript as a jsonb array — because appending to it meant
+reading the entire array, appending in Python and writing all of it back.
+That made the cost of every message grow with the conversation, and being a
+read-then-write it could silently lose a message when two writers (the AI's
+reply and an admin typing from the console) landed together.
+
+Ordering is by `id`, not `created_at`: it's the insertion sequence, so it's
+stable and unique, while two messages written in the same millisecond share a
+timestamp and would page inconsistently.
 """
 
 import json
 from datetime import datetime
 
 from logger import logger
+
+# Sent to the agent as context, and the default page for the admin console.
+DEFAULT_HISTORY_LIMIT = 50
 
 
 class ConversationMemory:
@@ -31,6 +45,15 @@ class ConversationMemory:
             self._supabase = admin_supabase
         return self._supabase
 
+    @staticmethod
+    def _to_public(row: dict) -> dict:
+        """The shape every caller has always received."""
+        return {
+            "role": row.get("role"),
+            "content": row.get("content"),
+            "source": row.get("source", "ai"),
+        }
+
     def add_message(
         self,
         user_id: str,
@@ -39,7 +62,7 @@ class ConversationMemory:
         item_id: str = None,
         source: str = 'ai'
     ):
-        """Save a message to conversation history in Supabase.
+        """Append a message to a user's history.
 
         Args:
             user_id: User identifier
@@ -48,69 +71,48 @@ class ConversationMemory:
             item_id: Optional item context
             source: 'ai' | 'admin' | 'system' | 'human'
         """
-        # Convert list to string if needed
+        # Multimodal turns arrive as a list of content parts; the column is text.
         if isinstance(message, list):
             message = json.dumps(message)
 
         try:
-            # Get existing conversation
-            result = self.supabase.table('conversations').select('id, messages').eq('user_id', user_id).execute()
-
-            new_msg = {
-                "role": role,
-                "content": message,
-                "source": source,
-                "item_id": item_id,
-                "timestamp": datetime.now().isoformat()
-            }
-
-            if result.data and len(result.data) > 0:
-                # Append to existing messages
-                existing = result.data[0]
-                messages = existing.get('messages', []) or []
-                messages.append(new_msg)
-
-                self.supabase.table('conversations').update({
-                    'messages': messages,
-                    'updated_at': 'now()'
-                }).eq('id', existing['id']).execute()
-            else:
-                # Create new conversation
-                self.supabase.table('conversations').insert({
-                    'user_id': user_id,
-                    'item_id': item_id,
-                    'messages': [new_msg]
-                }).execute()
-
+            self.supabase.table('messages').insert({
+                'user_id': user_id,
+                'item_id': item_id,
+                'role': role,
+                'content': message,
+                'source': source,
+                'created_at': datetime.now().isoformat(),
+            }).execute()
         except Exception as e:
             logger.info(f"[ConversationMemory] Error saving message: {e}")
 
-    def get_history(self, user_id: str, limit: int = 50, offset: int = 0) -> list[dict]:
-        """Get conversation history for a user from Supabase."""
+    def _page(self, user_id: str, limit: int, offset: int) -> list[dict]:
+        """One page of a user's messages, newest-anchored, returned oldest-first.
+
+        Reads descending so `offset` counts back from the newest message (which
+        is how both callers page), then reverses so the caller gets the natural
+        reading order.
+        """
+        query = (
+            self.supabase.table('messages')
+            .select('role, content, source')
+            .eq('user_id', user_id)
+            .order('id', desc=True)
+        )
+        if limit:
+            query = query.range(offset, offset + limit - 1)
+        elif offset:
+            # No limit but a non-zero offset: everything older than `offset`.
+            query = query.range(offset, offset + 10_000)
+
+        rows = query.execute().data or []
+        return [self._to_public(r) for r in reversed(rows)]
+
+    def get_history(self, user_id: str, limit: int = DEFAULT_HISTORY_LIMIT, offset: int = 0) -> list[dict]:
+        """Get conversation history for a user, oldest-first."""
         try:
-            result = self.supabase.table('conversations').select('messages').eq('user_id', user_id).execute()
-
-            if not result.data or len(result.data) == 0:
-                return []
-
-            messages = result.data[0].get('messages', []) or []
-
-            # Apply pagination (offset from end, return in chronological order)
-            if offset > 0:
-                messages = messages[:-offset] if offset < len(messages) else []
-            if limit:
-                messages = messages[-limit:] if len(messages) > limit else messages
-
-            # Return in format expected by agent
-            return [
-                {
-                    "role": m.get("role"),
-                    "content": m.get("content"),
-                    "source": m.get("source", "ai")
-                }
-                for m in messages
-            ]
-
+            return self._page(user_id, limit, offset)
         except Exception as e:
             logger.info(f"[ConversationMemory] Error getting history: {e}")
             return []
@@ -125,59 +127,41 @@ class ConversationMemory:
         Returns: {"messages": [...], "has_more": bool, "next_offset": int}
         """
         try:
-            result = self.supabase.table('conversations').select('messages').eq('user_id', user_id).execute()
-
-            if not result.data or len(result.data) == 0:
-                return {"messages": [], "has_more": False, "next_offset": offset}
-
-            all_msgs = result.data[0].get('messages', []) or []
-            total = len(all_msgs)
-
-            # Window the slice [start, end) ending `offset` from the tail.
-            end = max(0, total - offset)
-            start = max(0, end - limit)
-            page = all_msgs[start:end] if end > start else []
-
-            mapped = [
-                {
-                    "role": m.get("role"),
-                    "content": m.get("content"),
-                    "source": m.get("source", "ai"),
-                }
-                for m in page
-            ]
+            # One extra row is the cheapest way to answer "is there more?" —
+            # cheaper than a COUNT over the whole conversation.
+            rows = self._page(user_id, limit + 1, offset)
+            has_more = len(rows) > limit
+            page = rows[1:] if has_more else rows
 
             return {
-                "messages": mapped,
-                "has_more": start > 0,
+                "messages": page,
+                "has_more": has_more,
                 "next_offset": offset + len(page),
             }
-
         except Exception as e:
             logger.info(f"[ConversationMemory] Error getting history page: {e}")
             return {"messages": [], "has_more": False, "next_offset": offset}
 
     def get_all_histories(self) -> dict[str, list[dict]]:
-        """Get all conversation histories grouped by user_id."""
+        """Get all conversation histories grouped by user_id (admin console)."""
         try:
-            result = self.supabase.table('conversations').select('user_id, messages').execute()
+            result = (
+                self.supabase.table('messages')
+                .select('user_id, role, content, source')
+                .order('id', desc=False)
+                .execute()
+            )
 
-            all_histories = {}
+            all_histories: dict[str, list[dict]] = {}
             for row in result.data or []:
                 user_id = row.get('user_id')
-                messages = row.get('messages', []) or []
+                all_histories.setdefault(user_id, []).append(self._to_public(row))
 
-                all_histories[user_id] = [
-                    {
-                        "role": m.get("role"),
-                        "content": m.get("content"),
-                        "source": m.get("source", "ai")
-                    }
-                    for m in messages[-50:]  # Last 50 messages
-                ]
-
-            return all_histories
-
+            # Last 50 per user, matching what the console has always shown.
+            return {
+                user_id: messages[-DEFAULT_HISTORY_LIMIT:]
+                for user_id, messages in all_histories.items()
+            }
         except Exception as e:
             logger.info(f"[ConversationMemory] Error getting all histories: {e}")
             return {}
@@ -185,7 +169,7 @@ class ConversationMemory:
     def clear_history(self, user_id: str):
         """Clear conversation history for a user."""
         try:
-            self.supabase.table('conversations').delete().eq('user_id', user_id).execute()
+            self.supabase.table('messages').delete().eq('user_id', user_id).execute()
         except Exception as e:
             logger.info(f"[ConversationMemory] Error clearing history: {e}")
 

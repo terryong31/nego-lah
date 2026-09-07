@@ -6,6 +6,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 
 from admin_session import verify_admin, write_audit
+from core.uploads import validate_image_upload
 from env import STORAGE_BUCKET
 from logger import logger
 from schemas import AIToggleRequest, BanRequest, UserProfileUpdateRequest
@@ -102,21 +103,27 @@ async def upload_user_avatar(
 
     contents = await avatar.read()
 
+    # Outside the try below, deliberately: that block falls back to inlining the
+    # bytes as a `data:` URL, so validating inside it would turn a rejected file
+    # into a stored `data:text/html` profile picture instead of a 400.
+    content_type, ext = validate_image_upload(contents)
+
     # Supabase's client is synchronous and this handler must stay `async def`
     # (it awaits the upload), so the storage round trip goes through a thread —
     # on the event loop it would stall every buyer this worker is serving.
     # Try to use storage first
     try:
         unique_id = str(uuid.uuid4())[:8]
-        filename = f"{user_id}_{unique_id}_{avatar.filename}"
-        # Store avatars under an 'avatars/' folder in the shared storage bucket
-        file_path = f"avatars/{filename}"
+        # Every part of the key is chosen here — `user_id` is a path parameter
+        # and the rest is generated. The uploaded filename used to be
+        # interpolated in raw, which put client-controlled slashes in the path.
+        file_path = f"avatars/{user_id}_{unique_id}.{ext}"
 
         def _store() -> str:
             admin_supabase.storage.from_(STORAGE_BUCKET).upload(
                 file_path,
                 contents,
-                {"content-type": avatar.content_type}
+                {"content-type": content_type}
             )
             url = admin_supabase.storage.from_(STORAGE_BUCKET).get_public_url(file_path)
             admin_supabase.table('user_profiles').upsert({
@@ -136,7 +143,7 @@ async def upload_user_avatar(
         # the whole image into every profile response — worth knowing about.
         logger.warning(f"Avatar storage upload failed for {user_id}, falling back to base64: {e}")
         base64_image = base64.b64encode(contents).decode('utf-8')
-        data_url = f"data:{avatar.content_type};base64,{base64_image}"
+        data_url = f"data:{content_type};base64,{base64_image}"
 
         await asyncio.to_thread(
             lambda: admin_supabase.table('user_profiles').upsert({
@@ -281,6 +288,10 @@ def admin_delete_user(user_id: str, admin: dict = Depends(verify_admin)):
     for table, column in [
         ("chat_settings", "user_id"),
         ("conversations", "user_id"),
+        # SPEC-043 moved history here. Both tables are listed: `conversations`
+        # still holds everything written before the cutover, and leaving it
+        # behind would keep a deleted user's transcript on disk.
+        ("messages", "user_id"),
         ("user_profiles", "id"),
     ]:
         try:

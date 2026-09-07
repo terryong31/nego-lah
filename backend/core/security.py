@@ -84,7 +84,20 @@ async def verify_turnstile(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error communicating with Turnstile verification service: {e}")
-        raise HTTPException(status_code=500, detail="Security validation error") from e
+        # Fail OPEN on a transport failure, CLOSED on a verdict (SPEC-044 D).
+        #
+        # Reaching here means Cloudflare never answered — unreachable, timed
+        # out, or a body that wasn't the documented JSON. There is no verdict
+        # to act on, and refusing anyway would mean a Cloudflare outage takes
+        # down every route this guards, including the admin console the AI
+        # hands conversations to. An attacker can't induce this branch, and
+        # what it guards keeps its real authentication underneath.
+        #
+        # A returned "success": false is a different thing entirely, and is
+        # raised as a 403 above, before this handler.
+        logger.warning(
+            f"Turnstile siteverify unreachable, allowing the request: {e}"
+        )
+        return True
 
     return True

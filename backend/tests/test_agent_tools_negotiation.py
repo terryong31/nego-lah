@@ -300,21 +300,28 @@ def test_offer_below_min_price_is_reject_floor(fake_supabase, patch_supabase):
     result = _invoke_offer(item_id="i", offered_price=50.0)
 
     assert result == (
-        "REJECT_FLOOR: Offer of RM50.0 is below the absolute minimum of RM70.0. "
-        "Tell buyer: 'Sorry, that's below my cost. The lowest I can do is RM70.0.'"
+        "REJECT_FLOOR: Offer of RM50.0 is too low to accept. "
+        "Do NOT state a minimum or say how low you can go. "
+        "Counter with RM85.00 and tell the buyer that's the best you can do."
     )
 
 
 def test_min_price_defaults_to_70_percent_of_listed_when_unset(fake_supabase, patch_supabase):
-    """No `min_price` key on the item row -> falls back to listed_price * 0.7."""
+    """No `min_price` key on the item row -> falls back to listed_price * 0.7.
+
+    Asserted through the counter rather than the refusal text, because SPEC-044
+    stopped the tool naming the floor: RM85.00 is the midpoint between the
+    listed price and a floor of 70, so a wrong fallback moves the counter.
+    """
     _set_item(fake_supabase, {"price": 100})
     patch_supabase("connector", admin=fake_supabase)
 
     result = _invoke_offer(item_id="i", offered_price=50.0)
 
     assert result == (
-        "REJECT_FLOOR: Offer of RM50.0 is below the absolute minimum of RM70.0. "
-        "Tell buyer: 'Sorry, that's below my cost. The lowest I can do is RM70.0.'"
+        "REJECT_FLOOR: Offer of RM50.0 is too low to accept. "
+        "Do NOT state a minimum or say how low you can go. "
+        "Counter with RM85.00 and tell the buyer that's the best you can do."
     )
 
 
@@ -448,13 +455,32 @@ def test_accept_at_full_listed_price_does_not_commit_or_signal(fake_supabase, pa
     assert context.pending_discount.get() is None
 
 
-def test_reject_floor_does_not_commit_or_signal(fake_supabase, patch_supabase):
-    """REJECT_FLOOR never reaches the commit branch at all."""
+def test_reject_floor_commits_the_counter_it_quotes(fake_supabase, patch_supabase):
+    """REJECT_FLOOR used to be a bare refusal and so never reached the commit
+    branch. Since SPEC-044 it answers a below-floor offer with a real counter
+    instead of naming the floor, and a price the agent quotes has to be a price
+    checkout will honour -- otherwise the agent offers RM85 and the buyer is
+    charged RM100."""
     _set_item(fake_supabase, {"price": 100, "min_price": 70})
     patch_supabase("connector", admin=fake_supabase)
     context.set_context(user_id="user-1", item_id="i")
 
     result = _invoke_offer(item_id="i", offered_price=50.0)
+
+    assert result.startswith("REJECT_FLOOR:")
+    assert redis_client.get("negotiated_price:user-1:i") == "85.0"
+    assert context.pending_discount.get() == 85.0
+
+
+def test_reject_floor_at_the_anchor_commits_nothing(fake_supabase, patch_supabase):
+    """The one REJECT_FLOOR branch that still quotes no price -- the standing
+    price is already the floor -- must also commit nothing, since no new offer
+    was made."""
+    _set_item(fake_supabase, {"price": 100, "min_price": 70})
+    patch_supabase("connector", admin=fake_supabase)
+    context.set_context(user_id="user-1", item_id="i")
+
+    result = _invoke_offer(item_id="i", offered_price=5.0, current_price=1.0)
 
     assert result.startswith("REJECT_FLOOR:")
     assert redis_client.get("negotiated_price:user-1:i") is None

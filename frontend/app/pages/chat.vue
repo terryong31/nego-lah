@@ -78,9 +78,55 @@ const buyLoading = ref(false)
 // indicator, and broadcast the customer's own typing back the other way.
 const { remoteTyping: sellerTyping, join: joinTyping, ping: pingTyping } = useTypingChannel()
 
+// SPEC-043: the three "please wait" states — a hard cooldown the input gates
+// on, the heads-up before it, and a turn that ran out of time.
+const cooldown = useChatCooldown()
+
+// The last thing the buyer typed, so a timed-out turn can be retried without
+// making them type it again.
+const lastSentText = ref('')
+
+/**
+ * The server answers a cooldown with 429 + `Retry-After`. Intercepting it here
+ * rather than in `onError` keeps the AI SDK out of it entirely: the SDK would
+ * surface a bare Error with no access to the header or the body, so the UI
+ * could say "something went wrong" but never "wait 12 seconds".
+ *
+ * An empty-but-well-formed stream goes back in its place, so `useChat` settles
+ * cleanly instead of leaving the composer stuck mid-send.
+ */
+async function fetchWithCooldown(input: RequestInfo | URL, init?: RequestInit) {
+  const response = await globalThis.fetch(input, init)
+  if (response.status !== 429) return response
+
+  const headerSeconds = Number(response.headers.get('Retry-After'))
+  let bodySeconds = Number.NaN
+  try {
+    const body = await response.clone().json()
+    bodySeconds = Number(body?.detail?.retryAfterSeconds)
+  } catch {
+    // A proxy may have rewritten the body; the header alone is enough.
+  }
+
+  const seconds = [bodySeconds, headerSeconds].find(n => Number.isFinite(n) && n > 0)
+  cooldown.start(seconds ?? 60)
+
+  return new Response(
+    'data: {"type":"start"}\n\ndata: {"type":"finish"}\n\ndata: [DONE]\n\n',
+    {
+      status: 200,
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'x-vercel-ai-ui-message-stream': 'v1'
+      }
+    }
+  )
+}
+
 const { messages, status, stop, sendMessage } = useChat({
   transport: new DefaultChatTransport({
     api: `${config.public.apiBaseUrl}/chat/stream`,
+    fetch: fetchWithCooldown,
     headers: () => ({
       Authorization: `Bearer ${accessToken.value}`
     }),
@@ -107,12 +153,29 @@ const { messages, status, stop, sendMessage } = useChat({
   // here rather than nested inside `DefaultChatTransport`'s options, where
   // the AI SDK would never call it at all.
   onData(dataPart) {
-    const p = dataPart as { type?: string, id?: string, data?: { discounted_price?: number } }
+    const p = dataPart as {
+      type?: string
+      id?: string
+      data?: { discounted_price?: number, remaining?: number }
+    }
     if (p.type === 'data-discount' && p.id === 'discount' && contextItemId.value) {
       const price = p.data?.discounted_price
       if (typeof price === 'number') {
         itemStore.applyDiscount(contextItemId.value, price)
       }
+    }
+
+    // SPEC-043: nearing the per-minute cooldown. Nothing is blocked yet — this
+    // exists so the block, when it comes, isn't a surprise.
+    if (p.type === 'data-cooldown-warning') {
+      const remaining = p.data?.remaining
+      if (typeof remaining === 'number') cooldown.noteWarning(remaining)
+    }
+
+    // The turn ran past its deadline. Not the buyer's doing, so it gets a
+    // retry rather than a countdown.
+    if (p.type === 'data-turn-timeout') {
+      cooldown.noteTimeout()
     }
   }
 })
@@ -122,10 +185,63 @@ const { messages, status, stop, sendMessage } = useChat({
 // the translated `chat.thinking` label rather than a hardcoded English word.
 const aiStatusText = ref('')
 
+// A turn that is merely slow is not the buyer's fault and must not gate their
+// input — it only changes what the existing indicator says. The threshold is
+// well past a normal turn, so ordinary latency never trips it.
+const SLOW_TURN_AFTER_MS = 8000
+const turnTakingLong = ref(false)
+let slowTurnTimer: ReturnType<typeof setTimeout> | null = null
+
+function clearSlowTurnTimer() {
+  if (slowTurnTimer !== null) {
+    clearTimeout(slowTurnTimer)
+    slowTurnTimer = null
+  }
+}
+
 watch(status, (newStatus) => {
   if (newStatus === 'submitted') {
     aiStatusText.value = ''
   }
+
+  if (newStatus === 'submitted' || newStatus === 'streaming') {
+    if (slowTurnTimer === null) {
+      slowTurnTimer = setTimeout(() => {
+        turnTakingLong.value = true
+      }, SLOW_TURN_AFTER_MS)
+    }
+  } else {
+    clearSlowTurnTimer()
+    turnTakingLong.value = false
+  }
+})
+
+onBeforeUnmount(clearSlowTurnTimer)
+
+// The composable stays language-agnostic and reports *what* happened; the
+// wording lives here with the rest of the copy.
+const cooldownAnnouncement = computed(() => {
+  if (cooldown.announcement.value === 'cooldownStarted') {
+    return t('chat.cooldown.slowDown', { seconds: cooldown.secondsLeft.value })
+  }
+  if (cooldown.announcement.value === 'cooldownEnded') {
+    return t('chat.cooldown.canSendAgain')
+  }
+  return ''
+})
+
+// While cooling down, the indicator label is the countdown itself.
+const promptPlaceholder = computed(() =>
+  cooldown.isCoolingDown.value
+    ? t('chat.cooldown.waitingPlaceholder', { seconds: cooldown.secondsLeft.value })
+    : t('chat.placeholder')
+)
+
+const indicatorText = computed(() => {
+  if (sellerTyping.value) return t('chat.sellerTyping')
+  if (aiStatusText.value) return aiStatusText.value
+  if (turnTakingLong.value) return t('chat.cooldown.takingLonger')
+  return t('chat.thinking')
 })
 
 function uid() {
@@ -377,12 +493,24 @@ async function send(text: string) {
   accessToken.value = session.access_token
 
   input.value = ''
+  lastSentText.value = trimmed
+  cooldown.dismissTimeout()
   startTyping()
   await sendMessage({ text: trimmed })
 }
 
 function onSubmit() {
+  if (cooldown.isCoolingDown.value) return
   send(input.value)
+}
+
+// A timed-out turn produced no reply, so resending the same message is the
+// whole recovery — no need to make the buyer retype it.
+function retryLastTurn() {
+  const text = lastSentText.value
+  if (!text || cooldown.isCoolingDown.value) return
+  cooldown.dismissTimeout()
+  send(text)
 }
 
 function getMessageText(message: UIMessageLike) {
@@ -679,7 +807,7 @@ async function handleBuyNow() {
                supported way to restyle it — ChatTool exposes no leading slot. -->
           <template #indicator>
             <UChatTool
-              :text="sellerTyping ? $t('chat.sellerTyping') : (aiStatusText || $t('chat.thinking'))"
+              :text="indicatorText"
               :icon="sellerTyping ? 'i-lucide-store' : 'i-nego-mark'"
               :ui="sellerTyping ? undefined : { leadingIcon: 'animate-brand-hop text-default' }"
               streaming
@@ -739,15 +867,77 @@ async function handleBuyNow() {
 
     <!-- Input -->
     <div class="px-2.5 sm:px-4 py-2 sm:py-3 bg-default">
+      <!-- SPEC-043: the wait states sit with the composer, because they are
+           about the act of sending — not things the assistant said. They are
+           never rendered as chat bubbles. -->
+
+      <!-- A turn that ran out of time. Nothing broke and nothing is blocked,
+           so this offers a retry rather than a countdown. -->
+      <UAlert
+        v-if="cooldown.timedOut.value"
+        :title="$t('chat.cooldown.turnTimedOut')"
+        icon="i-lucide-clock"
+        color="neutral"
+        variant="subtle"
+        class="mb-2"
+        :ui="{ title: 'text-xs', root: 'py-2' }"
+      >
+        <template #actions>
+          <UButton
+            size="xs"
+            color="neutral"
+            variant="outline"
+            :label="$t('chat.cooldown.tryAgain')"
+            @click="retryLastTurn"
+          />
+        </template>
+      </UAlert>
+
+      <!-- Approaching the cooldown. Advisory only — the composer stays live. -->
+      <p
+        v-else-if="cooldown.warningRemaining.value !== null && !cooldown.isCoolingDown.value"
+        class="mb-2 px-1 text-xs text-muted"
+      >
+        {{ $t('chat.cooldown.almostAtLimit', { count: cooldown.warningRemaining.value }) }}
+      </p>
+
+      <!-- The cooldown itself. `role="timer"` is implicitly aria-live="off",
+           which is what keeps the ticking number from being read out every
+           second; the separate live region below speaks only at the two
+           moments that matter. -->
+      <div
+        v-if="cooldown.isCoolingDown.value"
+        role="timer"
+        class="mb-2 flex items-center gap-2 px-1 text-xs text-muted"
+      >
+        <UIcon
+          name="i-lucide-hourglass"
+          class="size-3.5 shrink-0"
+        />
+        <span>
+          {{ $t('chat.cooldown.slowDown', { seconds: cooldown.secondsLeft.value }) }}
+        </span>
+      </div>
+
+      <!-- Announces once when the wait starts and once when it lifts. -->
+      <p
+        aria-live="polite"
+        class="sr-only"
+      >
+        {{ cooldownAnnouncement }}
+      </p>
+
       <UChatPrompt
         v-model="input"
-        :placeholder="$t('chat.placeholder')"
+        :placeholder="promptPlaceholder"
+        :disabled="cooldown.isCoolingDown.value"
         variant="subtle"
         class="rounded-xl"
         @submit="onSubmit"
       >
         <UChatPromptSubmit
           :status="status"
+          :disabled="cooldown.isCoolingDown.value"
           color="primary"
           @stop="stop"
         />

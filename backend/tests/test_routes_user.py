@@ -9,6 +9,8 @@ per conftest.py's guidance. `Depends(verify_user_token)` is bypassed with the
 
 from unittest.mock import MagicMock
 
+from conftest import PNG_BYTES
+
 # ---------------------------------------------------------------------------
 # GET /user/{id}/account
 # ---------------------------------------------------------------------------
@@ -216,7 +218,7 @@ async def test_update_profile_with_avatar_success(client, auth_user, patch_supab
     )
     patch_supabase("routes.user", admin=fake_admin, user=MagicMock())
 
-    small_file = b"x" * 100
+    small_file = PNG_BYTES
     resp = await client.put(
         "/user/user-1/profile",
         data={"display_name": "Avatar User"},
@@ -261,7 +263,7 @@ async def test_update_profile_avatar_preserves_google_avatar_url(client, auth_us
 
     resp = await client.put(
         "/user/user-1/profile",
-        files={"avatar": ("photo.png", b"x" * 100, "image/png")},
+        files={"avatar": ("photo.png", PNG_BYTES, "image/png")},
     )
 
     assert resp.status_code == 200
@@ -294,7 +296,7 @@ async def test_update_profile_avatar_too_large(client, auth_user, patch_supabase
     fake_admin.auth.admin.get_user_by_id.return_value = _existing_user_result()
     patch_supabase("routes.user", admin=fake_admin, user=MagicMock())
 
-    big_file = b"x" * (2 * 1024 * 1024 + 1)
+    big_file = PNG_BYTES + b"\x00" * (2 * 1024 * 1024 + 1 - len(PNG_BYTES))
     resp = await client.put(
         "/user/user-1/profile",
         files={"avatar": ("big.png", big_file, "image/png")},
@@ -314,7 +316,7 @@ async def test_update_profile_avatar_exactly_2mb_allowed(client, auth_user, patc
     fake_admin.storage.from_.return_value.get_public_url.return_value = "https://cdn/x.png"
     patch_supabase("routes.user", admin=fake_admin, user=MagicMock())
 
-    exact_file = b"x" * (2 * 1024 * 1024)
+    exact_file = PNG_BYTES + b"\x00" * (2 * 1024 * 1024 - len(PNG_BYTES))
     resp = await client.put(
         "/user/user-1/profile",
         files={"avatar": ("exact.png", exact_file, "image/png")},
@@ -332,7 +334,7 @@ async def test_update_profile_avatar_upload_failure(client, auth_user, patch_sup
 
     resp = await client.put(
         "/user/user-1/profile",
-        files={"avatar": ("photo.png", b"small", "image/png")},
+        files={"avatar": ("photo.png", PNG_BYTES, "image/png")},
     )
 
     assert resp.status_code == 500
@@ -340,8 +342,14 @@ async def test_update_profile_avatar_upload_failure(client, auth_user, patch_sup
     fake_admin.auth.admin.update_user_by_id.assert_not_called()
 
 
-async def test_update_profile_avatar_filename_without_extension(client, auth_user, patch_supabase):
-    """When the uploaded filename has no dot, the whole filename is (naively) used as the ext."""
+async def test_update_profile_avatar_filename_is_never_used_for_the_extension(
+    client, auth_user, patch_supabase
+):
+    """The extension used to be `filename.rsplit(".", 1)[-1]`, so a filename
+    with no dot became the extension in its entirety ("avatar" -> ".avatar")
+    and a filename with slashes walked out of the user's prefix. SPEC-044 C
+    takes the extension from the sniffed type instead, so the filename no
+    longer reaches the storage key by any route."""
     auth_user("user-1")
     fake_admin = MagicMock()
     fake_admin.auth.admin.get_user_by_id.return_value = _existing_user_result()
@@ -350,14 +358,14 @@ async def test_update_profile_avatar_filename_without_extension(client, auth_use
 
     resp = await client.put(
         "/user/user-1/profile",
-        files={"avatar": ("avatar", b"small", "image/png")},
+        files={"avatar": ("avatar", PNG_BYTES, "image/png")},
     )
 
     assert resp.status_code == 200
     upload_args = fake_admin.storage.from_.return_value.upload.call_args[0]
     file_path = upload_args[0]
-    # No "." in "avatar" means rsplit(".", 1)[-1] falls back to the whole filename.
-    assert file_path.endswith(".avatar")
+    assert file_path.endswith(".png")
+    assert "avatar" not in file_path.removeprefix("avatars/")
 
 
 async def test_update_profile_user_not_found(client, auth_user, patch_supabase):
@@ -423,9 +431,12 @@ async def test_delete_account_success(client, auth_user, patch_supabase):
     assert resp.status_code == 200
     assert resp.json() == {"message": "Account deleted successfully"}
     fake_admin.auth.admin.delete_user.assert_called_once_with("user-1")
-    # cleanup ran against all three tables
+    # Cleanup covers every table holding this user's data. `messages` is the
+    # SPEC-043 history table; `conversations` still holds whatever was written
+    # before that cutover, so deleting an account has to clear both or a
+    # deleted user's transcript outlives their account.
     cleaned_tables = [call.args[0] for call in fake_admin.table.call_args_list]
-    assert cleaned_tables == ["chat_settings", "conversations", "user_profiles"]
+    assert cleaned_tables == ["chat_settings", "conversations", "messages", "user_profiles"]
 
 
 async def test_delete_account_invalidates_token(client, auth_user, patch_supabase, monkeypatch):

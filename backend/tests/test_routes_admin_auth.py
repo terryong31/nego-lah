@@ -59,7 +59,7 @@ import routes.admin.auth as admin_auth
 import routes.admin.chats as admin_chats
 import routes.admin.users as admin_users
 from agent.memory import conversation_memory
-from conftest import make_supabase_result
+from conftest import PNG_BYTES, make_supabase_result
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -385,7 +385,7 @@ async def test_upload_user_avatar_storage_success(client, admin_user, fake_supab
 
     resp = await client.post(
         "/admin/users/target-user/avatar",
-        files={"avatar": ("photo.png", b"binary-bytes", "image/png")},
+        files={"avatar": ("photo.png", PNG_BYTES, "image/png")},
     )
 
     assert resp.status_code == 200
@@ -395,7 +395,7 @@ async def test_upload_user_avatar_storage_success(client, admin_user, fake_supab
     fake_supabase.storage.from_.return_value.upload.assert_called_once()
     upload_args = fake_supabase.storage.from_.return_value.upload.call_args[0]
     assert upload_args[0].startswith("avatars/target-user_")
-    assert upload_args[1] == b"binary-bytes"
+    assert upload_args[1] == PNG_BYTES
 
 
 async def test_upload_user_avatar_storage_failure_falls_back_to_base64(client, admin_user, fake_supabase, patch_supabase, monkeypatch):
@@ -406,7 +406,7 @@ async def test_upload_user_avatar_storage_failure_falls_back_to_base64(client, a
 
     resp = await client.post(
         "/admin/users/target-user/avatar",
-        files={"avatar": ("photo.png", b"small", "image/png")},
+        files={"avatar": ("photo.png", PNG_BYTES, "image/png")},
     )
 
     assert resp.status_code == 200
@@ -418,7 +418,7 @@ async def test_upload_user_avatar_storage_failure_falls_back_to_base64(client, a
 async def test_upload_user_avatar_requires_admin(client):
     resp = await client.post(
         "/admin/users/target-user/avatar",
-        files={"avatar": ("photo.png", b"small", "image/png")},
+        files={"avatar": ("photo.png", PNG_BYTES, "image/png")},
     )
     assert resp.status_code == 401
 

@@ -21,7 +21,11 @@ def admin_summary():
 
     items = (admin_supabase.table('items').select('status').is_('deleted_at', 'null').execute().data) or []
     orders = (admin_supabase.table('orders').select('status, amount').execute().data) or []
-    convos = (admin_supabase.table('conversations').select('id').execute().data) or []
+    # SPEC-043: history is one row per message now, so "conversations" is the
+    # number of distinct people who have said something — which is what the
+    # old one-row-per-user table happened to count.
+    message_rows = (admin_supabase.table('messages').select('user_id').execute().data) or []
+    convos = {row.get('user_id') for row in message_rows if row.get('user_id')}
 
     by_status: dict = {}
     for o in orders:

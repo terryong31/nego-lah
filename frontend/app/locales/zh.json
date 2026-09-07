@@ -271,7 +271,16 @@
     "payRm": "支付 RM {price}",
     "paymentCompleted": "支付已完成",
     "placeholder": "输入您的消息...",
-    "verifyingHuman": "正在进行人机安全验证..."
+    "verifyingHuman": "正在进行人机安全验证...",
+    "cooldown": {
+      "slowDown": "稍微慢一点，{seconds} 秒后可以再发送消息。",
+      "canSendAgain": "现在可以继续发送消息了。",
+      "almostAtLimit": "你发送得有点快——还可以再发 {count} 条，之后需要稍作休息。",
+      "waitingPlaceholder": "等待 {seconds} 秒…",
+      "takingLonger": "还在烹煮中——这次需要多一点时间…",
+      "turnTimedOut": "这次花的时间比预期长。",
+      "tryAgain": "再试一次"
+    }
   },
   "orders": {
     "purchaseHistory": "购买记录",

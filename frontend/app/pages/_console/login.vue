@@ -4,6 +4,7 @@ useSeoMeta({ title: 'Admin', robots: 'noindex, nofollow' })
 
 const { call } = useAdminApi()
 const toast = useToast()
+const { token: turnstileToken, isEnabled: isTurnstileEnabled } = useTurnstileToken()
 
 const step = ref<'password' | 'otp'>('password')
 const email = ref('')
@@ -14,11 +15,18 @@ const loading = ref(false)
 
 async function submitPassword() {
   if (!email.value || !password.value) return
+  if (isTurnstileEnabled.value && !turnstileToken.value) {
+    toast.add({ title: 'Verification required', description: 'Complete the security check to continue.', color: 'error' })
+    return
+  }
   loading.value = true
   try {
     const res = await call<{ handle: string, message: string }>('/auth/login', {
       method: 'POST',
-      body: { email: email.value, password: password.value }
+      body: { email: email.value, password: password.value },
+      // Only when we actually hold one: an empty header would read as a
+      // supplied-but-blank token rather than as no token at all.
+      ...(turnstileToken.value ? { headers: { 'X-Turnstile-Token': turnstileToken.value } } : {})
     })
     handle.value = res.handle
     step.value = 'otp'
@@ -27,6 +35,11 @@ async function submitPassword() {
     const e = err as { data?: { detail?: string } }
     toast.add({ title: 'Login failed', description: e.data?.detail || 'Invalid credentials', color: 'error' })
   } finally {
+    // Siteverify tokens are single-use, so the one we just spent is dead
+    // whichever way the request went. Dropping it makes the widget issue a
+    // fresh one; keeping it would turn every retry into a 403 that reads as
+    // "wrong password".
+    turnstileToken.value = undefined
     loading.value = false
   }
 }
@@ -102,6 +115,15 @@ function back() {
             :disabled="loading"
           />
         </UFormField>
+        <div
+          v-if="isTurnstileEnabled"
+          class="flex justify-center min-h-[65px]"
+        >
+          <NuxtTurnstile
+            v-model="turnstileToken"
+            :options="{ action: 'admin-login' }"
+          />
+        </div>
         <UButton
           type="submit"
           block

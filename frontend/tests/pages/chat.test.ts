@@ -1435,4 +1435,139 @@ describe('pages/chat.vue', () => {
       expect(wrapper.text()).toContain('Load older messages')
     })
   })
+
+  // -------------------------------------------------------------------------
+  // SPEC-043 workstream E — the buyer can tell the three waits apart
+  // -------------------------------------------------------------------------
+  describe('cooldown and slow-turn feedback', () => {
+    function onDataHandler() {
+      const handler = (useChatConfigHolder.value as { onData?: (part: unknown) => void } | undefined)?.onData
+      expect(handler, 'onData should be registered as a top-level useChat option').toBeDefined()
+      return handler!
+    }
+
+    it('turns a 429 into a visible countdown and gates the composer', async () => {
+      userRef.value = { id: 'user-1' }
+      const wrapper = await mountPage()
+
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response(
+          JSON.stringify({ detail: { code: 'chat_cooldown', retryAfterSeconds: 12 } }),
+          { status: 429, headers: { 'Retry-After': '12', 'Content-Type': 'application/json' } }
+        )
+      )
+
+      try {
+        const transportFetch = chatTransport().fetch
+        const replacement = await transportFetch('/chat/stream', { method: 'POST' })
+
+        // The SDK is handed a well-formed, empty stream rather than an error,
+        // so the composer settles instead of hanging mid-send.
+        expect(replacement.status).toBe(200)
+        expect(await replacement.text()).toContain('[DONE]')
+      } finally {
+        fetchSpy.mockRestore()
+      }
+
+      await nextTick()
+
+      expect(vm(wrapper).cooldown.isCoolingDown.value).toBe(true)
+      expect(vm(wrapper).cooldown.secondsLeft.value).toBe(12)
+      expect(wrapper.text()).toContain('You can send another message in 12s')
+    })
+
+    it('falls back to Retry-After when the body has been rewritten by a proxy', async () => {
+      userRef.value = { id: 'user-1' }
+      const wrapper = await mountPage()
+
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response('<html>Too Many Requests</html>', {
+          status: 429,
+          headers: { 'Retry-After': '7' }
+        })
+      )
+
+      try {
+        await chatTransport().fetch('/chat/stream', { method: 'POST' })
+      } finally {
+        fetchSpy.mockRestore()
+      }
+
+      await nextTick()
+      expect(vm(wrapper).cooldown.secondsLeft.value).toBe(7)
+    })
+
+    it('releases the composer on its own once the countdown runs out', async () => {
+      userRef.value = { id: 'user-1' }
+      const wrapper = await mountPage()
+
+      vm(wrapper).cooldown.start(3)
+      await nextTick()
+      expect(vm(wrapper).cooldown.isCoolingDown.value).toBe(true)
+
+      await vi.advanceTimersByTimeAsync(3000)
+      await nextTick()
+
+      expect(vm(wrapper).cooldown.isCoolingDown.value).toBe(false)
+      expect(wrapper.text()).not.toContain('You can send another message in')
+    })
+
+    it('warns before the wall without blocking anything', async () => {
+      userRef.value = { id: 'user-1' }
+      const wrapper = await mountPage()
+
+      onDataHandler()({ type: 'data-cooldown-warning', id: 'cooldown-warning', data: { remaining: 2 } })
+      await nextTick()
+
+      expect(wrapper.text()).toContain('2 more before a short pause')
+      expect(vm(wrapper).cooldown.isCoolingDown.value).toBe(false)
+    })
+
+    it('offers a retry for a timed-out turn instead of blaming the buyer', async () => {
+      userRef.value = { id: 'user-1' }
+      const wrapper = await mountPage()
+
+      onDataHandler()({ type: 'data-turn-timeout', id: 'turn-timeout', data: { partial: false } })
+      await nextTick()
+
+      expect(wrapper.text()).toContain('That took longer than expected')
+      expect(wrapper.text()).toContain('Try again')
+      // A slow turn is the system's problem, not the buyer's — nothing gates.
+      expect(vm(wrapper).cooldown.isCoolingDown.value).toBe(false)
+    })
+
+    it('resends the last message when the buyer retries a timed-out turn', async () => {
+      userRef.value = { id: 'user-1' }
+      getSessionMock.mockResolvedValue({ data: { session: { access_token: 'tok', user: { id: 'user-1' } } } })
+      const wrapper = await mountPage()
+
+      await vm(wrapper).send('is 800 ok?')
+      await flushPromises()
+      sendMessageMock.mockClear()
+
+      onDataHandler()({ type: 'data-turn-timeout', id: 'turn-timeout', data: { partial: false } })
+      await nextTick()
+
+      await vm(wrapper).retryLastTurn()
+      await flushPromises()
+
+      expect(sendMessageMock).toHaveBeenCalledWith({ text: 'is 800 ok?' })
+    })
+
+    it('changes only the indicator wording when a turn runs long', async () => {
+      userRef.value = { id: 'user-1' }
+      const wrapper = await mountPage()
+
+      statusRef.value = 'streaming'
+      await nextTick()
+      expect(vm(wrapper).indicatorText).toBe('Cooking…')
+
+      await vi.advanceTimersByTimeAsync(8000)
+      await nextTick()
+
+      expect(vm(wrapper).indicatorText).toContain('taking a little longer')
+      // Still just a label — the buyer is never blocked for the system's slowness.
+      expect(vm(wrapper).cooldown.isCoolingDown.value).toBe(false)
+    })
+  })
 })

@@ -18,6 +18,7 @@ re-probing, so one conversation never gets split across two models mid-turn,
 and one turn never holds two leases.
 """
 
+import asyncio
 import os
 import uuid
 from contextlib import asynccontextmanager
@@ -59,6 +60,35 @@ DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"
 # than a couple of seconds, and killing that would be a self-inflicted outage.
 LOCAL_CONNECT_TIMEOUT = 2.0
 LOCAL_READ_TIMEOUT = float(os.getenv("LOCAL_LLM_READ_TIMEOUT", "120"))
+
+# --- Cloud overflow bounds (SPEC-043) ---------------------------------------
+# The laptop serves one turn per lease, so under real concurrency nearly every
+# turn is a Gemini turn. That makes the cloud path's failure modes the common
+# case, not the edge case, and it had no bounds at all.
+#
+# `max_retries` is what turns a 429/ResourceExhausted into a retry with the
+# client's own backoff; bounded, so a rate-limited provider can't become an
+# unbounded stall. The timeout is generous enough for a long tool-using turn
+# but finite, unlike the library default.
+GEMINI_REQUEST_TIMEOUT = float(os.getenv("GEMINI_REQUEST_TIMEOUT", "90"))
+GEMINI_MAX_RETRIES = int(os.getenv("GEMINI_MAX_RETRIES", "2"))
+
+# Ceiling on concurrent overflow turns *per worker process*. Sized so normal
+# traffic never touches it — SPEC-020's "0ms overflow" still holds below the
+# cap — and it only engages under genuine overload, where queuing briefly beats
+# firing every call at once at a box that can't serve them.
+GEMINI_MAX_CONCURRENCY = int(os.getenv("GEMINI_MAX_CONCURRENCY", "8"))
+
+# Created lazily: a Semaphore binds to the running loop, and this module is
+# imported long before one exists.
+_gemini_semaphore: asyncio.Semaphore | None = None
+
+
+def _cloud_semaphore() -> asyncio.Semaphore:
+    global _gemini_semaphore
+    if _gemini_semaphore is None:
+        _gemini_semaphore = asyncio.Semaphore(GEMINI_MAX_CONCURRENCY)
+    return _gemini_semaphore
 
 
 @dataclass(frozen=True)
@@ -283,14 +313,26 @@ async def hybrid_llm_session():
     Pins the choice in `current_provider` so every model built inside the turn
     agrees, and releases the lease in `finally` so a crashed or client-cancelled
     generation frees the laptop immediately rather than waiting out the TTL.
+
+    A cloud turn additionally holds one permit from the overflow cap for its
+    duration (SPEC-043). The local path is deliberately not gated: the lease
+    already limits it to one turn, and a second queue behind that would just be
+    a redundant wait.
     """
     info, lease_token = await resolve_provider()
+
+    semaphore = None if info.is_local else _cloud_semaphore()
+    if semaphore is not None:
+        await semaphore.acquire()
+
     token = current_provider.set(info)
     try:
         yield info
     finally:
         current_provider.reset(token)
         release_local_llm_lease(lease_token)
+        if semaphore is not None:
+            semaphore.release()
 
 
 # ---------------------------------------------------------------------------
@@ -345,6 +387,8 @@ def _build_gemini_model(temperature: float) -> ChatGoogleGenerativeAI:
         model=model_name,
         google_api_key=gemini_key,
         temperature=temperature,
+        timeout=GEMINI_REQUEST_TIMEOUT,
+        max_retries=GEMINI_MAX_RETRIES,
     )
     _model_cache[key] = model
     return model

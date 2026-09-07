@@ -418,9 +418,13 @@ async def test_chat_stream_invalid_token_propagates_401(client, monkeypatch):
 
 
 async def test_chat_stream_rate_limit_exceeded(client, monkeypatch):
+    """SPEC-043: the cooldown answers with the seconds the client should wait,
+    in the body and in `Retry-After`, so the UI can count down instead of
+    guessing."""
     user_id = "user-ratelimited"
     monkeypatch.setattr("routes.chat.verify_user_token", await fake_verify_user_token_factory(user_id))
     monkeypatch.setattr("routes.chat.check_rate_limit", lambda *a, **k: False)
+    monkeypatch.setattr("routes.chat.get_rate_limit_retry_after", lambda *a, **k: 42)
 
     resp = await client.post(
         "/chat/stream",
@@ -429,7 +433,117 @@ async def test_chat_stream_rate_limit_exceeded(client, monkeypatch):
     )
 
     assert resp.status_code == 429
-    assert "Too many messages" in resp.json()["detail"]
+    assert resp.headers["retry-after"] == "42"
+
+    detail = resp.json()["detail"]
+    assert detail["code"] == "chat_cooldown"
+    assert detail["retryAfterSeconds"] == 42
+    assert "Too many messages" in detail["message"]
+
+
+async def test_chat_stream_warns_when_close_to_the_cooldown(
+    client, monkeypatch, patch_supabase, fake_supabase
+):
+    """SPEC-043: the buyer gets a heads-up before the wall, as a data part —
+    a UI state, not words the assistant appears to have said."""
+    user_id = "user-nearly-capped"
+    monkeypatch.setattr("routes.chat.verify_user_token", await fake_verify_user_token_factory(user_id))
+    monkeypatch.setattr("routes.chat.check_rate_limit", lambda *a, **k: True)
+    monkeypatch.setattr("routes.chat.get_rate_limit_remaining", lambda *a, **k: 2)
+    set_chat_settings_select(fake_supabase, [])
+    patch_supabase("routes.chat", admin=fake_supabase)
+
+    async def fake_chat_stream(user_id, message, item_id=None, files=None):
+        yield "sure"
+
+    monkeypatch.setattr("agent.bot.chat_stream", fake_chat_stream)
+    monkeypatch.setattr("routes.chat.track_ai_tokens", lambda *a, **k: None)
+
+    resp = await client.post(
+        "/chat/stream",
+        json={"user_id": user_id, "message": "hi"},
+        headers={"Authorization": "Bearer sometoken"},
+    )
+
+    frames = parse_sse(resp.text)
+    assert {
+        "type": "data-cooldown-warning",
+        "id": "cooldown-warning",
+        "data": {"remaining": 2},
+    } in frames
+    # The reply itself still streams normally — a warning doesn't block a turn.
+    assert {"type": "text-delta", "id": "0", "delta": "sure"} in frames
+
+
+async def test_chat_stream_stays_quiet_when_far_from_the_cooldown(
+    client, monkeypatch, patch_supabase, fake_supabase
+):
+    user_id = "user-plenty-left"
+    monkeypatch.setattr("routes.chat.verify_user_token", await fake_verify_user_token_factory(user_id))
+    monkeypatch.setattr("routes.chat.check_rate_limit", lambda *a, **k: True)
+    monkeypatch.setattr("routes.chat.get_rate_limit_remaining", lambda *a, **k: 9)
+    set_chat_settings_select(fake_supabase, [])
+    patch_supabase("routes.chat", admin=fake_supabase)
+
+    async def fake_chat_stream(user_id, message, item_id=None, files=None):
+        yield "sure"
+
+    monkeypatch.setattr("agent.bot.chat_stream", fake_chat_stream)
+    monkeypatch.setattr("routes.chat.track_ai_tokens", lambda *a, **k: None)
+
+    resp = await client.post(
+        "/chat/stream",
+        json={"user_id": user_id, "message": "hi"},
+        headers={"Authorization": "Bearer sometoken"},
+    )
+
+    frames = parse_sse(resp.text)
+    assert not any(
+        isinstance(f, dict) and f.get("type") == "data-cooldown-warning" for f in frames
+    )
+
+
+async def test_chat_stream_bounds_a_turn_that_never_finishes(
+    client, monkeypatch, patch_supabase, fake_supabase
+):
+    """SPEC-043 workstream A: a hung turn ends in a clear, distinct frame
+    instead of holding the connection open forever."""
+    user_id = "user-hung"
+    monkeypatch.setattr("routes.chat.verify_user_token", await fake_verify_user_token_factory(user_id))
+    monkeypatch.setattr("routes.chat.CHAT_TURN_DEADLINE_SECONDS", 0.15)
+    set_chat_settings_select(fake_supabase, [])
+    patch_supabase("routes.chat", admin=fake_supabase)
+
+    async def hanging_stream(user_id, message, item_id=None, files=None):
+        yield {"status": "thinking"}
+        await asyncio.sleep(30)  # never returns within the deadline
+        yield "too late"
+
+    monkeypatch.setattr("agent.bot.chat_stream", hanging_stream)
+    monkeypatch.setattr("routes.chat.track_ai_tokens", lambda *a, **k: None)
+
+    resp = await client.post(
+        "/chat/stream",
+        json={"user_id": user_id, "message": "hi"},
+        headers={"Authorization": "Bearer sometoken"},
+    )
+
+    assert resp.status_code == 200
+    frames = parse_sse(resp.text)
+
+    timeouts = [
+        f for f in frames
+        if isinstance(f, dict) and f.get("type") == "data-turn-timeout"
+    ]
+    assert len(timeouts) == 1
+
+    # The stream still terminates cleanly, so the client settles instead of
+    # sitting on a half-open response.
+    assert frames[-2] == {"type": "finish"}
+    assert frames[-1] == "[DONE]"
+    assert not any(
+        isinstance(f, dict) and f.get("delta") == "too late" for f in frames
+    )
 
 
 async def test_chat_stream_ai_disabled_short_circuits(client, monkeypatch, patch_supabase, fake_supabase):
@@ -974,3 +1088,54 @@ async def test_pending_discount_context_var_is_isolated_across_concurrent_reques
         f for f in parse_sse(resp_plain.text) if isinstance(f, dict) and f.get("type") == "data-discount"
     ]
     assert plain_discount_frames == []
+
+
+# ---------------------------------------------------------------------------
+# Message size ceiling
+#
+# Every turn replays the message to a paid model alongside the last 50 messages
+# of history, and the only previous bound was the 10 MB request-body cap. One
+# account with one script could therefore run an unbounded bill — the sharpest
+# abuse vector for a public demo.
+# ---------------------------------------------------------------------------
+
+async def test_chat_stream_rejects_an_oversized_message(client, monkeypatch):
+    user_id = "user-verbose"
+    monkeypatch.setattr("routes.chat.verify_user_token", await fake_verify_user_token_factory(user_id))
+    monkeypatch.setattr("routes.chat.check_rate_limit", lambda *a, **k: True)
+
+    resp = await client.post(
+        "/chat/stream",
+        json={"user_id": user_id, "message": "x" * 5000},
+        headers={"Authorization": "Bearer sometoken"},
+    )
+
+    assert resp.status_code == 413
+    assert "too long" in resp.json()["detail"].lower()
+
+
+async def test_chat_stream_accepts_a_long_but_human_message(
+    client, monkeypatch, patch_supabase, fake_supabase
+):
+    """A few paragraphs of haggling must still go through — the cap is there
+    for scripts, not for people who type a lot."""
+    user_id = "user-chatty"
+    monkeypatch.setattr("routes.chat.verify_user_token", await fake_verify_user_token_factory(user_id))
+    monkeypatch.setattr("routes.chat.check_rate_limit", lambda *a, **k: True)
+    monkeypatch.setattr("routes.chat.get_rate_limit_remaining", lambda *a, **k: 9)
+    monkeypatch.setattr("routes.chat.track_ai_tokens", lambda *a, **k: None)
+    set_chat_settings_select(fake_supabase, [])
+    patch_supabase("routes.chat", admin=fake_supabase)
+
+    async def fake_chat_stream(user_id, message, item_id=None, files=None):
+        yield "sure"
+
+    monkeypatch.setattr("agent.bot.chat_stream", fake_chat_stream)
+
+    resp = await client.post(
+        "/chat/stream",
+        json={"user_id": user_id, "message": "I really want this. " * 100},
+        headers={"Authorization": "Bearer sometoken"},
+    )
+
+    assert resp.status_code == 200

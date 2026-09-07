@@ -64,9 +64,19 @@ def _auth_client():
 
 
 def client_ip(request: Request) -> str:
-    forwarded = request.headers.get("X-Forwarded-For")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
+    """The caller's address, as resolved by the server — never as claimed.
+
+    Reading `X-Forwarded-For` here was a bypass: Caddy *appends* to whatever
+    header the client sent, so the first value is attacker-chosen. Since this
+    keys the admin login limiter (`adminlogin:{email}:{ip}`), rotating one
+    header gave unlimited password attempts, and it forged the IP recorded in
+    the audit log too.
+
+    `request.client.host` is uvicorn's own answer. It applies X-Forwarded-For
+    only for peers in `--forwarded-allow-ips` (see the Dockerfile), taking the
+    last address a trusted proxy didn't add — which is the real client, and is
+    not something the client can influence.
+    """
     return request.client.host if request.client else "unknown"
 
 

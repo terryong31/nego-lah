@@ -660,7 +660,13 @@ async def test_admin_summary_success(client, admin_user, admin_supabase):
                 {"status": "delivered", "amount": 10},
             ]
         ),
-        make_supabase_result([{"id": "c1"}, {"id": "c2"}, {"id": "c3"}]),
+        # SPEC-043: history is one row per message, so the conversation count
+        # is distinct authors — five messages from three people is three
+        # conversations, the same number the old one-row-per-user table gave.
+        make_supabase_result([
+            {"user_id": "c1"}, {"user_id": "c2"}, {"user_id": "c1"},
+            {"user_id": "c3"}, {"user_id": "c2"},
+        ]),
     ]
 
     response = await client.get("/admin/summary")

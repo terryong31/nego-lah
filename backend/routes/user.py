@@ -23,6 +23,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 from auth_middleware import get_user_id_from_body_or_token, verify_user_token
 from cache import invalidate_token
 from connector import admin_supabase, user_supabase
+from core.uploads import validate_image_upload
 from env import STORAGE_BUCKET
 from logger import logger
 from schemas import EmailUpdateSchema, LanguageUpdateSchema, PasswordUpdateSchema
@@ -164,9 +165,11 @@ async def update_profile(
 
     if avatar is not None:
         contents = await avatar.read()
-        if len(contents) > 2 * 1024 * 1024:
-            raise HTTPException(status_code=400, detail="Image too large (max 2MB)")
-        ext = (avatar.filename or "png").rsplit(".", 1)[-1].lower()
+        # Both the type and the extension come from the bytes, never from the
+        # request (SPEC-044 C). The bucket is public: a forwarded `text/html`
+        # got HTML served as HTML from our own storage origin, and an
+        # unsanitised filename put slashes into the storage key.
+        content_type, ext = validate_image_upload(contents)
         file_path = f"avatars/{user_id}/{uuid.uuid4().hex}.{ext}"
         try:
             def _upload() -> str:
@@ -174,7 +177,7 @@ async def update_profile(
                     file_path,
                     contents,
                     {
-                        "content-type": avatar.content_type or "application/octet-stream",
+                        "content-type": content_type,
                         "upsert": "true",
                     },
                 )
@@ -230,6 +233,10 @@ def delete_account(
     for table, column in [
         ("chat_settings", "user_id"),
         ("conversations", "user_id"),
+        # SPEC-043 moved history here. Both tables are listed: `conversations`
+        # still holds everything written before the cutover, and leaving it
+        # behind would keep a deleted user's transcript on disk.
+        ("messages", "user_id"),
         ("user_profiles", "id"),
     ]:
         try:

@@ -68,8 +68,12 @@ async def verify_user_token(request: Request) -> str:
 
     token = parts[1]
 
-    # Check Redis cache first
-    cached_user_id = get_cached_user_by_token(token)
+    # Check Redis cache first. The client is synchronous, and this runs on
+    # every authenticated request, so it goes through a thread for the same
+    # reason the Supabase call below does (SPEC-023): an `async def` dependency
+    # runs on the event loop, and a slow Redis — a co-located one under CPU
+    # pressure, say — would otherwise stall every other request on this worker.
+    cached_user_id = await asyncio.to_thread(get_cached_user_by_token, token)
     if cached_user_id:
         user_id = cached_user_id
     else:
@@ -126,7 +130,7 @@ async def get_optional_user_id(request: Request) -> str | None:
         return None
 
     try:
-        cached_user_id = get_cached_user_by_token(token)
+        cached_user_id = await asyncio.to_thread(get_cached_user_by_token, token)
         if cached_user_id:
             return cached_user_id
         user_response = await asyncio.to_thread(admin_supabase.auth.get_user, token)

@@ -271,7 +271,16 @@
     "payRm": "Bayar RM {price}",
     "paymentCompleted": "Pembayaran Selesai",
     "placeholder": "Taip mesej anda...",
-    "verifyingHuman": "Mengesahkan anda bukan robot..."
+    "verifyingHuman": "Mengesahkan anda bukan robot...",
+    "cooldown": {
+      "slowDown": "Perlahan sedikit ya. Anda boleh hantar mesej lagi dalam {seconds}s.",
+      "canSendAgain": "Anda boleh hantar mesej semula.",
+      "almostAtLimit": "Anda menghantar mesej dengan pantas — {count} lagi sebelum rehat sebentar.",
+      "waitingPlaceholder": "Menunggu {seconds}s…",
+      "takingLonger": "Masih memasak — kali ini mengambil sedikit masa…",
+      "turnTimedOut": "Itu mengambil masa lebih lama daripada dijangka.",
+      "tryAgain": "Cuba lagi"
+    }
   },
   "orders": {
     "purchaseHistory": "Sejarah Pembelian",

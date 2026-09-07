@@ -27,6 +27,12 @@ if not REDIS_URL:
     elif not os.getenv("VERCEL"):
         REDIS_URL = "redis://localhost:6379"
 
+# Upper bound on the shared Redis connection pool, per worker process. Left
+# unbounded, a burst of concurrent requests can open connections without limit;
+# the ceiling here is sized for the ~32-thread pool `asyncio.to_thread` uses
+# plus headroom, so it caps the blast radius without throttling normal traffic.
+REDIS_MAX_CONNECTIONS = int(os.getenv("REDIS_MAX_CONNECTIONS", "50"))
+
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 STRIPE_API_KEY = os.getenv("STRIPE_API_KEY")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")

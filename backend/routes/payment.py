@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from admin_session import verify_admin
 from auth_middleware import get_user_id_from_body_or_token, verify_user_token
 from connector import admin_supabase
+from limiter import CHECKOUT_LIMIT, limiter
 from logger import logger
 from payment.pay import create_checkout_session
 from schemas import CheckoutRequest
@@ -13,17 +14,25 @@ router = APIRouter(prefix="/payment", tags=["Payment"])
 
 
 @router.post("/checkout")
+@limiter.limit(CHECKOUT_LIMIT)
 def checkout(
-    request: CheckoutRequest,
+    request: Request,
+    payload: CheckoutRequest,
     token_user_id: str = Depends(verify_user_token),
 ):
-    """Create a Stripe checkout session for an item."""
+    """Create a Stripe checkout session for an item.
+
+    `request` is the raw Starlette request, which slowapi requires by that
+    exact name to key the limit; the JSON body moved to `payload`. FastAPI
+    derives the body from the Pydantic type, not the parameter name, so the
+    HTTP contract is unchanged.
+    """
     try:
         # Require a valid (and non-banned) JWT. The buyer is always the
         # authenticated user — never trust the user_id from the body.
-        user_id = get_user_id_from_body_or_token(request.user_id, token_user_id)
+        user_id = get_user_id_from_body_or_token(payload.user_id, token_user_id)
 
-        item_id = request.item_id
+        item_id = payload.item_id
 
         # Get item from database (soft-deleted items can't be purchased).
         response = admin_supabase.table('items').select('*').eq('id', item_id).is_('deleted_at', 'null').execute()

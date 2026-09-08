@@ -12,6 +12,8 @@ import { MEDIA_EXTENSIONS, runtimeCaching } from '../pwa/runtime-caching'
 const CDN_ORIGIN = 'https://umtsegjkgpfefjvhyysh.supabase.co'
 const STORAGE_PREFIX = `${CDN_ORIGIN}/storage/v1/object/public/images`
 const APP_ORIGIN = 'https://negolah.my'
+// SPEC-045: the demo video moved to a Cloudflare R2 bucket behind this domain.
+const MEDIA_CDN_ORIGIN = 'https://media.negolah.my'
 
 function matchingRules(url: string) {
   return runtimeCaching.filter(rule => rule.urlPattern.test(url))
@@ -23,16 +25,17 @@ function resolveRule(url: string) {
 }
 
 describe('SPEC-030 — Workbox runtime caching rules', () => {
-  it('does not route the Supabase-hosted product demo video through the service worker', () => {
-    const videoUrl = `${STORAGE_PREFIX}/videos/negotiation-demo.mp4`
-
-    expect(matchingRules(videoUrl)).toEqual([])
+  it('does not route the R2-hosted product demo video through the service worker', () => {
+    expect(matchingRules(`${MEDIA_CDN_ORIGIN}/videos/negotiation-demo.mp4`)).toEqual([])
+    // ...nor the old Supabase location, still guarded so a regression is visible.
+    expect(matchingRules(`${STORAGE_PREFIX}/videos/negotiation-demo.mp4`)).toEqual([])
   })
 
   it('does not route any media extension through the service worker, on any origin', () => {
     for (const ext of MEDIA_EXTENSIONS) {
       expect(matchingRules(`${STORAGE_PREFIX}/videos/demo.${ext}`), `CDN .${ext}`).toEqual([])
       expect(matchingRules(`${APP_ORIGIN}/videos/demo.${ext}`), `app origin .${ext}`).toEqual([])
+      expect(matchingRules(`${MEDIA_CDN_ORIGIN}/videos/demo.${ext}`), `media CDN .${ext}`).toEqual([])
     }
   })
 

@@ -52,6 +52,11 @@ htmlcov/
 stripe-backup-code.txt
 data/
 backend/data/
+# SPEC-045: large media is served from Cloudflare R2, never committed. Master
+# copies live outside the repo (see frontend/scripts/sync-media-r2.mjs).
+frontend/public/videos/
+*.mp4
+*.webm
 
 # ===== Redis =====
 dump.rdb

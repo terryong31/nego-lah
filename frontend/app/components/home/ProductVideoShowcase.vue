@@ -1,15 +1,21 @@
 <script setup lang="ts">
 /**
- * Product Walkthrough Video Showcase (SPEC-026)
+ * Product Walkthrough Video Showcase (SPEC-026, SPEC-045)
  *
  * Cinematic, autonomous product walkthrough video showcase.
  * Plays automatically when scrolled into view and pauses when out of view.
  * Unobtrusive, non-interactive showcase framed with Corporate Memphis design accents
  * and ambient lighting.
+ *
+ * SPEC-045: the demo MP4 lives in Cloudflare R2 behind `media.negolah.my`
+ * (zero-egress CDN — it used to be a 13 MB asset on metered Supabase Storage).
+ * It is lazy-loaded: `preload="none"` and no `<source>` is attached until the
+ * section first enters the viewport, so a visitor who bounces on the hero
+ * transfers zero video bytes.
  */
 
 interface Props {
-  /** Path to MP4/WebM video asset */
+  /** Explicit video URL. Overrides CDN resolution and loads immediately. */
   src?: string
   /** Fallback poster image */
   poster?: string
@@ -25,18 +31,27 @@ const props = withDefaults(defineProps<Props>(), {
 
 const config = useRuntimeConfig()
 const rawPublic = config.public as Record<string, unknown>
-const supabaseSub = rawPublic?.supabase as Record<string, unknown> | undefined
-const supabaseUrl = (typeof rawPublic?.supabaseUrl === 'string' && rawPublic.supabaseUrl)
-  || (typeof supabaseSub?.url === 'string' && supabaseSub.url)
-  || (typeof process !== 'undefined' ? (process.env?.NUXT_PUBLIC_SUPABASE_URL || process.env?.SUPABASE_URL) : undefined)
+const mediaCdnUrl = (typeof rawPublic?.mediaCdnUrl === 'string' && rawPublic.mediaCdnUrl)
+  || 'https://media.negolah.my'
 
-const videoSource = computed(() => {
+const resolvedSource = computed(() => {
   if (props.src) return props.src
-  if (supabaseUrl) {
-    return `${supabaseUrl.replace(/\/$/, '')}/storage/v1/object/public/images/videos/negotiation-demo.mp4`
-  }
-  return '/videos/negotiation-demo.mp4'
+  return `${String(mediaCdnUrl).replace(/\/$/, '')}/videos/negotiation-demo.mp4`
 })
+
+/**
+ * SPEC-045: don't touch the network until the showcase is about to be seen.
+ * An explicit `src` prop is an intentional "use this now"; a browser without
+ * `IntersectionObserver` can't detect the scroll, so load eagerly rather than
+ * never. During prerender there is no `window` — emit nothing and let the
+ * client-side mount (this SPA re-renders, it does not hydrate) decide.
+ */
+const isBrowser = typeof window !== 'undefined'
+const hasIntersectionObserver = isBrowser && 'IntersectionObserver' in window
+const shouldLoad = ref(Boolean(props.src) || (isBrowser && !hasIntersectionObserver))
+
+/** URL bound to the element — empty until we've decided to load. */
+const videoSource = computed(() => (shouldLoad.value ? resolvedSource.value : ''))
 
 const videoRef = useTemplateRef<HTMLVideoElement>('videoRef')
 const containerRef = useTemplateRef<HTMLElement>('containerRef')
@@ -44,13 +59,17 @@ const containerRef = useTemplateRef<HTMLElement>('containerRef')
 let observer: IntersectionObserver | null = null
 
 /**
- * A transient network failure on the 13.5 MB asset used to strand the poster
- * until the visitor happened to reload the page. Retry the load a bounded
- * number of times so a genuinely broken asset can't spin forever.
+ * A transient network failure on the asset used to strand the poster until the
+ * visitor happened to reload the page. Retry the load a bounded number of times
+ * so a genuinely broken asset can't spin forever.
  */
 const MAX_LOAD_RETRIES = 2
 let loadRetries = 0
 let retryTimer: ReturnType<typeof setTimeout> | null = null
+
+function beginLoading() {
+  if (!shouldLoad.value) shouldLoad.value = true
+}
 
 function handleLoadError() {
   if (loadRetries >= MAX_LOAD_RETRIES) return
@@ -95,14 +114,22 @@ function handleLoadedData() {
   attemptPlay()
 }
 
-watch(videoSource, () => {
+// Once we commit to loading, `videoSource` flips from '' to the real URL:
+// bind it, then kick the element into fetching and playing.
+watch(videoSource, (url) => {
   const el = videoRef.value
-  if (el) {
+  if (el && url) {
     loadRetries = 0
     el.load()
     attemptPlay()
   }
 })
+
+function isInViewport() {
+  if (!containerRef.value || typeof window === 'undefined') return false
+  const rect = containerRef.value.getBoundingClientRect()
+  return rect.top < window.innerHeight && rect.bottom > 0
+}
 
 onMounted(() => {
   const el = videoRef.value
@@ -111,28 +138,34 @@ onMounted(() => {
     el.muted = true
   }
 
-  // If already visible in viewport on initial load, play immediately
-  if (containerRef.value && typeof window !== 'undefined') {
-    const rect = containerRef.value.getBoundingClientRect()
-    if (rect.top < window.innerHeight && rect.bottom > 0) {
-      attemptPlay()
-    }
+  // Eager path (explicit src, or no IntersectionObserver): play if already visible.
+  if (shouldLoad.value && isInViewport()) {
+    attemptPlay()
   }
 
-  // Viewport intersection observer for autonomous play / pause
-  if (props.autoPlayOnScroll && typeof window !== 'undefined' && 'IntersectionObserver' in window && containerRef.value) {
+  // Viewport intersection observer: lazy-loads on first entry, then drives
+  // autonomous play / pause.
+  if (props.autoPlayOnScroll && hasIntersectionObserver && containerRef.value) {
     observer = new IntersectionObserver((entries) => {
       const entry = entries[0]
-      if (!entry || !videoRef.value) return
+      if (!entry) return
 
       if (entry.isIntersecting) {
-        attemptPlay()
-      } else if (!videoRef.value.paused) {
+        if (shouldLoad.value) {
+          attemptPlay()
+        } else {
+          // `watch(videoSource)` runs load() + attemptPlay() once the URL binds.
+          beginLoading()
+        }
+      } else if (videoRef.value && !videoRef.value.paused) {
         videoRef.value.pause()
       }
     }, { threshold: [0, 0.15, 0.5] })
 
     observer.observe(containerRef.value)
+  } else if (!shouldLoad.value && isInViewport()) {
+    // autoPlayOnScroll disabled and nothing else will trigger the load.
+    beginLoading()
   }
 
   onBeforeUnmount(() => {
@@ -313,13 +346,12 @@ onMounted(() => {
       >
         <video
           ref="videoRef"
-          :src="videoSource"
           class="w-full h-full object-cover pointer-events-none select-none"
           playsinline
           autoplay
           muted
           loop
-          preload="auto"
+          preload="none"
           tabindex="-1"
           disablepictureinpicture
           disableremoteplayback
@@ -328,6 +360,7 @@ onMounted(() => {
           @loadeddata="handleLoadedData"
         >
           <source
+            v-if="shouldLoad"
             :src="videoSource"
             type="video/mp4"
           >

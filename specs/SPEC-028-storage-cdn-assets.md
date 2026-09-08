@@ -11,6 +11,14 @@ assigned: agent
 # Context & Objectives
 Serve static branding assets (logo for transactional emails) and the product demo walkthrough video from Supabase Storage's global CDN across staging and production environments. Optimize the demo video for instant progressive streaming via HTTP 206 byte-range requests by reorganizing MP4 atom indices with FastStart.
 
+> **Superseded in part by [SPEC-045](SPEC-045-r2-media-cdn.md) (2026-09-08):** the demo
+> walkthrough video moved off Supabase Storage to a zero-egress Cloudflare R2
+> bucket (`media.negolah.my`) after one 13 MB asset exhausted the Supabase Free
+> plan's 5 GB egress quota. The FastStart criterion and the
+> `videos/negotiation-demo.mp4` upload below no longer apply. The **branding
+> assets** (`branding/logo.png`, `branding/mark.svg`) stay on Supabase Storage —
+> transactional email embeds them by absolute URL.
+
 # Acceptance Criteria
 - [ ] MP4 video has the `moov` index atom relocated before the `mdat` payload (FastStart), enabling instant progressive HTTP streaming without full download.
 - [ ] `branding/logo.png`, `branding/mark.svg`, and `videos/negotiation-demo.mp4` are uploaded to the public `images` bucket in both Supabase staging (`dev`) and production (`prod`).

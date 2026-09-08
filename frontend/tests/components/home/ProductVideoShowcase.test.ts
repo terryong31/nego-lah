@@ -1,6 +1,30 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { nextTick } from 'vue'
 import { mountSuspended } from '@nuxt/test-utils/runtime'
 import ProductVideoShowcase from '~/components/home/ProductVideoShowcase.vue'
+
+// SPEC-045: the component lazy-loads the video, deferring the request until the
+// section intersects the viewport. Drive that with a controllable observer.
+let intersectionCallback: IntersectionObserverCallback | undefined
+
+class MockIntersectionObserver {
+  constructor(cb: IntersectionObserverCallback) {
+    intersectionCallback = cb
+  }
+
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+  takeRecords() { return [] }
+}
+
+async function scrollIntoView() {
+  intersectionCallback?.(
+    [{ isIntersecting: true } as IntersectionObserverEntry],
+    {} as IntersectionObserver
+  )
+  await nextTick()
+}
 
 describe('components/home/ProductVideoShowcase.vue', () => {
   beforeEach(() => {
@@ -8,6 +32,9 @@ describe('components/home/ProductVideoShowcase.vue', () => {
     window.HTMLMediaElement.prototype.play = vi.fn().mockResolvedValue(undefined)
     window.HTMLMediaElement.prototype.pause = vi.fn()
     window.HTMLMediaElement.prototype.load = vi.fn()
+
+    intersectionCallback = undefined
+    vi.stubGlobal('IntersectionObserver', MockIntersectionObserver)
   })
 
   it('renders the #how-it-works section with headline and Memphis wave', async () => {
@@ -46,16 +73,36 @@ describe('components/home/ProductVideoShowcase.vue', () => {
     expect(source.attributes('src')).toBe('/videos/negotiation-demo.mp4')
   })
 
-  it('resolves default video source to Supabase CDN or fallback when src prop is omitted', async () => {
+  // ---- SPEC-045: lazy load + Cloudflare R2 CDN resolution ----
+
+  it('does not attach a video source until the section scrolls into view', async () => {
     const wrapper = await mountSuspended(ProductVideoShowcase)
 
     const video = wrapper.find('video')
     expect(video.exists()).toBe(true)
+    expect(video.attributes('preload')).toBe('none')
+    expect(video.attributes('src')).toBeUndefined()
+    expect(video.find('source').exists()).toBe(false)
+  })
 
-    const source = video.find('source')
+  it('attaches the media.negolah.my CDN source once the section is intersecting', async () => {
+    const wrapper = await mountSuspended(ProductVideoShowcase)
+
+    await scrollIntoView()
+
+    const source = wrapper.find('video source')
     expect(source.exists()).toBe(true)
-    const src = source.attributes('src')
-    expect(src).toMatch(/(videos\/negotiation-demo\.mp4)/)
+    expect(source.attributes('src')).toBe('https://media.negolah.my/videos/negotiation-demo.mp4')
+  })
+
+  it('loads immediately, without waiting for intersection, when an explicit src is passed', async () => {
+    const wrapper = await mountSuspended(ProductVideoShowcase, {
+      props: { src: 'https://cdn.example/clip.mp4' }
+    })
+
+    const source = wrapper.find('video source')
+    expect(source.exists()).toBe(true)
+    expect(source.attributes('src')).toBe('https://cdn.example/clip.mp4')
   })
 
   it('renders Corporate Memphis floating decorative SVGs around the video frame', async () => {

@@ -87,18 +87,27 @@ dir = "backend"
 run = "infisical run --env=prod --path=/Backend -- uv run python scripts/run_migrations.py"
 
 [tasks."cdn:sync:staging"]
-description = "Synchronize brand icons and demo video to staging Supabase Storage CDN"
+description = "Synchronize email branding icons to staging Supabase Storage CDN"
 dir = "backend"
 run = "infisical run --env=dev --path=/Backend -- uv run python scripts/sync_cdn_assets.py"
 
 [tasks."cdn:sync:prod"]
-description = "Synchronize brand icons and demo video to production Supabase Storage CDN"
+description = "Synchronize email branding icons to production Supabase Storage CDN"
 dir = "backend"
 run = "infisical run --env=prod --path=/Backend -- uv run python scripts/sync_cdn_assets.py"
 
 [tasks."cdn:sync"]
-description = "Synchronize brand icons and demo video to both staging and production CDNs"
+description = "Synchronize email branding icons to both staging and production CDNs"
 depends = ["cdn:sync:staging", "cdn:sync:prod"]
+
+# SPEC-045: the demo walkthrough video is served from a zero-egress Cloudflare R2
+# bucket (media.negolah.my), NOT Supabase Storage. Release files live outside the
+# repo at ~/Desktop/nego-lah-media/dist (override with MEDIA_SOURCE_DIR). Auth is
+# your local `wrangler login` — no token or Infisical secret. Rare manual op.
+[tasks."media:sync"]
+description = "Upload the optimized demo media to Cloudflare R2 (needs `wrangler login`)"
+dir = "frontend"
+run = "node scripts/sync-media-r2.mjs"
 
 [tasks."sentry:info"]
 description = "Verify Sentry CLI configuration and authentication"

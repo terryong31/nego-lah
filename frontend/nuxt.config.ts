@@ -70,7 +70,11 @@ export default defineNuxtConfig({
       turnstileEnabled: process.env.NODE_ENV === 'production' || process.env.NUXT_PUBLIC_TURNSTILE_ENABLED === 'true',
       turnstileSiteKey: process.env.NODE_ENV === 'production' ? (process.env.NUXT_PUBLIC_TURNSTILE_SITE_KEY || '0x4AAAAAAEmNZSy3jXy_Eh38') : '',
       gtmId: process.env.NUXT_PUBLIC_GTM_ID || '',
-      gaId: process.env.NUXT_PUBLIC_GA_ID || 'G-M4J8K55PPM'
+      gaId: process.env.NUXT_PUBLIC_GA_ID || 'G-M4J8K55PPM',
+      // SPEC-045: large static media (the demo walkthrough video) is served from
+      // a zero-egress Cloudflare R2 bucket behind this custom domain, not from
+      // metered Supabase Storage. Overridable for staging / local mirrors.
+      mediaCdnUrl: process.env.NUXT_PUBLIC_MEDIA_CDN_URL || 'https://media.negolah.my'
     }
   },
 

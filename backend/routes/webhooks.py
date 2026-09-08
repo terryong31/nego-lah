@@ -1,5 +1,6 @@
 import base64
 import email as email_lib
+import json
 from email import policy as email_policy
 
 import httpx
@@ -35,13 +36,17 @@ async def resend_webhook(request: Request):
     }
 
     try:
-        event = Webhook(RESEND_WEBHOOK_SECRET).verify(payload, headers)
+        # svix's verify() only validates the signature and returns None — it does
+        # not hand back the parsed body — so the event still has to be parsed
+        # from the raw payload separately below.
+        Webhook(RESEND_WEBHOOK_SECRET).verify(payload, headers)
     except (WebhookVerificationError, ValueError):
         # ValueError also covers malformed (non-base64) signature/header values that
         # the svix/standardwebhooks library doesn't wrap in WebhookVerificationError.
         logger.warning("⚠️ Resend webhook signature verification failed: invalid signature or headers")
         raise HTTPException(status_code=400, detail="Invalid webhook signature") from None
 
+    event = json.loads(payload)
     event_type = event.get("type")
     if event_type != "email.received":
         logger.info(f"ℹ️ Ignoring Resend event type: {event_type}")

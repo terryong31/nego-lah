@@ -50,8 +50,11 @@ describe('PWA & Cloudflare Pages Security Configuration', () => {
     expect(nuxtConfig).toContain('registerType: \'autoUpdate\'')
     expect(nuxtConfig).toContain('navigateFallback: \'/\'')
 
-    // Must protect backend API routes and console from navigation fallback
-    expect(nuxtConfig).toContain('navigateFallbackDenylist:')
+    // Must protect backend API routes, console, and static files (SPEC-038)
+    // from navigation fallback — the patterns themselves are unit-tested
+    // against real URLs in pwa-navigate-fallback-denylist.test.ts.
+    expect(nuxtConfig).toContain('navigateFallbackDenylist')
+    expect(nuxtConfig).toContain('./pwa/navigate-fallback-denylist')
 
     // SPEC-030: runtime caching rules live in a shared, unit-tested module
     expect(nuxtConfig).toContain('./pwa/runtime-caching')

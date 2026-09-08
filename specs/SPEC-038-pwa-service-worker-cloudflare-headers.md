@@ -11,6 +11,19 @@ assigned: agent
 > Renumbered from SPEC-017: three pairs of specs had been filed under the same
 > number, which broke traceability. Content unchanged.
 
+> **2026-09-08 update:** `navigateFallbackDenylist` only excluded `/api/` and
+> `/_console`. Any other top-level static file (`/robots.txt`, `/sitemap.xml`,
+> `/site.webmanifest`, ...) fell through to `navigateFallback: '/'`, so once a
+> visitor's browser had installed the service worker, a direct navigation to
+> `/robots.txt` served the cached SPA shell instead of the real file — Vue
+> Router has no route for it, so the app rendered its own 404 page. A hard
+> refresh masked the bug because Chrome/Firefox bypass the active service
+> worker for a force-reload navigation, hitting the real static file on the
+> network. Fixed by adding a pattern that denylists any request whose last
+> path segment contains a `.` (i.e. an actual file), extracted into
+> `frontend/pwa/navigate-fallback-denylist.ts` alongside the existing rules so
+> it stays unit-tested the same way `pwa/runtime-caching.ts` is (SPEC-030).
+
 # Context & Objectives
 Nego-Lah is deployed as a Single Page Application (`ssr: false`) on Cloudflare Pages with an autonomous AI bargaining backend on AWS Lightsail. To deliver an installable, resilient native-like experience while avoiding false-positive blocks from Cloudflare's Web Application Firewall (WAF), Page Shield, or Bot Management:
 1. Modern browsers require a registered Service Worker with Workbox precaching and runtime caching strategies for static assets and API requests.
@@ -24,6 +37,7 @@ Nego-Lah is deployed as a Single Page Application (`ssr: false`) on Cloudflare P
 - [x] CSP includes `worker-src 'self' blob:` and `child-src 'self' blob:` to allow service worker instantiation without browser security violations.
 - [x] CSP includes backend API (`https://api.negolah.my`), Supabase, Sentry, Turnstile, and Google Analytics in `connect-src`.
 - [x] Workbox configuration denylists `/api/` and `/_console` from SPA navigation fallback.
+- [x] Workbox configuration also denylists any request for a real static file (last path segment contains a `.`) from SPA navigation fallback, so `/robots.txt`, `/sitemap.xml`, etc. are never shadowed by the cached app shell.
 - [x] Workbox runtime caching specifies non-stale policies (`NetworkFirst` / `NetworkOnly`) for inventory & bargaining endpoints, and cache policies for static assets and fonts.
 - [x] `backend/main.py` CORS middleware supports Cloudflare Pages (`*.pages.dev`) and production domains (`*.negolah.my`) via `allow_origin_regex`.
 - [x] All frontend and backend tests pass, lint passes with 0 errors, and typecheck passes.
@@ -61,6 +75,7 @@ Nego-Lah is deployed as a Single Page Application (`ssr: false`) on Cloudflare P
 - [x] **Scenario 1 (`pwa.test.ts`):** Validate `frontend/public/_headers` exists and specifies `/sw.js` with `no-cache`, `Service-Worker-Allowed: /`, and proper CSP directives (`worker-src`, `child-src`, `connect-src`).
 - [x] **Scenario 2 (`pwa.test.ts`):** Validate Nuxt config registers `@vite-pwa/nuxt`, configures Workbox navigation fallback denylist for `/api/` and `/_console`, and establishes runtime caching rules.
 - [x] **Scenario 3 (`test_cors.py`):** Assert CORS preflight and requests from `https://nego-lah.pages.dev` and `https://pr-123.nego-lah.pages.dev` receive `Access-Control-Allow-Origin` and `Access-Control-Allow-Credentials: true`.
+- [x] **Scenario 4 (`pwa-navigate-fallback-denylist.test.ts`):** Assert the real regex patterns denylist `/robots.txt`, `/site.webmanifest`, `/sitemap.xml`, `/favicon.ico`, `/api/...`, and `/_console...`, while real SPA routes (`/`, `/items`, `/items/abc-123`, `/chat`, `/login`, `/privacy`) are left to resolve via the shell.
 
 # Implementation Files
 - `specs/SPEC-038-pwa-service-worker-cloudflare-headers.md` - Specification

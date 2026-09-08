@@ -145,7 +145,7 @@ async function handleBuyNow() {
 
     <div
       v-else
-      class="grid grid-cols-1 md:grid-cols-2 gap-8 md:h-[calc(100vh-12rem)] items-center"
+      class="grid grid-cols-1 md:grid-cols-2 gap-8 md:h-[calc(100dvh-12rem)] items-center"
     >
       <!-- Left side: Image Gallery/Carousel — vertically centered -->
       <div class="flex flex-col justify-center h-full">
@@ -187,7 +187,7 @@ async function handleBuyNow() {
       </div>
 
       <!-- Right side: title+price top, compact description, buttons pinned bottom -->
-      <div class="flex flex-col h-full py-2 min-h-0">
+      <div class="flex flex-col md:h-full py-2 min-h-0">
         <!-- Title + price -->
         <div class="shrink-0 space-y-3">
           <h1 class="text-3xl font-extrabold text-highlighted tracking-tight">
@@ -218,8 +218,8 @@ async function handleBuyNow() {
           </div>
         </div>
 
-        <!-- Compact description: reduced height, scrolls internally only if long -->
-        <div class="mt-3 space-y-2 flex-1 min-h-0 flex flex-col">
+        <!-- Compact description: reduced height, scrolls internally only if long (md+ only; mobile flows with the page) -->
+        <div class="mt-3 space-y-2 md:flex-1 md:min-h-0 flex flex-col">
           <h3 class="font-semibold text-highlighted shrink-0">
             {{ $t('items.productDesc') }}
           </h3>
@@ -227,7 +227,7 @@ async function handleBuyNow() {
             <span class="text-sm text-muted">{{ $t('items.conditionColon') }}</span>
             <span class="text-sm font-semibold capitalize">{{ localizedCondition }}</span>
           </div>
-          <div class="text-muted text-sm leading-relaxed flex-1 min-h-0 overflow-y-auto pr-2 pb-4 prose prose-sm dark:prose-invert max-w-none">
+          <div class="text-muted text-sm leading-relaxed md:flex-1 md:min-h-0 md:overflow-y-auto pr-2 pb-4 prose prose-sm dark:prose-invert max-w-none">
             <MDC :value="localizedDescription" />
           </div>
         </div>

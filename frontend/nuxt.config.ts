@@ -1,4 +1,5 @@
 import { runtimeCaching } from './pwa/runtime-caching'
+import { navigateFallbackDenylist } from './pwa/navigate-fallback-denylist'
 import { injectLegalDocument } from './build/legal-prerender'
 
 export default defineNuxtConfig({
@@ -281,7 +282,7 @@ export default defineNuxtConfig({
     },
     workbox: {
       navigateFallback: '/',
-      navigateFallbackDenylist: [/^\/api\//, /^\/_console/],
+      navigateFallbackDenylist,
       globPatterns: ['**/*.{js,css,html,svg,png,ico,woff,woff2}'],
       cleanupOutdatedCaches: true,
       clientsClaim: true,

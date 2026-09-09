@@ -10,7 +10,7 @@ load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 ADMIN_SUPABASE_KEY = os.getenv("ADMIN_SUPABASE_KEY")
-USER_SUPABASE_KEY = os.getenv("USER_SUPABASE_KEY") or ADMIN_SUPABASE_KEY
+USER_SUPABASE_KEY = os.getenv("USER_SUPABASE_KEY")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 REDIS_URL = os.getenv("REDIS_URL")

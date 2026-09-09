@@ -42,6 +42,17 @@ def test_cors_rejects_unauthorized_domain():
     assert response.headers.get("access-control-allow-origin") is None
 
 
+def test_cors_rejects_unauthorized_pages_dev_domain():
+    response = client.options(
+        "/items",
+        headers={
+            "Origin": "https://attacker.pages.dev",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert response.headers.get("access-control-allow-origin") is None
+
+
 def test_defense_middleware_413_still_carries_cors_headers():
     """
     Regression: RequestDefenseMiddleware short-circuits oversized uploads with

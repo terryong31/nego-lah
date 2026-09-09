@@ -43,6 +43,12 @@
 43. [x] do not perform 50% price cut between the min_price and current nego price (SPEC-047/ADR-0011: below floor → hold, no concession; above floor → concede 25% of the gap snapped to RM5, whole numbers only; tune COUNTER_CONCESSION_RATIO / COUNTER_STEP_RM in agent/config.py)
 44. [x] agent nego price ui should change together with the buy button, not the original price (SPEC-047: /payment/checkout now charges min(listed, negotiated) clamped to the floor — the pinned-header Buy Now button honours the haggled price; no UI change)
 45. optimize seller agent flow to reduce cost, use ragas to evaluate performance and cost
-46. support cash on delivery for this app
-47. update readme
+46. mention about cash on delivery arrangement not supported for this app. inform the user to switch to Terry to arrange COD. also mention to user that this platform is FCFS basis, if a user bought the item before the COD time, the COD arrangement will be automatically cancelled
+47. Update readme
 48. [x] Cloudflare Security Center findings remediation (SPEC-050/ADR-0014: HSTS in _headers + Caddyfile, RFC 9116 security.txt, SECURITY.md policy; DNS SPF & DMARC + Cloudflare zone hardening runbook)
+49. Integrate postage in this app. Once an items is paid and information has been sent. Allow admin upload postage information like tracking number, shipping company etc for the user to refer, also send them email about it.
+50. Allow AI to update user about the shipping status and chat notify them.
+51. Integrate image auto compression on upload item, support heif image format
+52. Optimize ai response by giving it a common knowledge base instead of ingesting the entire image when user query to optimize cost, might consider switchng to 3.5 flash lite and evaluate its performance
+53. Integrate discord/telegram for admin notifications
+54. [x] Security vulnerability remediation: CORS pages.dev restriction to nego-lah.pages.dev, AI agent shipping info buyer_id scoping, PII log masking (SPEC-051/ADR-0015)

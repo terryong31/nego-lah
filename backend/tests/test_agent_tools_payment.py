@@ -374,6 +374,53 @@ def test_collect_shipping_exception(patch_supabase, fake_supabase):
     assert result == "Error saving shipping info: db exploded"
 
 
+def test_collect_shipping_scoped_to_authenticated_user(patch_supabase, fake_supabase, monkeypatch):
+    patch_supabase("connector", admin=fake_supabase)
+    import agent.context
+    monkeypatch.setattr(agent.context, "get_user_id", lambda: "buyer-user-456")
+
+    # When chained: update().eq('id', 'order-1').eq('buyer_id', 'buyer-user-456').execute()
+    first_eq = fake_supabase.table.return_value.update.return_value.eq
+    second_eq = first_eq.return_value.eq
+    second_eq.return_value.execute.return_value = MagicMock(data=[{"id": "order-1", "buyer_id": "buyer-user-456"}])
+
+    result = _collect(order_id="order-1")
+
+    assert "Shipping information saved" in result
+    first_eq.assert_called_once_with("id", "order-1")
+    second_eq.assert_called_once_with("buyer_id", "buyer-user-456")
+
+
+def test_collect_shipping_access_denied_for_other_user_order(patch_supabase, fake_supabase, monkeypatch):
+    patch_supabase("connector", admin=fake_supabase)
+    import agent.context
+    monkeypatch.setattr(agent.context, "get_user_id", lambda: "attacker-user")
+
+    first_eq = fake_supabase.table.return_value.update.return_value.eq
+    second_eq = first_eq.return_value.eq
+    second_eq.return_value.execute.return_value = MagicMock(data=[])
+
+    result = _collect(order_id="victim-order")
+
+    assert result == "Order not found. Please check the order ID."
+    first_eq.assert_called_once_with("id", "victim-order")
+    second_eq.assert_called_once_with("buyer_id", "attacker-user")
+
+
+def test_collect_shipping_masks_pii_in_logs(patch_supabase, fake_supabase, caplog):
+    import logging
+    patch_supabase("connector", admin=fake_supabase)
+    fake_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value = MagicMock(
+        data=[{"id": "order-1"}]
+    )
+    with caplog.at_level(logging.INFO):
+        _collect(order_id="order-1", phone="0123456789", address="123 Jalan Ampang, KL")
+
+    assert "012****89" in caplog.text
+    assert "0123456789" not in caplog.text
+    assert "123 Jalan ..." in caplog.text
+
+
 # ---------------------------------------------------------------------------
 # web_search
 # ---------------------------------------------------------------------------

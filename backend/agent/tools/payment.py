@@ -244,24 +244,35 @@ def collect_shipping_info(order_id: str, recipient_name: str, phone: str, addres
         Confirmation message
     """
 
+    from agent.context import get_user_id
     from connector import admin_supabase
+
+    masked_phone = phone.strip()[:3] + "****" + phone.strip()[-2:] if len(phone.strip()) > 5 else "***"
+    masked_address = address.strip()[:10] + "..." if len(address.strip()) > 10 else "***"
 
     logger.info(f"\n{'='*50}")
     logger.info("📦 COLLECT_SHIPPING_INFO CALLED")
     logger.info(f"🆔 Order ID: {order_id}")
     logger.info(f"👤 Name: {recipient_name}")
-    logger.info(f"📞 Phone: {phone}")
-    logger.info(f"📍 Address: {address}")
+    logger.info(f"📞 Phone: {masked_phone}")
+    logger.info(f"📍 Address: {masked_address}")
     logger.info(f"{'='*50}")
 
+    user_id = get_user_id()
+
     try:
-        # Update order with shipping info
-        result = admin_supabase.table('orders').update({
+        # Update order with shipping info, strictly scoped to the active buyer if authenticated
+        query = admin_supabase.table('orders').update({
             'recipient_name': recipient_name,
             'phone': phone,
             'address': address,
             'status': 'confirmed'
-        }).eq('id', order_id).execute()
+        }).eq('id', order_id)
+
+        if user_id:
+            query = query.eq('buyer_id', user_id)
+
+        result = query.execute()
 
         if result.data:
             logger.info("✅ Shipping info saved successfully")

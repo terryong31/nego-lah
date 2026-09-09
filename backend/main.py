@@ -139,7 +139,7 @@ _DEV_ORIGINS = [
 ]
 
 _ORIGIN_REGEX = (
-    r"^https://([a-zA-Z0-9_-]+\.)*pages\.dev$|"
+    r"^https://([a-zA-Z0-9_-]+\.)*nego-lah\.pages\.dev$|"
     r"^https://([a-zA-Z0-9_-]+\.)*negolah\.my$"
 )
 

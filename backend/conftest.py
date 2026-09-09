@@ -159,6 +159,14 @@ def _clear_dependency_overrides():
 
 
 @pytest.fixture(autouse=True)
+def _reset_agent_context():
+    from agent.context import set_context
+    set_context(user_id=None, item_id=None)
+    yield
+    set_context(user_id=None, item_id=None)
+
+
+@pytest.fixture(autouse=True)
 def _flush_in_memory_redis():
     yield
     import cache

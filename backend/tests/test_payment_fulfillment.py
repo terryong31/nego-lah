@@ -376,6 +376,60 @@ def test_finalize_won_sale_happy_path(monkeypatch, patch_supabase, fake_supabase
     assert _no_network_broadcast.post.call_count == 2
 
 
+def test_finalize_won_sale_alerts_sentry_when_the_receipt_send_fails(monkeypatch, patch_supabase, fake_supabase, _quiet_side_effects, _no_network_broadcast):
+    """SPEC-048 #38-1: Resend rejecting every send is a silent failure today —
+    make it a Sentry alert. Fulfilment itself still succeeds."""
+    patch_supabase("payment.fulfillment", admin=fake_supabase)
+    monkeypatch.setattr("services.email_service.send_purchase_receipt", MagicMock(return_value=False), raising=False)
+    monkeypatch.setattr("services.email_service.send_seller_sale_alert", MagicMock(), raising=False)
+    captured = []
+    monkeypatch.setattr(fulfillment.sentry_sdk, "capture_message", lambda msg, **kw: captured.append((msg, kw)))
+
+    fulfillment._finalize_won_sale("item-1", "user-1", "pi_1", 25.0, "Widget", "buyer@example.com", order_id="ord-1")
+
+    assert len(captured) == 1
+    _msg, kw = captured[0]
+    assert kw["level"] == "error"
+    assert kw["tags"]["alert"] == "receipt_undelivered"
+    assert kw["tags"]["order_id"] == "ord-1"
+
+
+def test_finalize_won_sale_alerts_sentry_when_no_recipient_address_resolves(monkeypatch, patch_supabase, fake_supabase, _quiet_side_effects, _no_network_broadcast):
+    """SPEC-048 #38-2: no Stripe email and the account lookup returns nothing —
+    the receipt can't be addressed; that must page, not vanish into the log."""
+    patch_supabase("payment.fulfillment", admin=fake_supabase)
+    monkeypatch.setattr("payment.buyer.account_email", lambda _uid: None)
+    receipt = MagicMock()
+    monkeypatch.setattr("services.email_service.send_purchase_receipt", receipt, raising=False)
+    monkeypatch.setattr("services.email_service.send_seller_sale_alert", MagicMock(), raising=False)
+    captured = []
+    monkeypatch.setattr(fulfillment.sentry_sdk, "capture_message", lambda msg, **kw: captured.append((msg, kw)))
+    # Force the non-sandbox branch (env.STRIPE_API_KEY is re-imported inside the
+    # function) so the RESEND_FORWARD_TO catch-all redirect doesn't kick in.
+    monkeypatch.setattr("env.STRIPE_API_KEY", "sk_live_xxx")
+
+    fulfillment._finalize_won_sale("item-1", "user-1", "pi_1", 25.0, "Widget", None, order_id="ord-2")
+
+    receipt.assert_not_called()
+    assert any(kw["tags"]["alert"] == "receipt_no_address" for _m, kw in captured)
+
+
+def test_finalize_won_sale_sends_to_the_account_email_when_stripe_passed_none(monkeypatch, patch_supabase, fake_supabase, _quiet_side_effects, _no_network_broadcast):
+    """SPEC-048 #38-4: Stripe captured no email, but the buyer's account email
+    is a perfectly good address — use it."""
+    patch_supabase("payment.fulfillment", admin=fake_supabase)
+    monkeypatch.setattr("payment.buyer.account_email", lambda _uid: "account@example.com")
+    receipt = MagicMock(return_value=True)
+    monkeypatch.setattr("services.email_service.send_purchase_receipt", receipt, raising=False)
+    monkeypatch.setattr("services.email_service.send_seller_sale_alert", MagicMock(), raising=False)
+    monkeypatch.setattr(fulfillment.sentry_sdk, "capture_message", MagicMock())
+
+    fulfillment._finalize_won_sale("item-1", "user-1", "pi_1", 25.0, "Widget", None, order_id="ord-3")
+
+    assert receipt.call_args[0][0] == "account@example.com"
+    fulfillment.sentry_sdk.capture_message.assert_not_called()
+
+
 def test_finalize_won_sale_swallows_cache_invalidate_error(monkeypatch, patch_supabase, fake_supabase, _quiet_side_effects):
     patch_supabase("payment.fulfillment", admin=fake_supabase)
     broken_invalidate = MagicMock(side_effect=RuntimeError("cache down"))

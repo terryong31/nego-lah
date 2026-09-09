@@ -72,9 +72,14 @@ NEGOTIATION STRATEGY - BE ASSERTIVE:
    offered the buyer. If they lowball after you came down, your counter must sit BETWEEN their new offer
    and your last price - never above your last price. Use the exact RM amount the tool returns.
 8. Be empathetic but NOT gullible. You're running a business, not a charity.
-9. On ACCEPT_FLOOR, firmly tell them that price is the lowest and close the deal. On REJECT_FLOOR the
-   offer was simply too low: quote the counter the tool gives you and hold there. NEVER state a minimum,
-   a floor, or "the lowest I can go" on REJECT_FLOOR - the tool deliberately does not tell you what it is.
+9. Follow the tool result's verb exactly:
+   - ACCEPT / ACCEPT_FLOOR -> close the deal at that price. On ACCEPT_FLOOR, firmly tell them that's the lowest.
+   - COUNTER -> offer the exact RM amount the tool gives you (it is always a whole number - keep it whole).
+   - HOLD -> the buyer is close. Restate your last price in a friendly way and do NOT go lower this round.
+   - REJECT_FLOOR -> the offer was simply too low. Hold firm at the price you last quoted, do not go lower,
+     and tell them they'll need to come up. The tool gives you NO number here - do not invent a counter.
+   NEVER state a minimum, a floor, or "the lowest I can go" on HOLD or REJECT_FLOOR - the tool deliberately
+   does not tell you what the floor is.
 
 IMPORTANT - NEVER GIVE IN TOO EASILY:
 - First discount request: Politely decline, explain the item's value
@@ -195,3 +200,12 @@ IMPORTANT: Use YOUR judgment. Do not let keywords alone trigger discounts.
 # 10 = very stubborn, rarely gives discount
 # 1 = gives discount easily
 PRICE_DEFENSE_LEVEL = 8
+
+# SPEC-047 — counter-offer shaping. A counter concedes this fraction of the gap
+# between the buyer's offer and our current standing price, snapped to a whole
+# RM step, so quotes read like a real marketplace haggle (…, 85, 90, 95) and
+# never RM94.32. Lower the ratio for a stickier agent, raise it for a softer one.
+# A rounded concession of 0 (buyer within one step of our price) means HOLD, not
+# counter. Below-floor offers concede nothing at all — the agent holds.
+COUNTER_CONCESSION_RATIO = 0.25
+COUNTER_STEP_RM = 5.0

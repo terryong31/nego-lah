@@ -1,59 +1,83 @@
-{% macro status_badge(label, variant='success') %}
+{# ------------------------------------------------------------------------- #}
+{# Ledger email component macros (SPEC-046 / ADR 0011).                       #}
+{# One emerald accent, hairline rules as the only divider, flush-left.       #}
+{# Every macro emits inline styles for the light default plus .eml-* classes #}
+{# so base.html's prefers-color-scheme block can flip them for dark mode.    #}
+{# ------------------------------------------------------------------------- #}
+
+{% macro status_line(label, variant='success') %}
   {% if variant == 'danger' %}
-    {% set bg = '#fef2f2' %}
-    {% set border = '#fecaca' %}
-    {% set text = '#b91c1c' %}
-  {% elif variant == 'warning' %}
-    {% set bg = '#fffbeb' %}
-    {% set border = '#fef3c7' %}
-    {% set text = '#92400e' %}
+    {% set rule = '#b91c1c' %}{% set text = '#b91c1c' %}{% set cls = 'eml-danger' %}
   {% else %}
-    {% set bg = '#ecfdf5' %}
-    {% set border = '#a7f3d0' %}
-    {% set text = '#047857' %}
+    {% set rule = '#10b981' %}{% set text = '#78787f' %}{% set cls = 'eml-muted' %}
   {% endif %}
-  <div style="display: inline-block; background-color: {{ bg }}; color: {{ text }}; border: 1px solid {{ border }}; padding: 4px 14px; border-radius: 9999px; font-size: 12px; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase;">
-    {{ label }}
-  </div>
+  <table role="presentation" border="0" cellpadding="0" cellspacing="0" style="margin: 0 0 14px;">
+    <tr>
+      <td style="vertical-align: middle; padding-right: 10px;">
+        <div style="width: 22px; height: 2px; background-color: {{ rule }}; font-size: 0; line-height: 0;">&nbsp;</div>
+      </td>
+      <td class="{{ cls }}" style="vertical-align: middle; font-size: 12px; font-weight: 600; letter-spacing: 0.01em; color: {{ text }};">{{ label }}</td>
+    </tr>
+  </table>
 {% endmacro %}
 
-{% macro hero_amount(amount) %}
-  <div style="font-size: 32px; font-weight: 800; color: #059669; letter-spacing: -0.02em; margin-bottom: 24px;">
-    RM{{ "%.2f"|format(amount) }}
-  </div>
+{% macro detail_table(rows, total=None) %}
+  <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse: collapse; margin: 0 0 22px;">
+    {% for row in rows %}
+    <tr>
+      <td class="eml-muted eml-hr" style="padding: 11px 16px 11px 0; font-size: 13px; color: #78787f; border-bottom: 1px solid #dededa; vertical-align: top;">{{ row.k }}</td>
+      <td class="eml-ink eml-hr" style="padding: 11px 0; font-size: 14px; font-weight: 600; color: #1a1a1e; text-align: right; border-bottom: 1px solid #dededa; vertical-align: top; word-break: break-word;{% if row.mono %} font-family: ui-monospace, Menlo, Consolas, monospace; font-weight: 500; font-size: 12.5px;{% endif %}">{{ row.v }}</td>
+    </tr>
+    {% endfor %}
+    {% if total %}
+    <tr>
+      <td class="eml-ink eml-hr" style="padding: 12px 16px 0 0; font-size: 13px; font-weight: 700; color: #1a1a1e; border-top: 2px solid #dededa; vertical-align: top;">{{ total.k }}</td>
+      <td class="eml-accent eml-hr" style="padding: 12px 0 0; font-size: 15px; font-weight: 700; color: #047857; text-align: right; border-top: 2px solid #dededa; vertical-align: top; font-family: ui-monospace, Menlo, Consolas, monospace;">{{ total.v }}</td>
+    </tr>
+    {% endif %}
+  </table>
 {% endmacro %}
 
 {% macro cta_button(url, label) %}
-  <table role="presentation" border="0" cellpadding="0" cellspacing="0" style="margin: 0 auto;">
+  <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="margin: 4px 0 18px;">
     <tr>
-      <td align="center" style="border-radius: 8px; background-color: #10b981;">
-        <a href="{{ url }}" class="btn-primary" target="_blank" style="display: inline-block; padding: 14px 28px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 15px; font-weight: 600; color: #ffffff !important; text-decoration: none !important; border-radius: 8px; background-color: #10b981; border: 1px solid #059669;">
-          {{ label }}
-        </a>
+      <td align="center" style="border-radius: 3px; background-color: #10b981;">
+        <a href="{{ url }}" class="btn-primary" target="_blank" style="display: block; width: 100%; box-sizing: border-box; padding: 13px 20px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 14px; font-weight: 600; line-height: 1.2; text-align: center; color: #ffffff !important; text-decoration: none !important; border-radius: 3px; background-color: #10b981; border: 1px solid #059669;">{{ label }}</a>
       </td>
     </tr>
   </table>
 {% endmacro %}
 
+{% macro fallback_link(url, prefix='Button not working? Paste this link into your browser:') %}
+  <p class="eml-muted" style="margin: 0 0 4px; font-size: 12px; line-height: 1.6; color: #78787f;">
+    {{ prefix }}<br>
+    <a href="{{ url }}" target="_blank" class="eml-accent" style="color: #047857; word-break: break-all; text-decoration: underline;">{{ url }}</a>
+  </p>
+{% endmacro %}
+
 {% macro notice_box(text, title=None, variant='success') %}
-  {% if variant == 'warning' %}
-    {% set bg = '#fffbeb' %}
-    {% set border = '#fef3c7' %}
-    {% set text_color = '#92400e' %}
-    {% set border_style = 'border: 1px solid ' ~ border ~ ';' %}
+  {% if variant == 'danger' %}
+    {% set body_color = '#b91c1c' %}{% set body_cls = 'eml-danger' %}
+    {% set title_color = '#b91c1c' %}{% set title_cls = 'eml-danger' %}
   {% else %}
-    {% set bg = '#f0fdf4' %}
-    {% set border = '#10b981' %}
-    {% set text_color = '#166534' %}
-    {% set border_style = 'border-left: 4px solid ' ~ border ~ ';' %}
+    {% set body_color = '#4b4b52' %}{% set body_cls = 'eml-soft' %}
+    {% set title_color = '#1a1a1e' %}{% set title_cls = 'eml-ink' %}
   {% endif %}
-  <div style="background-color: {{ bg }}; {{ border_style }} border-radius: 6px; padding: 14px 16px; text-align: left; font-size: 13px; line-height: 1.5; color: {{ text_color }}; margin-bottom: 28px;">
-    {% if title %}<strong style="color: inherit;">{{ title }}:</strong> {% endif %}{{ text }}
-  </div>
+  <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="margin: 0 0 20px;">
+    <tr>
+      <td class="eml-hr" style="padding: 13px 0 0; border-top: 1px solid #dededa;">
+        <p class="{{ body_cls }}" style="margin: 0; font-size: 13px; line-height: 1.55; color: {{ body_color }};">{% if title %}<strong class="{{ title_cls }}" style="color: {{ title_color }}; font-weight: 600;">{{ title }}:</strong> {% endif %}{{ text }}</p>
+      </td>
+    </tr>
+  </table>
 {% endmacro %}
 
 {% macro quote_box(text) %}
-  <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-left: 4px solid #10b981; border-radius: 8px; padding: 18px 20px; font-size: 15px; line-height: 1.6; color: #334155; font-style: italic; text-align: left; margin-bottom: 28px;">
-    "{{ text }}"
-  </div>
+  <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="margin: 0 0 20px;">
+    <tr>
+      <td style="padding: 2px 0 2px 16px; border-left: 2px solid #10b981;">
+        <p class="eml-ink" style="margin: 0; font-size: 15px; line-height: 1.6; color: #1a1a1e;">{{ text }}</p>
+      </td>
+    </tr>
+  </table>
 {% endmacro %}

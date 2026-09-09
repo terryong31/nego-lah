@@ -59,7 +59,11 @@ enable_signup = true
 enable_confirmations = true
 
 [auth.email.template.magic_link]
-subject = "Your Nego-lah Verification Code: {{ .Token }}"
+# The code is NOT in the subject on purpose: subject lines show on lock screens,
+# get logged in the clear by mail servers, and a preview-and-never-open hurts
+# sender reputation. The code is in the email body + preheader (visible in the
+# inbox preview), so mobile users still get it at a glance.
+subject = "Your Nego-lah verification code"
 content_path = "./supabase/templates/magic_link.html"
 
 [auth.email.template.recovery]
@@ -72,3 +76,22 @@ content_path = "./supabase/templates/confirmation.html"
 
 [analytics]
 enabled = false
+
+# --- Remote environment overrides -------------------------------------------
+# The [auth] block above is the LOCAL config (used by `supabase start`) and also
+# what staging gets. `supabase config push --project-ref <ref>` deep-merges the
+# matching [remotes.*] block over it — prod is locked down below.
+[remotes.prod]
+project_id = "umtsegjkgpfefjvhyysh"
+
+[remotes.prod.auth]
+# Production auth never redirects to a dev origin. Only the real domain and its
+# www host, plus the wildcard for post-login return paths (/confirm, saved
+# redirect cookie, OAuth).
+site_url = "https://negolah.my"
+additional_redirect_urls = [
+  "https://negolah.my",
+  "https://negolah.my/**",
+  "https://www.negolah.my",
+  "https://www.negolah.my/**",
+]

@@ -113,7 +113,7 @@ def send_purchase_receipt(buyer_email: str, order: dict) -> bool:
     order_id = order.get("id") or order.get("order_id") or "N/A"
     date_str = datetime.now(UTC).strftime("%B %d, %Y")
 
-    subject = f"Receipt for your purchase: {item_name} - Nego-Lah"
+    subject = f"Payment confirmed — {item_name}"
     chat_url = f"{FRONTEND_URL}/chat"
     orders_url = f"{FRONTEND_URL}/orders"
 
@@ -138,7 +138,7 @@ def send_seller_sale_alert(seller_email: str, order: dict) -> bool:
     buyer_email = order.get("buyer_email") or order.get("buyer_id") or "Nego-Lah Buyer"
     date_str = datetime.now(UTC).strftime("%B %d, %Y")
 
-    subject = f"🎉 Item Sold: {item_name} (RM{amount:.2f}) - Nego-Lah"
+    subject = f"You sold {item_name} for RM{amount:.2f}"
     admin_orders_url = f"{FRONTEND_URL}/_console/orders"
 
     context = {
@@ -161,7 +161,7 @@ def send_seller_sale_alert(seller_email: str, order: dict) -> bool:
 
 def send_unread_message_email(buyer_email: str, message_snippet: str, item_name: str | None = None) -> bool:
     """Send an email alert to a buyer notifying them of unread messages from the seller."""
-    subject = f"New message from seller on Nego-Lah{f': {item_name}' if item_name else ''}"
+    subject = "New message from the seller" + (f" — {item_name}" if item_name else "")
     chat_url = f"{FRONTEND_URL}/chat"
 
     context = {
@@ -178,7 +178,7 @@ def send_human_transfer_alert(user_id: str, reason: str, user_email: str = None,
     """Send an urgent alert to the admin/seller when an AI chat is transferred to human."""
     admin_email = RESEND_FORWARD_TO or "terry@negolah.my"
     user_display = user_email or user_id
-    subject = f"🚨 Human Transfer Required: {user_display} - Nego-Lah"
+    subject = f"Action needed: chat handed to you — {user_display}"
     console_chat_url = f"{FRONTEND_URL}/_console/chats?user={user_id}"
     date_str = datetime.now(UTC).strftime("%B %d, %Y %H:%M UTC")
 

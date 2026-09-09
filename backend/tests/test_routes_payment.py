@@ -75,13 +75,15 @@ async def test_checkout_success(client, auth_user, patch_supabase, fake_supabase
 
     captured = {}
 
-    def fake_create_checkout_session(item_name, price_cents, item_id, user_id=None):
+    def fake_create_checkout_session(item_name, price_cents, item_id, user_id=None, customer_email=None):
         captured.update(
-            item_name=item_name, price_cents=price_cents, item_id=item_id, user_id=user_id
+            item_name=item_name, price_cents=price_cents, item_id=item_id,
+            user_id=user_id, customer_email=customer_email,
         )
         return "https://checkout.stripe.com/xyz"
 
     monkeypatch.setattr(routes_payment, "create_checkout_session", fake_create_checkout_session)
+    monkeypatch.setattr(routes_payment, "_buyer_account_email", lambda _uid: "buyer1@example.com")
 
     response = await client.post("/payment/checkout", json={"item_id": "item-1"})
 
@@ -92,6 +94,7 @@ async def test_checkout_success(client, auth_user, patch_supabase, fake_supabase
         "price_cents": 10000,
         "item_id": "item-1",
         "user_id": "buyer-1",
+        "customer_email": "buyer1@example.com",
     }
     fake_supabase.table.assert_any_call("items")
 
@@ -166,7 +169,7 @@ async def test_checkout_price_cents_rounds_to_nearest_cent(
 
     captured = {}
 
-    def fake_create_checkout_session(item_name, price_cents, item_id, user_id=None):
+    def fake_create_checkout_session(item_name, price_cents, item_id, user_id=None, customer_email=None):
         captured["price_cents"] = price_cents
         return "https://checkout.stripe.com/xyz"
 
@@ -177,6 +180,90 @@ async def test_checkout_price_cents_rounds_to_nearest_cent(
     assert response.status_code == 200
     # round() charges the correct 1999 cents (RM19.99), not int()'s 1998.
     assert captured["price_cents"] == 1999
+
+
+# --- SPEC-047: Buy Now honours the negotiated price -------------------------
+
+async def _run_checkout(client, monkeypatch, fake_supabase, patch_supabase, item_row):
+    fake_supabase.table.return_value.select.return_value.eq.return_value.is_.return_value.execute.return_value = (
+        make_supabase_result([item_row])
+    )
+    patch_supabase("routes.payment", admin=fake_supabase)
+    captured = {}
+
+    def fake_create_checkout_session(item_name, price_cents, item_id, user_id=None, customer_email=None):
+        captured["price_cents"] = price_cents
+        return "https://checkout.stripe.com/xyz"
+
+    monkeypatch.setattr(routes_payment, "create_checkout_session", fake_create_checkout_session)
+    monkeypatch.setattr(routes_payment, "_buyer_account_email", lambda _uid: None)
+    resp = await client.post("/payment/checkout", json={"item_id": item_row["id"]})
+    return resp, captured
+
+
+async def test_checkout_charges_the_negotiated_price_when_the_buyer_has_one(
+    client, auth_user, patch_supabase, fake_supabase, monkeypatch
+):
+    auth_user("buyer-1")
+    from cache import redis_client
+    redis_client.setex("negotiated_price:buyer-1:item-1", 3600, "900.0")
+
+    item_row = {"id": "item-1", "name": "Widget", "price": "1000.00", "min_price": "650.00", "status": "available"}
+    resp, captured = await _run_checkout(client, monkeypatch, fake_supabase, patch_supabase, item_row)
+
+    assert resp.status_code == 200
+    assert captured["price_cents"] == 90000  # RM900, not the RM1000 listing
+
+
+async def test_checkout_uses_the_listed_price_when_no_negotiation_exists(
+    client, auth_user, patch_supabase, fake_supabase, monkeypatch
+):
+    auth_user("buyer-1")
+    item_row = {"id": "item-1", "name": "Widget", "price": "1000.00", "min_price": "650.00", "status": "available"}
+    resp, captured = await _run_checkout(client, monkeypatch, fake_supabase, patch_supabase, item_row)
+
+    assert resp.status_code == 200
+    assert captured["price_cents"] == 100000
+
+
+async def test_checkout_clamps_a_below_floor_negotiated_price_up_to_the_floor(
+    client, auth_user, patch_supabase, fake_supabase, monkeypatch
+):
+    """`evaluate_offer` never commits below the floor, but checkout is the money
+    path — it clamps defensively rather than trusting that on faith."""
+    auth_user("buyer-1")
+    from cache import redis_client
+    redis_client.setex("negotiated_price:buyer-1:item-1", 3600, "500.0")
+
+    item_row = {"id": "item-1", "name": "Widget", "price": "1000.00", "min_price": "650.00", "status": "available"}
+    resp, captured = await _run_checkout(client, monkeypatch, fake_supabase, patch_supabase, item_row)
+
+    assert resp.status_code == 200
+    assert captured["price_cents"] == 65000  # clamped to RM650, not RM500
+
+
+async def test_checkout_passes_the_buyer_account_email_to_stripe(
+    client, auth_user, patch_supabase, fake_supabase, monkeypatch
+):
+    auth_user("buyer-1")
+    item_row = {"id": "item-1", "name": "Widget", "price": "100.00", "status": "available"}
+    fake_supabase.table.return_value.select.return_value.eq.return_value.is_.return_value.execute.return_value = (
+        make_supabase_result([item_row])
+    )
+    patch_supabase("routes.payment", admin=fake_supabase)
+    captured = {}
+
+    def fake_create_checkout_session(item_name, price_cents, item_id, user_id=None, customer_email=None):
+        captured["customer_email"] = customer_email
+        return "https://checkout.stripe.com/xyz"
+
+    monkeypatch.setattr(routes_payment, "create_checkout_session", fake_create_checkout_session)
+    monkeypatch.setattr(routes_payment, "_buyer_account_email", lambda uid: f"{uid}@example.com")
+
+    resp = await client.post("/payment/checkout", json={"item_id": "item-1"})
+
+    assert resp.status_code == 200
+    assert captured["customer_email"] == "buyer-1@example.com"
 
 
 async def test_checkout_requires_auth(client):

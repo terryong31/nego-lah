@@ -6,7 +6,6 @@ from fastapi import APIRouter, HTTPException, Request, status
 from auth_middleware import get_optional_user_id
 from items import PUBLIC_ITEM_COLUMNS, PUBLIC_ITEM_SELECT, get_featured_items, get_items
 from limiter import CATALOG_LIMIT, limiter
-from logger import logger
 
 # Public items API — READ ONLY.
 # All writes (create/update/delete, image management) live under the admin router
@@ -48,33 +47,19 @@ def _to_public(row: dict) -> dict:
 
 
 def _apply_discount(item: dict, user_id: str | None) -> dict:
-    """If user has an active negotiated offer lower than the listed price, attach discounted_price."""
+    """If the user has an active negotiated offer lower than the listed price,
+    attach `discounted_price`. The resolution itself lives in
+    `payment.pricing.active_negotiated_price` (SPEC-047) so this and the
+    Buy Now checkout charge the exact same number."""
     if not user_id:
         return item
     item_id = item.get("id") or item.get("item_id")
     if not item_id:
         return item
 
-    discount = None
-    # 1. Check pending payment in payment_state
-    try:
-        from payment.payment_state import get_pending_payment
-        pending = get_pending_payment(user_id, item_id)
-        if pending and "agreed_price" in pending:
-            discount = float(pending["agreed_price"])
-    except Exception as e:
-        logger.debug(f"Could not load active offer discount from payment state: {e}")
+    from payment.pricing import active_negotiated_price
 
-    # 2. Check negotiated_price in redis
-    try:
-        from cache import redis_client
-        cached = redis_client.get(f"negotiated_price:{user_id}:{item_id}")
-        if cached:
-            cached_val = float(cached)
-            discount = min(discount, cached_val) if discount is not None else cached_val
-    except Exception as e:
-        logger.debug(f"Could not load active offer discount from redis: {e}")
-
+    discount = active_negotiated_price(user_id, item_id)
     price = item.get("price")
     if discount is not None and price is not None and discount < float(price):
         item["discounted_price"] = discount

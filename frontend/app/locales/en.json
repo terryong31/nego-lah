@@ -461,8 +461,13 @@
       "emptyTitle": "No conversation selected",
       "emptyDesc": "Select a conversation to view and reply.",
       "filterAll": "All",
-      "filterAi": "AI",
-      "filterHitl": "HITL"
+      "searchPlaceholder": "Search conversations",
+      "sortLabel": "Sort conversations",
+      "sortRecent": "Recent activity",
+      "sortUnread": "Unread first",
+      "sortMessages": "Most messages",
+      "emptyList": "No conversations yet.",
+      "noMatch": "No conversations match."
     },
     "usersSection": {
       "usersTitle": "Users",

@@ -133,50 +133,47 @@ def test_the_floor_is_still_enforced_even_though_it_is_not_named(fake_supabase, 
     assert result.startswith("REJECT_FLOOR:")
 
 
-# --- a refusal still moves the negotiation forward ---------------------------
+# --- a below-floor offer is held, and a hold discloses nothing ---------------
 
 
-def test_below_floor_offer_counters_strictly_above_the_floor(fake_supabase, patch_supabase):
-    """A bare "no" leaves the model with nothing to say, and a model with
-    nothing to say invents a number. Countering keeps the conversation on
-    rails — above the floor, so the counter itself discloses nothing."""
+def test_below_floor_offer_is_held_not_countered(fake_supabase, patch_supabase):
+    """SPEC-047 revised this: a below-floor lowball earns no concession, so
+    there is no counter to leak anything. The tool tells the model to restate
+    its last quote and hold, and names no number."""
     _set_item(fake_supabase, {"price": 100, "min_price": 70})
     patch_supabase("connector", admin=fake_supabase)
 
     result = _invoke(50.0)
 
-    assert "Counter with RM85.00" in result
+    assert result.startswith("REJECT_FLOOR:")
+    assert "Counter with" not in result
+    assert "Hold firm" in result
+    assert "70" not in result
 
 
-def test_repeated_lowballs_converge_toward_the_floor_without_reaching_it(
+def test_repeated_lowballs_never_move_the_price_or_name_the_floor(
     fake_supabase, patch_supabase
 ):
-    """The buyer's obvious next move is to lowball again, feeding our own
-    counter back as the standing price. Each round concedes half the remaining
-    room, so the sequence approaches the floor and never lands on it — there is
-    no round at which the buyer can read the floor off the counter."""
+    """The buyer's obvious move is to lowball again and again. Every round the
+    agent holds — no counter, no number — so there is no sequence of quotes for
+    the buyer to read the floor off of (SPEC-047 + SPEC-044 A)."""
     _set_item(fake_supabase, {"price": 100, "min_price": 70})
     patch_supabase("connector", admin=fake_supabase)
 
-    standing = 0.0
-    seen = []
+    standing = 90.0
     for _ in range(12):
         result = _invoke(1.0, current_price=standing)
-        counter = float(result.split("Counter with RM")[1].split()[0])
-        assert counter > 70.0, f"counter landed on or below the floor: {counter}"
-        seen.append(counter)
-        standing = counter
-
-    assert seen == sorted(seen, reverse=True), f"counters must only move down: {seen}"
-    assert seen[-1] < seen[0], "counters must actually concede ground"
+        assert result.startswith("REJECT_FLOOR:")
+        assert "Counter with" not in result
+        assert "70" not in result
 
 
-def test_below_floor_counter_is_committed_so_checkout_honours_it(
+def test_a_held_below_floor_round_commits_nothing(
     fake_supabase, patch_supabase
 ):
-    """Now that a below-floor offer produces a real counter, that counter is a
-    price we have offered — it has to be committed like any other, or the agent
-    offers RM85 and checkout charges RM100."""
+    """SPEC-047: a below-floor offer is held, not countered — the agent quotes
+    no new price, so nothing is written to Redis / `pending_discount` and
+    checkout keeps charging the last real quote."""
     _set_item(fake_supabase, {"price": 100, "min_price": 70})
     patch_supabase("connector", admin=fake_supabase)
     context.set_context(user_id="user-1", item_id="i")
@@ -184,5 +181,5 @@ def test_below_floor_counter_is_committed_so_checkout_honours_it(
     result = _invoke(50.0)
 
     assert result.startswith("REJECT_FLOOR:")
-    assert redis_client.get("negotiated_price:user-1:i") == "85.0"
-    assert context.pending_discount.get() == 85.0
+    assert redis_client.get("negotiated_price:user-1:i") is None
+    assert context.pending_discount.get() is None

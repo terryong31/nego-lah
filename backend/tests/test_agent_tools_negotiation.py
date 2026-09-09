@@ -21,6 +21,8 @@ negotiation floor and is revoked from anon/authenticated at the column level
 `agent.context.set_context(item_id=...)` first.
 """
 
+import re
+
 import pytest
 
 from agent import context
@@ -265,35 +267,86 @@ def test_large_extra_discount_clamps_threshold_to_min_price_triggers_accept_floo
 
 
 def test_offer_below_anchor_above_floor_is_countered(fake_supabase, patch_supabase):
+    """SPEC-047: the counter concedes 25% of the gap (RM20), snapped to the
+    nearest RM5, off the standing price -- a whole RM95, not the RM90 midpoint,
+    and never a decimal."""
     _set_item(fake_supabase, {"price": 100, "min_price": 70})
     patch_supabase("connector", admin=fake_supabase)
 
     result = _invoke_offer(item_id="i", offered_price=80.0)
 
     assert result == (
-        "COUNTER: Offer of RM80.0 is below your current price of RM100.00. "
-        "Counter with RM90.00 (must be ≤ RM100.00 — never go back up)."
+        "COUNTER: Offer of RM80.0 is below your price of RM100. "
+        "Counter with RM95 (must stay ≤ RM100 — never go back up)."
     )
 
 
-def test_counter_never_exceeds_anchor_even_when_average_would(fake_supabase, patch_supabase):
-    """Sanity check on the "never go back up" guarantee: with anchor=100 and
-    offered=99, the naive average ((99+100)/2=99.5) would round up nothing,
-    but bumping to offered+1 (=100) is then clamped back down to the anchor
-    (100) -- the counter must never exceed the anchor."""
+def test_offer_within_one_step_of_the_anchor_is_held_not_countered(fake_supabase, patch_supabase):
+    """SPEC-047: with anchor=100 and offered=99 the rounded concession is 0
+    (25% of RM1 rounds to nothing), so the tool holds this round rather than
+    shaving off loose change or quoting RM100 back as a "counter"."""
     _set_item(fake_supabase, {"price": 100, "min_price": 70})
     patch_supabase("connector", admin=fake_supabase)
 
     result = _invoke_offer(item_id="i", offered_price=99.0)
 
-    assert "Counter with RM100.00" in result
-    assert "must be ≤ RM100.00" in result
+    assert result == (
+        "HOLD: Offer of RM99.0 is close to your price of RM100. "
+        "Restate RM100 and don't go lower this round."
+    )
+
+
+def test_counter_anchors_to_the_prior_standing_price_in_whole_rm_steps(fake_supabase, patch_supabase):
+    """SPEC-047 worked example: after coming down to RM90, an RM70 offer is
+    countered at RM85 -- 25% of the RM20 gap, on a natural RM5 increment."""
+    _set_item(fake_supabase, {"price": 100, "min_price": 60})
+    patch_supabase("connector", admin=fake_supabase)
+
+    result = _invoke_offer(item_id="i", offered_price=70.0, current_price=90.0)
+
+    assert result == (
+        "COUNTER: Offer of RM70.0 is below your price of RM90. "
+        "Counter with RM85 (must stay ≤ RM90 — never go back up)."
+    )
+
+
+@pytest.mark.parametrize(
+    ("offered", "current"),
+    [(60.0, 0.0), (70.0, 90.0), (63.0, 100.0), (72.0, 100.0), (81.0, 95.0)],
+)
+def test_every_price_the_agent_quotes_is_a_whole_ringgit(fake_supabase, patch_supabase, offered, current):
+    """SPEC-047: once the echoed buyer offer is stripped, no `RM<n>.<digits>`
+    amount remains -- the agent only ever quotes whole ringgit."""
+    _set_item(fake_supabase, {"price": 100, "min_price": 55})
+    patch_supabase("connector", admin=fake_supabase)
+
+    result = _invoke_offer(item_id="i", offered_price=offered, current_price=current)
+
+    agent_quotes = re.sub(r"Offer of RM\S+", "", result)
+    assert not re.search(r"RM\d+\.\d", agent_quotes), f"decimal price quoted in: {result!r}"
+
+
+def test_genuine_need_accepts_near_the_floor_but_still_holds_below_it(fake_supabase, patch_supabase):
+    """SPEC-047: a positive extra_discount_percent lowers the acceptance
+    threshold (never below min_price), so an earned discount gets accepted
+    closer to the floor -- but a sub-floor offer is still held regardless."""
+    _set_item(fake_supabase, {"price": 100, "min_price": 70})
+    patch_supabase("connector", admin=fake_supabase)
+
+    accepted = _invoke_offer(item_id="i", offered_price=90.0, extra_discount_percent=10)
+    assert accepted.startswith("ACCEPT:")
+
+    held = _invoke_offer(item_id="i", offered_price=65.0, extra_discount_percent=10)
+    assert held.startswith("REJECT_FLOOR:")
 
 
 # --- evaluate_offer: REJECT_FLOOR -------------------------------------------
 
 
-def test_offer_below_min_price_is_reject_floor(fake_supabase, patch_supabase):
+def test_offer_below_min_price_is_held_without_a_counter(fake_supabase, patch_supabase):
+    """SPEC-047: a below-floor lowball earns no concession. The tool holds --
+    restate the last quote, don't go lower -- and quotes no number at all so
+    the floor stays confidential (SPEC-044 A)."""
     _set_item(fake_supabase, {"price": 100, "min_price": 70})
     patch_supabase("connector", admin=fake_supabase)
 
@@ -301,27 +354,27 @@ def test_offer_below_min_price_is_reject_floor(fake_supabase, patch_supabase):
 
     assert result == (
         "REJECT_FLOOR: Offer of RM50.0 is too low to accept. "
-        "Do NOT state a minimum or say how low you can go. "
-        "Counter with RM85.00 and tell the buyer that's the best you can do."
+        "Hold firm at the price you last quoted and do not go lower. "
+        "Do NOT state a minimum, a floor, or how low you can go."
     )
 
 
 def test_min_price_defaults_to_70_percent_of_listed_when_unset(fake_supabase, patch_supabase):
     """No `min_price` key on the item row -> falls back to listed_price * 0.7.
 
-    Asserted through the counter rather than the refusal text, because SPEC-044
-    stopped the tool naming the floor: RM85.00 is the midpoint between the
-    listed price and a floor of 70, so a wrong fallback moves the counter.
+    Probed with an offer of 75: it clears a 70% floor (70) and gets a COUNTER,
+    but would fall *below* a broken fallback floor (== listed price 100) and be
+    held instead -- so the branch taken distinguishes a correct default from a
+    wrong one without the tool ever naming the floor (SPEC-044).
     """
     _set_item(fake_supabase, {"price": 100})
     patch_supabase("connector", admin=fake_supabase)
 
-    result = _invoke_offer(item_id="i", offered_price=50.0)
+    result = _invoke_offer(item_id="i", offered_price=75.0)
 
     assert result == (
-        "REJECT_FLOOR: Offer of RM50.0 is too low to accept. "
-        "Do NOT state a minimum or say how low you can go. "
-        "Counter with RM85.00 and tell the buyer that's the best you can do."
+        "COUNTER: Offer of RM75.0 is below your price of RM100. "
+        "Counter with RM95 (must stay ≤ RM100 — never go back up)."
     )
 
 
@@ -350,8 +403,8 @@ def test_anchor_clamps_down_to_listed_price_when_current_price_exceeds_it(fake_s
     result = _invoke_offer(item_id="i", offered_price=90.0, current_price=200.0)
 
     assert result == (
-        "COUNTER: Offer of RM90.0 is below your current price of RM100.00. "
-        "Counter with RM95.00 (must be ≤ RM100.00 — never go back up)."
+        "COUNTER: Offer of RM90.0 is below your price of RM100. "
+        "Counter with RM95 (must stay ≤ RM100 — never go back up)."
     )
 
 
@@ -372,7 +425,7 @@ def test_zero_current_price_means_no_prior_anchor_uses_listed_price(fake_supabas
 
     result = _invoke_offer(item_id="i", offered_price=80.0, current_price=0.0)
 
-    assert "your current price of RM100.00" in result
+    assert "your price of RM100" in result
 
 
 def test_negative_current_price_is_treated_as_no_prior_anchor(fake_supabase, patch_supabase):
@@ -385,8 +438,8 @@ def test_negative_current_price_is_treated_as_no_prior_anchor(fake_supabase, pat
     result = _invoke_offer(item_id="i", offered_price=80.0, current_price=-10.0)
 
     assert result == (
-        "COUNTER: Offer of RM80.0 is below your current price of RM100.00. "
-        "Counter with RM90.00 (must be ≤ RM100.00 — never go back up)."
+        "COUNTER: Offer of RM80.0 is below your price of RM100. "
+        "Counter with RM95 (must stay ≤ RM100 — never go back up)."
     )
 
 
@@ -437,8 +490,8 @@ def test_counter_commits_counter_price_and_sets_pending_discount(fake_supabase, 
     result = _invoke_offer(item_id="i", offered_price=80.0)
 
     assert result.startswith("COUNTER:")
-    assert redis_client.get("negotiated_price:user-1:i") == "90.0"
-    assert context.pending_discount.get() == 90.0
+    assert redis_client.get("negotiated_price:user-1:i") == "95.0"
+    assert context.pending_discount.get() == 95.0
 
 
 def test_accept_at_full_listed_price_does_not_commit_or_signal(fake_supabase, patch_supabase):
@@ -455,12 +508,10 @@ def test_accept_at_full_listed_price_does_not_commit_or_signal(fake_supabase, pa
     assert context.pending_discount.get() is None
 
 
-def test_reject_floor_commits_the_counter_it_quotes(fake_supabase, patch_supabase):
-    """REJECT_FLOOR used to be a bare refusal and so never reached the commit
-    branch. Since SPEC-044 it answers a below-floor offer with a real counter
-    instead of naming the floor, and a price the agent quotes has to be a price
-    checkout will honour -- otherwise the agent offers RM85 and the buyer is
-    charged RM100."""
+def test_reject_floor_commits_nothing_because_the_agent_did_not_move(fake_supabase, patch_supabase):
+    """SPEC-047: a below-floor offer is held, not countered -- the agent quotes
+    no new price, so nothing is written to Redis or `pending_discount`. Checkout
+    keeps charging whatever the last real quote was."""
     _set_item(fake_supabase, {"price": 100, "min_price": 70})
     patch_supabase("connector", admin=fake_supabase)
     context.set_context(user_id="user-1", item_id="i")
@@ -468,21 +519,21 @@ def test_reject_floor_commits_the_counter_it_quotes(fake_supabase, patch_supabas
     result = _invoke_offer(item_id="i", offered_price=50.0)
 
     assert result.startswith("REJECT_FLOOR:")
-    assert redis_client.get("negotiated_price:user-1:i") == "85.0"
-    assert context.pending_discount.get() == 85.0
+    assert redis_client.get("negotiated_price:user-1:i") is None
+    assert context.pending_discount.get() is None
 
 
-def test_reject_floor_at_the_anchor_commits_nothing(fake_supabase, patch_supabase):
-    """The one REJECT_FLOOR branch that still quotes no price -- the standing
-    price is already the floor -- must also commit nothing, since no new offer
-    was made."""
+def test_hold_within_one_step_commits_nothing(fake_supabase, patch_supabase):
+    """A HOLD round (offer within one RM step of the standing price) also moves
+    no price, so it must not commit -- otherwise a near-miss offer would silently
+    become the checkout price."""
     _set_item(fake_supabase, {"price": 100, "min_price": 70})
     patch_supabase("connector", admin=fake_supabase)
     context.set_context(user_id="user-1", item_id="i")
 
-    result = _invoke_offer(item_id="i", offered_price=5.0, current_price=1.0)
+    result = _invoke_offer(item_id="i", offered_price=99.0)
 
-    assert result.startswith("REJECT_FLOOR:")
+    assert result.startswith("HOLD:")
     assert redis_client.get("negotiated_price:user-1:i") is None
     assert context.pending_discount.get() is None
 

@@ -52,13 +52,14 @@ def test_send_seller_sale_alert_success():
         call_args = mock_client.post.call_args
         payload = call_args.kwargs.get("json") or call_args[1].get("json")
         assert "Mechanical Keyboard" in payload["subject"]
+        assert "🎉" not in payload["subject"]
         assert "RM150.00" in payload["html"]
         assert "buyer@example.com" in payload["html"]
         # Brand styling assertions
         assert "#10b981" in payload["html"]
         assert "#f97316" not in payload["html"]
         assert "color: #ffffff" in payload["html"]
-        assert "Sale Confirmed" in payload["html"]
+        assert "Item sold" in payload["html"]
 
 
 def test_send_unread_message_email_success():
@@ -105,7 +106,8 @@ def test_send_human_transfer_alert_success():
         call_args = mock_client.post.call_args
         payload = call_args.kwargs.get("json") or call_args[1].get("json")
         assert "user_test_456" in payload["html"]
-        assert "Human Intervention Needed" in payload["html"]
+        assert "🚨" not in payload["subject"]
+        assert "Needs your response" in payload["html"]
         assert "Customer wants to speak to manager" in payload["html"]
         assert "_console/chats?user=user_test_456" in payload["html"]
         assert "#10b981" in payload["html"]
@@ -137,7 +139,7 @@ def test_render_email_template_all_templates():
         "chat_url": "https://example.com/chat",
         "orders_url": "https://example.com/orders",
     })
-    assert "Payment Confirmed" in receipt
+    assert "Payment received" in receipt
     assert "RM250.00" in receipt
     assert "Vintage Camera" in receipt
     assert "ord_999" in receipt
@@ -152,7 +154,7 @@ def test_render_email_template_all_templates():
         "date_str": "September 05, 2026",
         "admin_orders_url": "https://example.com/_console/orders",
     })
-    assert "Sale Confirmed" in alert
+    assert "Item sold" in alert
     assert "RM250.00" in alert
     assert "buyer@example.com" in alert
     assert "https://example.com/_console/orders" in alert
@@ -163,7 +165,7 @@ def test_render_email_template_all_templates():
         "item_name": "Vintage Camera",
         "chat_url": "https://example.com/chat",
     })
-    assert "New Message" in unread
+    assert "New message" in unread
     assert "Can we meet tomorrow?" in unread
 
     transfer = email_service.render_email_template("human_transfer_alert.html", {
@@ -175,7 +177,7 @@ def test_render_email_template_all_templates():
         "console_chat_url": "https://example.com/_console/chats?user=usr_123",
         "date_str": "September 05, 2026 12:00 UTC",
     })
-    assert "Human Intervention Needed" in transfer
+    assert "Needs your response" in transfer
     assert "usr_123" in transfer
     assert "Technical inquiry" in transfer
     assert "User wants specs" in transfer
@@ -194,5 +196,5 @@ def test_email_template_renders_cdn_brand_logo():
     assert "branding/logo.png" in html
     assert "<img src=" in html
     assert 'alt="Nego-lah"' in html
-    assert 'width="32"' in html
+    assert 'width="24"' in html
 

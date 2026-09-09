@@ -17,3 +17,6 @@ changes an earlier one, add a new ADR and mark the old one's status.
 | [0008](0008-build-time-content-injection-for-legal-pages.md) | Build-Time Content Injection for Crawler-Readable Legal Pages | Accepted |
 | [0009](0009-confidential-columns-enforced-in-postgres.md) | Seller-Confidential Columns Enforced in Postgres, Not Just in the API | Accepted |
 | [0010](0010-cloudflare-r2-media-cdn.md) | Cloudflare R2 for Large Static Media, Not Supabase Storage | Accepted |
+| [0011](0011-human-like-negotiation-concessions.md) | Human-Like Negotiation Concessions | Accepted |
+| [0012](0012-transactional-email-sender-and-alerting.md) | Transactional Email — Sender Mailbox and Failure Alerting | Accepted |
+| [0013](0013-ledger-email-design-system.md) | One "Ledger" Design System for All Transactional and Auth Emails | Accepted |

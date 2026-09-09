@@ -663,11 +663,27 @@ async def test_admin_delete_user_requires_admin(client):
 # GET /admin/chats
 # ===========================================================================
 
+def _chats_tables(profiles=None, settings=None, messages=None):
+    """table_router mapping for GET /admin/chats: user_profiles + chat_settings
+    (SPEC-046 #39) + the messages last-activity read (SPEC-046 #42)."""
+    profiles_mock = MagicMock()
+    profiles_mock.select.return_value.execute.return_value = make_supabase_result(profiles or [])
+    settings_mock = MagicMock()
+    settings_mock.select.return_value.execute.return_value = make_supabase_result(settings or [])
+    messages_mock = MagicMock()
+    messages_mock.select.return_value.order.return_value.execute.return_value = make_supabase_result(messages or [])
+    return table_router({
+        "user_profiles": profiles_mock,
+        "chat_settings": settings_mock,
+        "messages": messages_mock,
+    })
+
+
 async def test_get_all_chats_marks_unread_when_last_message_from_human(client, admin_user, fake_supabase, patch_supabase, monkeypatch):
     admin_user()
     patch_supabase("connector", admin=fake_supabase)
-    fake_supabase.table.return_value.select.return_value.execute.return_value = make_supabase_result(
-        [{"id": "user-a", "display_name": "Profile Name", "avatar_url": "http://p/a.png"}]
+    fake_supabase.table.side_effect = _chats_tables(
+        profiles=[{"id": "user-a", "display_name": "Profile Name", "avatar_url": "http://p/a.png"}]
     )
     user_a = make_user("user-a", email="a@example.com", metadata={})
     fake_supabase.auth.admin.list_users.return_value = [user_a]
@@ -695,12 +711,71 @@ async def test_get_all_chats_marks_unread_when_last_message_from_human(client, a
     assert chat["message_count"] == 2
     assert chat["last_role"] == "human"
     assert chat["unread"] is True
+    # SPEC-046 #39: HITL fields present, defaulted (no chat_settings row).
+    assert chat["ai_enabled"] is True
+    assert chat["admin_intervening"] is False
+
+
+async def test_get_all_chats_includes_hitl_status_and_last_activity(client, admin_user, fake_supabase, patch_supabase, monkeypatch):
+    """SPEC-046: a paused conversation reports ai_enabled=false /
+    admin_intervening=true, and last_activity is the newest message's timestamp."""
+    admin_user()
+    patch_supabase("connector", admin=fake_supabase)
+    fake_supabase.table.side_effect = _chats_tables(
+        settings=[{"user_id": "user-a", "ai_enabled": False, "admin_intervening": True}],
+        messages=[
+            {"user_id": "user-a", "created_at": "2026-09-09T12:00:00Z"},
+            {"user_id": "user-a", "created_at": "2026-09-09T09:00:00Z"},
+        ],
+    )
+    fake_supabase.auth.admin.list_users.return_value = [make_user("user-a", email="a@example.com", metadata={"display_name": "Al"})]
+
+    monkeypatch.setattr(
+        conversation_memory, "get_all_histories",
+        MagicMock(return_value={"user-a": [{"role": "human", "content": "hi", "source": "human"}]}),
+    )
+
+    resp = await client.get("/admin/chats")
+
+    assert resp.status_code == 200
+    chat = resp.json()[0]
+    assert chat["ai_enabled"] is False
+    assert chat["admin_intervening"] is True
+    assert chat["last_activity"] == "2026-09-09T12:00:00Z"
+
+
+async def test_get_all_chats_survives_a_failing_settings_query(client, admin_user, fake_supabase, patch_supabase, monkeypatch):
+    """SPEC-046: an enrichment query blowing up must not 500 the endpoint —
+    conversations still list, with the HITL fields defaulted."""
+    admin_user()
+    patch_supabase("connector", admin=fake_supabase)
+    profiles_mock = MagicMock()
+    profiles_mock.select.return_value.execute.return_value = make_supabase_result([])
+    settings_mock = MagicMock()
+    settings_mock.select.return_value.execute.side_effect = Exception("chat_settings unavailable")
+    fake_supabase.table.side_effect = table_router({
+        "user_profiles": profiles_mock, "chat_settings": settings_mock,
+    })
+    fake_supabase.auth.admin.list_users.return_value = [make_user("user-a", email="a@example.com")]
+
+    monkeypatch.setattr(
+        conversation_memory, "get_all_histories",
+        MagicMock(return_value={"user-a": [{"role": "human", "content": "hi", "source": "human"}]}),
+    )
+
+    resp = await client.get("/admin/chats")
+
+    assert resp.status_code == 200
+    chat = resp.json()[0]
+    assert chat["user_id"] == "user-a"
+    assert chat["ai_enabled"] is True
+    assert chat["last_activity"] is None
 
 
 async def test_get_all_chats_prefers_custom_avatar_over_provider_avatar(client, admin_user, fake_supabase, patch_supabase, monkeypatch):
     admin_user()
     patch_supabase("connector", admin=fake_supabase)
-    fake_supabase.table.return_value.select.return_value.execute.return_value = make_supabase_result([])
+    fake_supabase.table.side_effect = _chats_tables()
     user_a = make_user("user-a", email="a@example.com", metadata={
         "display_name": "Alice",
         "custom_avatar_url": "http://cdn/uploaded.png",
@@ -723,7 +798,7 @@ async def test_get_all_chats_prefers_custom_avatar_over_provider_avatar(client, 
 async def test_get_all_chats_not_unread_when_last_message_from_ai(client, admin_user, fake_supabase, patch_supabase, monkeypatch):
     admin_user()
     patch_supabase("connector", admin=fake_supabase)
-    fake_supabase.table.return_value.select.return_value.execute.return_value = make_supabase_result([])
+    fake_supabase.table.side_effect = _chats_tables()
     fake_supabase.auth.admin.list_users.return_value = []
 
     monkeypatch.setattr(

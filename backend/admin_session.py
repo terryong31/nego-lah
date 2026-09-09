@@ -186,11 +186,21 @@ def _render_otp_email_html(otp: str, action_link: str | None = None) -> str:
         except Exception as e:
             logger.warning(f"Failed to read email template {template_path}: {e}")
 
+    link_line = (
+        f"<p style='margin:16px 0 0;font-size:13px;color:#4b4b52;'>"
+        f"Prefer a link? <a href='{action_link}' style='color:#047857;'>Sign in directly</a>.</p>"
+        if action_link
+        else ""
+    )
     return (
-        f"<h2>Your Nego-lah Verification Code</h2>"
-        f"<p>Use the following one-time code to sign in:</p>"
-        f"<h1 style='letter-spacing: 4px; font-family: monospace;'>{otp}</h1>"
-        f"<p>Valid for 10 minutes. Do not share this code.</p>"
+        f"<div style='font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1a1a1e;'>"
+        f"<p style='margin:0 0 4px;font-size:12px;font-weight:600;color:#78787f;'>Nego-lah &middot; Verification</p>"
+        f"<h1 style='margin:0 0 8px;font-size:20px;font-weight:600;letter-spacing:-0.02em;'>Your verification code</h1>"
+        f"<p style='margin:0 0 18px;font-size:15px;color:#4b4b52;'>Enter this code to finish signing in to the Nego-lah console. It expires in 10 minutes.</p>"
+        f"<div style='font-family:ui-monospace,Menlo,Consolas,monospace;font-size:30px;font-weight:600;letter-spacing:0.3em;'>{otp}</div>"
+        f"{link_line}"
+        f"<p style='margin:18px 0 0;font-size:12px;color:#78787f;'>If you didn't request this code, you can ignore this email.</p>"
+        f"</div>"
     )
 
 
@@ -229,7 +239,9 @@ def _send_otp_via_resend(email: str, otp: str, action_link: str | None = None) -
         payload = {
             "from": sender,
             "to": [email],
-            "subject": f"Your Nego-lah Verification Code: {otp}",
+            # Code stays out of the subject (lock-screen exposure, plaintext
+            # mail-server logs, open-rate hit) — it's in the body + preheader.
+            "subject": "Your Nego-lah verification code",
             "html": html_content,
         }
         try:

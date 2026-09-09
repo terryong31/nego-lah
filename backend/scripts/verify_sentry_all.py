@@ -10,11 +10,28 @@ Verification script for all 7 Sentry pillars:
 """
 import logging
 import os
+import subprocess
 import sys
 import time
 
 import sentry_sdk
 from sentry_sdk.integrations.logging import LoggingIntegration
+
+
+def _current_release() -> str:
+    """Resolve the release: explicit env var, else the checked-out git commit, else 'latest'."""
+    env_release = os.environ.get("SENTRY_RELEASE")
+    if env_release:
+        return env_release
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=os.path.dirname(__file__) or ".",
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return "latest"
 
 
 def verify_all():
@@ -23,8 +40,8 @@ def verify_all():
         print("❌ SENTRY_DSN not found in environment!")
         sys.exit(1)
 
-    release = os.environ.get("SENTRY_RELEASE", "731092f67e3a1eefb8716bc53dc145016e6c412f")
-    print(f"🚀 Initializing Sentry with Release: {release} on {dsn.split('@')[-1]}")
+    release = _current_release()
+    print(f"🚀 Initializing Sentry with Release: {release} (DSN configured)")
 
     logging_integration = LoggingIntegration(
         level=logging.INFO,

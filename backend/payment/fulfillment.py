@@ -225,19 +225,14 @@ def _finalize_won_sale(item_id, user_id, payment_intent, amount, item_name, buye
 
     # Deliver receipt to buyer and alert to seller
     try:
-        resolved_buyer_email = buyer_email
-        if not resolved_buyer_email:
-            try:
-                user_res = admin_supabase.auth.admin.get_user_by_id(user_id)
-                if user_res and hasattr(user_res, "user") and user_res.user:
-                    resolved_buyer_email = user_res.user.email
-                elif user_res and isinstance(user_res, dict):
-                    resolved_buyer_email = user_res.get("email") or (user_res.get("user") or {}).get("email")
-            except Exception as auth_err:
-                # Elevated to error: a failed lookup means the receipt is not
-                # deliverable — this should be visible in monitoring, not just
-                # a yellow line in the log stream.
-                logger.error(f"❌ Auth admin lookup failed for buyer {user_id}: {auth_err}")
+        # SPEC-048: the email Stripe captured at checkout is now pre-filled from
+        # the buyer's account (SPEC-047's `customer_email`), so it's normally
+        # reliable. Fall back to a direct account lookup when Stripe passed none
+        # — a receipt that can't be addressed is a support ticket ("I paid and
+        # got nothing").
+        from payment.buyer import account_email
+
+        resolved_buyer_email = buyer_email or account_email(user_id)
 
         from env import RESEND_FORWARD_TO, STRIPE_API_KEY
         from services.email_service import send_purchase_receipt, send_seller_sale_alert
@@ -275,11 +270,28 @@ def _finalize_won_sale(item_id, user_id, payment_intent, amount, item_name, buye
             "buyer_id": user_id,
         }
         if effective_buyer_email:
-            send_purchase_receipt(effective_buyer_email, order_info)
+            # SPEC-048: a receipt that silently fails to send is a support
+            # ticket waiting to happen ("I paid and got nothing"). Make it loud.
+            sent = send_purchase_receipt(effective_buyer_email, order_info)
+            if not sent:
+                msg = (
+                    f"❌ Purchase receipt NOT delivered for order {order_id} "
+                    f"(buyer {user_id}, {effective_buyer_email!r}) — Resend rejected every send attempt"
+                )
+                logger.error(msg)
+                sentry_sdk.capture_message(
+                    msg,
+                    level="error",
+                    tags={"alert": "receipt_undelivered", "order_id": str(order_id or "")},
+                )
         else:
-            logger.warning(
-                f"⚠️ No buyer email resolved for order {order_id} — receipt not sent. "
-                f"Set RESEND_FORWARD_TO to catch receipts in dev/sandbox mode."
+            msg = (
+                f"❌ No buyer email resolved for order {order_id} (buyer {user_id}) — "
+                f"receipt not sent. Set RESEND_FORWARD_TO to catch receipts in dev/sandbox."
+            )
+            logger.error(msg)
+            sentry_sdk.capture_message(
+                msg, level="error", tags={"alert": "receipt_no_address", "order_id": str(order_id or "")}
             )
         seller_target = RESEND_FORWARD_TO
         if seller_target:

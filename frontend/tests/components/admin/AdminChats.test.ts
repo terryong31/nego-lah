@@ -166,7 +166,7 @@ describe('components/admin/AdminChats.vue', () => {
     const unreadTab = wrapper.findAll('button').find(b => b.text() === 'Unread')
     await unreadTab!.trigger('click')
 
-    expect(wrapper.text()).toContain('No conversations match this filter.')
+    expect(wrapper.text()).toContain('No conversations match.')
   })
 
   it('shows the placeholder pane until a conversation is selected', async () => {
@@ -729,6 +729,93 @@ describe('components/admin/AdminChats.vue', () => {
       body: { ai_enabled: false }
     })
     expect(wrapper.text()).toContain('AI Paused')
+  })
+
+  it('re-syncs the AI badge from the backend on any system notice, not by matching its text (SPEC-046 #39)', async () => {
+    callMock.mockImplementationOnce(() => Promise.resolve([makeChat({ user_id: 'u1', display_name: 'Alice', ai_enabled: true })]))
+    const wrapper = await mountSuspended(AdminChats)
+    await flushPromises()
+
+    callMock.mockImplementationOnce(() => Promise.resolve({ user_id: 'u1', messages: [] }))
+    const chatButton = wrapper.findAll('button').find(b => b.text().includes('Alice'))
+    await chatButton!.trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('AI Active')
+
+    // The agent's own transfer notice — wording the old substring matcher never recognised.
+    callMock.mockImplementation((path: string) => {
+      if (path === '/users/u1/ai') return Promise.resolve({ user_id: 'u1', ai_enabled: false })
+      if (path === '/chats') return Promise.resolve([makeChat({ user_id: 'u1', display_name: 'Alice', ai_enabled: false })])
+      return Promise.resolve(null)
+    })
+
+    const onMessage = typingState.join.mock.calls[0]![1].onMessage as (payload: unknown) => void
+    onMessage({ role: 'system', content: '--- The AI has transferred the chat to Terry (human seller) who will take over shortly ---', source: 'system' })
+    await flushPromises()
+
+    expect(callMock).toHaveBeenCalledWith('/users/u1/ai')
+    expect(wrapper.text()).toContain('AI Paused')
+  })
+
+  it('opening a paused conversation shows "AI Paused" and a HITL badge in the list (SPEC-046 #39)', async () => {
+    callMock.mockImplementationOnce(() => Promise.resolve([
+      makeChat({ user_id: 'u1', display_name: 'Alice', ai_enabled: false })
+    ]))
+    const wrapper = await mountSuspended(AdminChats)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('HITL')
+
+    callMock.mockImplementationOnce(() => Promise.resolve({ user_id: 'u1', messages: [] }))
+    const chatButton = wrapper.findAll('button').find(b => b.text().includes('Alice'))
+    await chatButton!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('AI Paused')
+    expect(wrapper.findAll('button').some(b => b.text() === 'Resume AI')).toBe(true)
+  })
+
+  it('search filters the conversation list by name and last message (SPEC-046 #42)', async () => {
+    callMock.mockImplementationOnce(() => Promise.resolve([
+      makeChat({ user_id: 'u1', display_name: 'Alice', last_message: 'is the lamp still available' }),
+      makeChat({ user_id: 'u2', display_name: 'Bob', last_message: 'thanks!' })
+    ]))
+    const wrapper = await mountSuspended(AdminChats)
+    await flushPromises()
+
+    const input = wrapper.findAllComponents({ name: 'UInput' })[0]!
+    await input.vm.$emit('update:modelValue', 'alice')
+    await flushPromises()
+    expect(wrapper.text()).toContain('Alice')
+    expect(wrapper.text()).not.toContain('Bob')
+
+    await input.vm.$emit('update:modelValue', 'lamp')
+    await flushPromises()
+    expect(wrapper.text()).toContain('Alice')
+    expect(wrapper.text()).not.toContain('Bob')
+
+    await input.vm.$emit('update:modelValue', 'nothing-matches-this')
+    await flushPromises()
+    expect(wrapper.text()).toContain('No conversations match.')
+  })
+
+  it('sorts the list by most messages when that sort is chosen (SPEC-046 #42)', async () => {
+    callMock.mockImplementationOnce(() => Promise.resolve([
+      makeChat({ user_id: 'u1', display_name: 'Alice', message_count: 2 }),
+      makeChat({ user_id: 'u2', display_name: 'Bob', message_count: 9 })
+    ]))
+    const wrapper = await mountSuspended(AdminChats)
+    await flushPromises()
+
+    const select = wrapper.findAllComponents({ name: 'USelect' })[0]!
+    await select.vm.$emit('update:modelValue', 'messages')
+    await flushPromises()
+
+    const names = wrapper.findAll('button')
+      .map(b => b.text())
+      .filter(txt => txt.includes('Alice') || txt.includes('Bob'))
+    expect(names[0]).toContain('Bob')
+    expect(names[1]).toContain('Alice')
   })
 
   it('passes paid prop to ChatPayCard when messages indicate completed deal', async () => {

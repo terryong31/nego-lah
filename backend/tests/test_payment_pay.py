@@ -26,8 +26,9 @@ def test_create_checkout_session_without_user_id_returns_url(fake_stripe):
     fake_stripe.checkout.Session.create.assert_called_once()
 
     _, kwargs = fake_stripe.checkout.Session.create.call_args
-    assert kwargs["metadata"] == {"item_id": "item-1"}
+    assert kwargs["metadata"] == {"item_id": "item-1", "item_name": "Vintage Lamp"}
     assert "user_id" not in kwargs["metadata"]
+    assert kwargs["customer_email"] is None
 
 
 def test_create_checkout_session_with_user_id_includes_metadata(fake_stripe):
@@ -45,7 +46,27 @@ def test_create_checkout_session_with_user_id_includes_metadata(fake_stripe):
     assert result == "https://checkout.stripe.com/pay/cs_test_with_user"
 
     _, kwargs = fake_stripe.checkout.Session.create.call_args
-    assert kwargs["metadata"] == {"item_id": "item-2", "user_id": "user-42"}
+    assert kwargs["metadata"] == {"item_id": "item-2", "user_id": "user-42", "item_name": "Antique Chair"}
+
+
+def test_create_checkout_session_passes_customer_email_to_stripe(fake_stripe):
+    """SPEC-047/048: the buyer's account email pre-fills the Stripe checkout so
+    the receipt has a deliverable address that matches the account."""
+    fake_session = MagicMock()
+    fake_session.url = "https://checkout.stripe.com/pay/cs_test_email"
+    fake_stripe.checkout.Session.create.return_value = fake_session
+
+    create_checkout_session(
+        item_name="Camera",
+        price_cents=30000,
+        item_id="item-9",
+        user_id="user-9",
+        customer_email="buyer@example.com",
+    )
+
+    _, kwargs = fake_stripe.checkout.Session.create.call_args
+    assert kwargs["customer_email"] == "buyer@example.com"
+    assert kwargs["metadata"]["item_name"] == "Camera"
 
 
 def test_create_checkout_session_uses_myr_currency_and_price(fake_stripe):
@@ -102,7 +123,7 @@ def test_create_checkout_session_user_id_none_omits_metadata_key(fake_stripe):
     )
 
     _, kwargs = fake_stripe.checkout.Session.create.call_args
-    assert kwargs["metadata"] == {"item_id": "item-5"}
+    assert kwargs["metadata"] == {"item_id": "item-5", "item_name": "Sofa"}
 
 
 def test_create_checkout_session_empty_string_user_id_omits_metadata_key(fake_stripe):
@@ -120,4 +141,4 @@ def test_create_checkout_session_empty_string_user_id_omits_metadata_key(fake_st
     )
 
     _, kwargs = fake_stripe.checkout.Session.create.call_args
-    assert kwargs["metadata"] == {"item_id": "item-6"}
+    assert kwargs["metadata"] == {"item_id": "item-6", "item_name": "Mirror"}

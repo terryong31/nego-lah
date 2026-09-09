@@ -12,7 +12,6 @@ if (!import.meta.test && isProd) {
   const config = useRuntimeConfig()
   const dsn = config?.public?.sentryDsn
     || process.env.NUXT_PUBLIC_SENTRY_DSN
-    || 'https://7c4d1217c773d186925bc7c19e6d0368@o4511643096907776.ingest.us.sentry.io/4511683725361152'
 
   if (!dsn) {
     throw new Error('SENTRY_DSN must be configured in production')

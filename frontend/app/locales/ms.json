@@ -461,8 +461,13 @@
       "emptyTitle": "Tiada perbualan dipilih",
       "emptyDesc": "Pilih perbualan untuk melihat dan membalas.",
       "filterAll": "Semua",
-      "filterAi": "AI",
-      "filterHitl": "HITL"
+      "searchPlaceholder": "Cari perbualan",
+      "sortLabel": "Susun perbualan",
+      "sortRecent": "Aktiviti terkini",
+      "sortUnread": "Belum dibaca dahulu",
+      "sortMessages": "Paling banyak mesej",
+      "emptyList": "Tiada perbualan lagi.",
+      "noMatch": "Tiada perbualan sepadan."
     },
     "usersSection": {
       "usersTitle": "Pengguna",

@@ -66,7 +66,7 @@ export default defineNuxtConfig({
   runtimeConfig: {
     public: {
       apiBaseUrl: process.env.NUXT_PUBLIC_API_BASE_URL || process.env.API_BASE_URL || (process.env.NODE_ENV === 'production' ? 'https://api.negolah.my' : 'http://localhost:8000'),
-      sentryDsn: process.env.NUXT_PUBLIC_SENTRY_DSN || process.env.SENTRY_DSN || 'https://7c4d1217c773d186925bc7c19e6d0368@o4511643096907776.ingest.us.sentry.io/4511683725361152',
+      sentryDsn: process.env.NUXT_PUBLIC_SENTRY_DSN || process.env.SENTRY_DSN || '',
       turnstileEnabled: process.env.NODE_ENV === 'production' || process.env.NUXT_PUBLIC_TURNSTILE_ENABLED === 'true',
       turnstileSiteKey: process.env.NODE_ENV === 'production' ? (process.env.NUXT_PUBLIC_TURNSTILE_SITE_KEY || '0x4AAAAAAEmNZSy3jXy_Eh38') : '',
       gtmId: process.env.NUXT_PUBLIC_GTM_ID || '',

@@ -7,7 +7,9 @@ from auth_middleware import get_user_id_from_body_or_token, verify_user_token
 from connector import admin_supabase
 from limiter import CHECKOUT_LIMIT, limiter
 from logger import logger
+from payment.buyer import account_email as _buyer_account_email
 from payment.pay import create_checkout_session
+from payment.pricing import active_negotiated_price
 from schemas import CheckoutRequest
 
 router = APIRouter(prefix="/payment", tags=["Payment"])
@@ -48,16 +50,32 @@ def checkout(
         if item.get('status') != 'available':
             raise HTTPException(status_code=409, detail="Item is no longer available")
 
+        # SPEC-047: Buy Now charges what the buyer was actually quoted. If they
+        # haggled the agent down (a cached negotiated price or a locked pending
+        # link), that price wins over the listing — the same number the item
+        # card / chat header already show them. Clamp to the floor defensively;
+        # `evaluate_offer` never commits below it, but checkout is the money
+        # path and shouldn't trust that on faith.
+        listed_price = float(item['price'])
+        floor_price = float(item.get('min_price') or listed_price)
+        negotiated = active_negotiated_price(user_id, item_id)
+        effective_price = min(listed_price, negotiated) if negotiated is not None else listed_price
+        effective_price = max(effective_price, floor_price)
+
         # Convert price to cents. Round rather than truncate: float(19.99)*100 is
         # 1998.9999999... and int() would floor it to 1998, undercharging by a sen.
-        price_cents = round(float(item['price']) * 100)
+        price_cents = round(effective_price * 100)
+
+        # Pre-fill the buyer's account email so the receipt is deliverable (SPEC-048).
+        buyer_email = _buyer_account_email(user_id)
 
         # Create Stripe checkout session
         checkout_url = create_checkout_session(
             item_name=item['name'],
             price_cents=price_cents,
             item_id=item_id,
-            user_id=user_id
+            user_id=user_id,
+            customer_email=buyer_email,
         )
 
         return {"checkout_url": checkout_url}

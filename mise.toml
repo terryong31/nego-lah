@@ -86,6 +86,16 @@ description = "Apply Supabase migrations to production database"
 dir = "backend"
 run = "infisical run --env=prod --path=/Backend -- uv run python scripts/run_migrations.py"
 
+[tasks."email:diagnose"]
+description = "SPEC-048: report why receipts may not send — env, Resend domain status, recent sends (dev)"
+dir = "backend"
+run = "infisical run --env=dev --path=/Backend -- uv run python scripts/diagnose_resend.py"
+
+[tasks."email:diagnose:prod"]
+description = "SPEC-048: same diagnostic against production secrets"
+dir = "backend"
+run = "infisical run --env=prod --path=/Backend -- uv run python scripts/diagnose_resend.py"
+
 [tasks."cdn:sync:staging"]
 description = "Synchronize email branding icons to staging Supabase Storage CDN"
 dir = "backend"

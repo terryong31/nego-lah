@@ -24,6 +24,8 @@ interface ChatSummary {
   last_role: string
   unread: boolean
   ai_enabled?: boolean
+  admin_intervening?: boolean
+  last_activity?: string | null
 }
 interface ChatMessage {
   role: string
@@ -56,6 +58,41 @@ const filteredChats = computed(() =>
   })
 )
 
+// Free-text search over the conversation list — name + last message, client-side.
+const search = ref('')
+
+// Sort order for the list. 'recent' (default) reads last_activity; the backend
+// sends it (SPEC-046 #42), and falls back to message_count when it's absent.
+type ChatSort = 'recent' | 'unread' | 'messages'
+const sortKey = ref<ChatSort>('recent')
+const sortItems = computed(() => [
+  { label: t('admin.chatsSection.sortRecent'), value: 'recent' as const },
+  { label: t('admin.chatsSection.sortUnread'), value: 'unread' as const },
+  { label: t('admin.chatsSection.sortMessages'), value: 'messages' as const }
+])
+
+function activityTime(c: ChatSummary): number {
+  const ms = c.last_activity ? Date.parse(c.last_activity) : NaN
+  return Number.isNaN(ms) ? c.message_count : ms
+}
+
+const visibleChats = computed(() => {
+  const q = search.value.trim().toLowerCase()
+  const rows = filteredChats.value.filter((c) => {
+    if (!q) return true
+    return c.display_name.toLowerCase().includes(q)
+      || (c.last_message || '').toLowerCase().includes(q)
+  })
+  return [...rows].sort((a, b) => {
+    if (sortKey.value === 'messages') return b.message_count - a.message_count
+    if (sortKey.value === 'unread') {
+      if (a.unread !== b.unread) return a.unread ? -1 : 1
+      return activityTime(b) - activityTime(a)
+    }
+    return activityTime(b) - activityTime(a)
+  })
+})
+
 const messages = ref<ChatMessage[]>([])
 const loadingMsgs = ref(false)
 const reply = ref('')
@@ -73,6 +110,22 @@ watch(selectedChat, (chat) => {
     currentAiEnabled.value = true
   }
 }, { immediate: true })
+
+// Pull the authoritative AI status for a conversation from the backend. Called
+// whenever a system notice lands on the realtime channel (SPEC-046 #39) — the
+// agent's `transfer_to_human` and the rate-limit handoff both flip
+// `chat_settings.ai_enabled` server-side without any signal the console can
+// pattern-match, so we just ask.
+async function syncAiStatus(userId: string) {
+  try {
+    const res = await call<{ ai_enabled: boolean }>(`/users/${userId}/ai`)
+    if (userId === selected.value && typeof res?.ai_enabled === 'boolean') {
+      currentAiEnabled.value = res.ai_enabled
+    }
+  } catch {
+    // Best-effort — the next list refresh will reconcile it anyway.
+  }
+}
 
 async function toggleAi() {
   if (!selected.value || togglingAi.value) return
@@ -148,12 +201,14 @@ async function open(userId: string) {
         content: msg.content,
         source: msg.source
       })
+      // A system notice means the AI/human handover state may have just
+      // changed — an agent `transfer_to_human`, a rate-limit handoff, or the
+      // manual toggle. Re-sync from the authoritative flag rather than
+      // pattern-matching the notice text (which only ever matched the manual
+      // toggle's wording and left the badge stale on auto-handoffs).
       if (msg.role === 'system') {
-        if (msg.content.includes('retired from the chat and the AI will take over')) {
-          currentAiEnabled.value = true
-        } else if (msg.content.includes('stepped aside') || msg.content.includes('joined the chat')) {
-          currentAiEnabled.value = false
-        }
+        syncAiStatus(userId)
+        refresh()
       }
       scrollToBottom()
     }
@@ -278,6 +333,24 @@ const isPaidDeal = computed(() => {
             />
           </div>
 
+          <div class="px-3 py-2 flex items-center gap-2 border-b border-default shrink-0">
+            <UInput
+              v-model="search"
+              size="xs"
+              icon="i-lucide-search"
+              class="flex-1"
+              :placeholder="$t('admin.chatsSection.searchPlaceholder')"
+              :aria-label="$t('admin.chatsSection.searchPlaceholder')"
+            />
+            <USelect
+              v-model="sortKey"
+              size="xs"
+              :items="sortItems"
+              class="w-32 shrink-0"
+              :aria-label="$t('admin.chatsSection.sortLabel')"
+            />
+          </div>
+
           <div class="flex-1 overflow-y-auto">
             <div
               v-if="pending"
@@ -290,14 +363,14 @@ const isPaidDeal = computed(() => {
               />
             </div>
             <UEmpty
-              v-else-if="filteredChats.length === 0"
-              :description="chats.length === 0 ? 'No conversations yet.' : 'No conversations match this filter.'"
+              v-else-if="visibleChats.length === 0"
+              :description="chats.length === 0 ? $t('admin.chatsSection.emptyList') : $t('admin.chatsSection.noMatch')"
               variant="naked"
               size="sm"
               class="p-6 text-center"
             />
             <button
-              v-for="c in filteredChats"
+              v-for="c in visibleChats"
               v-else
               :key="c.user_id"
               class="w-full text-left px-3 py-3 border-b border-default hover:bg-elevated/50 transition-colors"
@@ -515,6 +588,24 @@ const isPaidDeal = computed(() => {
           />
         </div>
 
+        <div class="px-3 py-2 flex items-center gap-2 border-b border-default shrink-0">
+          <UInput
+            v-model="search"
+            size="xs"
+            icon="i-lucide-search"
+            class="flex-1"
+            :placeholder="$t('admin.chatsSection.searchPlaceholder')"
+            :aria-label="$t('admin.chatsSection.searchPlaceholder')"
+          />
+          <USelect
+            v-model="sortKey"
+            size="xs"
+            :items="sortItems"
+            class="w-32 shrink-0"
+            :aria-label="$t('admin.chatsSection.sortLabel')"
+          />
+        </div>
+
         <div class="flex-1 overflow-y-auto">
           <div
             v-if="pending"
@@ -527,14 +618,14 @@ const isPaidDeal = computed(() => {
             />
           </div>
           <UEmpty
-            v-else-if="filteredChats.length === 0"
-            :description="chats.length === 0 ? 'No conversations yet.' : 'No conversations match this filter.'"
+            v-else-if="visibleChats.length === 0"
+            :description="chats.length === 0 ? $t('admin.chatsSection.emptyList') : $t('admin.chatsSection.noMatch')"
             variant="naked"
             size="sm"
             class="p-6 text-center"
           />
           <button
-            v-for="c in filteredChats"
+            v-for="c in visibleChats"
             v-else
             :key="c.user_id"
             class="w-full text-left px-3 py-3 border-b border-default hover:bg-elevated/50 transition-colors"

@@ -24,11 +24,28 @@ def get_all_chats():
     # row, then the email local-part.
     profiles_map = {}
     users_map = {}
+    settings_map = {}
+    last_activity_map = {}
     try:
         profiles = admin_supabase.table('user_profiles').select('id, display_name, avatar_url').execute()
         profiles_map = {p['id']: p for p in (profiles.data or [])}
         for u in admin_supabase.auth.admin.list_users():
             users_map[u.id] = u
+        # HITL status per conversation (SPEC-046 #39) — same bulk read /users uses.
+        settings = admin_supabase.table('chat_settings').select(
+            'user_id, ai_enabled, admin_intervening'
+        ).execute()
+        settings_map = {s.get('user_id'): s for s in (settings.data or []) if s.get('user_id')}
+        # Last-activity timestamp per conversation (SPEC-046 #42), for the
+        # "recent activity" sort. Newest first, so the first row seen per user
+        # is that conversation's latest message.
+        ts_rows = admin_supabase.table('messages').select('user_id, created_at').order(
+            'created_at', desc=True
+        ).execute()
+        for row in (ts_rows.data or []):
+            uid = row.get('user_id')
+            if uid and uid not in last_activity_map:
+                last_activity_map[uid] = row.get('created_at')
     except Exception as e:
         logger.warning(f"Could not enrich chats with user info: {e}")
 
@@ -54,6 +71,7 @@ def get_all_chats():
             last_message = history[-1] if history else None
             last_role = last_message.get('role', '') if last_message else ''
             display_name, avatar_url = _user_info(user_id)
+            setting = settings_map.get(user_id, {})
             chats.append({
                 "user_id": user_id,
                 "display_name": display_name,
@@ -62,6 +80,9 @@ def get_all_chats():
                 "last_message": last_message.get('content', '')[:100] if last_message else '',
                 "last_role": last_role,
                 "unread": last_role == 'human',
+                "ai_enabled": setting.get('ai_enabled', True),
+                "admin_intervening": setting.get('admin_intervening', False),
+                "last_activity": last_activity_map.get(user_id),
             })
 
     return chats

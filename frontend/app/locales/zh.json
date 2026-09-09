@@ -461,8 +461,13 @@
       "emptyTitle": "未选择会话",
       "emptyDesc": "请选择会话以查看和回复。",
       "filterAll": "全部",
-      "filterAi": "AI",
-      "filterHitl": "人工介入"
+      "searchPlaceholder": "搜索会话",
+      "sortLabel": "会话排序",
+      "sortRecent": "最近活动",
+      "sortUnread": "未读优先",
+      "sortMessages": "消息最多",
+      "emptyList": "暂无会话。",
+      "noMatch": "没有匹配的会话。"
     },
     "usersSection": {
       "usersTitle": "用户管理",

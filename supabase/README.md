@@ -42,8 +42,15 @@ service role — clients cannot write `app_metadata`).
   The account must already exist (normal email/password sign-up). Self sign-up never
   grants admin.
 - **Email OTP template**: for the second factor to be a *code* (not a magic link),
-  the Supabase **Magic Link** email template must include the `{{ .Token }}` variable.
-  Dashboard → Authentication → Email Templates → Magic Link.
+  the Supabase **Magic Link** email body must include `{{ .Token }}` — it does
+  (`templates/magic_link.html`). The subject deliberately does **not** (OTP codes
+  don't belong on a lock screen / in mail-server logs).
+- **Auth config & email templates are code**, in `config.toml` (`[auth]` +
+  `[auth.email.template.*]`) and `templates/*.html`. Push with
+  `supabase config push --project-ref <ref>`. ⚠️ `config push` resets any auth
+  field **absent** from `config.toml` to the CLI default — keep the whole
+  `[auth]` block, and put per-environment differences in `[remotes.<label>]`
+  (the `prod` remote locks redirects to the real domain only).
 - **Same-site requirement**: the admin cookie is `SameSite=Strict`, so the admin UI and
   the API must share a registrable domain (subdomains/ports are fine). For local dev,
   use `http://localhost:3000` (UI) + `http://localhost:8000` (API). If they live on

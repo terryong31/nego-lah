@@ -21,7 +21,7 @@ describe('SPEC-038 — Workbox navigateFallbackDenylist', () => {
   })
 
   it('excludes other top-level static files from the SPA shell fallback', () => {
-    for (const path of ['/site.webmanifest', '/sitemap.xml', '/favicon.ico', '/manifest.webmanifest']) {
+    for (const path of ['/site.webmanifest', '/sitemap.xml', '/favicon.ico', '/manifest.webmanifest', '/.well-known/security.txt']) {
       expect(isDenylisted(path), path).toBe(true)
     }
   })

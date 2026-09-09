@@ -44,3 +44,5 @@
 44. [x] agent nego price ui should change together with the buy button, not the original price (SPEC-047: /payment/checkout now charges min(listed, negotiated) clamped to the floor — the pinned-header Buy Now button honours the haggled price; no UI change)
 45. optimize seller agent flow to reduce cost, use ragas to evaluate performance and cost
 46. support cash on delivery for this app
+47. update readme
+48. [x] Cloudflare Security Center findings remediation (SPEC-050/ADR-0014: HSTS in _headers + Caddyfile, RFC 9116 security.txt, SECURITY.md policy; DNS SPF & DMARC + Cloudflare zone hardening runbook)

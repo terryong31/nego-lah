@@ -1,0 +1,6 @@
+Contact: mailto:terryong30@gmail.com
+Contact: mailto:support@negolah.my
+Expires: 2027-09-09T00:00:00.000Z
+Preferred-Languages: en, ms
+Canonical: https://negolah.my/.well-known/security.txt
+Policy: https://github.com/terryong31/nego-lah/blob/main/SECURITY.md

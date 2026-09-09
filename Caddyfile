@@ -3,6 +3,8 @@
 }
 
 api.negolah.my {
+    header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+
     request_body {
         max_size 10MB
     }

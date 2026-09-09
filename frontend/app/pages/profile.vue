@@ -215,7 +215,7 @@ async function handleDeleteAccount() {
           <input
             ref="fileInput"
             type="file"
-            accept="image/*"
+            accept="image/*,.heic,.heif"
             class="hidden"
             @change="onAvatarChange"
           >

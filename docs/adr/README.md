@@ -20,3 +20,7 @@ changes an earlier one, add a new ADR and mark the old one's status.
 | [0011](0011-human-like-negotiation-concessions.md) | Human-Like Negotiation Concessions | Accepted |
 | [0012](0012-transactional-email-sender-and-alerting.md) | Transactional Email — Sender Mailbox and Failure Alerting | Accepted |
 | [0013](0013-ledger-email-design-system.md) | One "Ledger" Design System for All Transactional and Auth Emails | Accepted |
+| [0014](0014-cloudflare-security-posture-hardening.md) | Cloudflare Security Posture Hardening (HSTS, RFC 9116, SPF/DMARC) | Accepted |
+| [0015](0015-cors-origin-and-agent-tool-authorization-hardening.md) | CORS Origin and Agent Tool Authorization Hardening | Accepted |
+| [0016](0016-buffered-notification-digests.md) | Buffered Notification Digests over Per-Message Email | Accepted |
+| [0017](0017-server-side-image-normalization.md) | Server-Side Image Normalization (HEIF Ingest and Auto-Compression) | Accepted |

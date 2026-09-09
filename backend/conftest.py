@@ -100,6 +100,7 @@ _TEST_ENV = {
     "STORAGE_BUCKET": "test-images",
     "ENV": "test",
     "DISABLE_PAYMENT_CLEANUP": "1",
+    "DISABLE_UNREAD_DIGEST": "1",
     "VERCEL": "1",
     # Explicitly pinned to "" (NOT simply unset/popped): env.py calls
     # load_dotenv(override=False) on backend/.env, which — on this and any
@@ -266,12 +267,27 @@ def patch_supabase(monkeypatch):
 
 
 # --- 4b. Upload fixtures ------------------------------------------------------
-# Avatar uploads are validated by sniffing magic bytes (SPEC-044 C), so a test
-# that posts filler bytes now gets a 400 rather than exercising the route. These
-# are a real file header followed by padding — enough for the sniffer, which
-# reads only the header, and honest about being less than a whole image.
-PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
-JPEG_BYTES = b"\xff\xd8\xff\xe0" + b"\x00" * 64
+# Uploads are validated by sniffing magic bytes (SPEC-044 C) and then DECODED and
+# re-encoded (SPEC-054), so a header followed by padding is no longer enough:
+# the normalizer would reject it as undecodable. These are whole, tiny, real
+# images. Deliberately tiny and flat — small enough that re-encoding them costs
+# more bytes than it saves, so the pipeline keeps the original and the
+# extension/content-type assertions in the avatar tests still describe the
+# format that was actually posted.
+
+
+def _encode_test_image(fmt: str, size=(8, 8), mode="RGB", color=(200, 30, 30)) -> bytes:
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new(mode, size, color).save(buf, format=fmt)
+    return buf.getvalue()
+
+
+PNG_BYTES = _encode_test_image("PNG")
+JPEG_BYTES = _encode_test_image("JPEG")
 
 
 # --- 5. Stripe mocking -------------------------------------------------------

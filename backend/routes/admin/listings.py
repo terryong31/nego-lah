@@ -20,15 +20,22 @@ async def _encode_images(images: list[UploadFile]) -> list[dict]:
     import asyncio
     import base64
 
+    from core.images import process_upload
+
+    def _normalize_and_encode(raw: bytes) -> tuple[str, str]:
+        # SPEC-054: normalize BEFORE encoding. A HEIC straight off an iPhone is
+        # undecodable by the vision model, and a 12 MP JPEG is an expensive way
+        # to ask "what is this?" — the analysis only needs a normal photo.
+        # Both steps are CPU work, so they share the one thread hop.
+        normalized, content_type, _ = process_upload(raw)
+        return base64.b64encode(normalized).decode('utf-8'), content_type
+
     async def encode(img: UploadFile) -> dict:
         contents = await img.read()
-        # Encoding a multi-MB photo is CPU work; keep it off the event loop so
-        # several images encode at once instead of one after another.
-        encoded = await asyncio.to_thread(base64.b64encode, contents)
-        return {
-            "base64_image": encoded.decode('utf-8'),
-            "mime_type": img.content_type or "image/jpeg"
-        }
+        # Keep it off the event loop so several images encode at once instead
+        # of one after another.
+        base64_image, mime_type = await asyncio.to_thread(_normalize_and_encode, contents)
+        return {"base64_image": base64_image, "mime_type": mime_type}
 
     return list(await asyncio.gather(*(encode(img) for img in images)))
 

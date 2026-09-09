@@ -467,7 +467,10 @@
       "sortUnread": "Unread first",
       "sortMessages": "Most messages",
       "emptyList": "No conversations yet.",
-      "noMatch": "No conversations match."
+      "noMatch": "No conversations match.",
+      "markRead": "Mark as read",
+      "markUnread": "Mark as unread",
+      "markFailed": "Could not update read state"
     },
     "usersSection": {
       "usersTitle": "Users",

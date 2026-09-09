@@ -26,6 +26,7 @@ interface ChatSummary {
   ai_enabled?: boolean
   admin_intervening?: boolean
   last_activity?: string | null
+  admin_last_read_at?: string | null
 }
 interface ChatMessage {
   role: string
@@ -92,6 +93,34 @@ const visibleChats = computed(() => {
     return activityTime(b) - activityTime(a)
   })
 })
+
+// SPEC-053 — read state is a real watermark on the server now, so the dot is
+// something we can actually clear. Optimistic: the operator sees the row settle
+// on click, and a failed write puts the dot back rather than lying about it.
+const markingRead = ref<string | null>(null)
+
+async function markRead(userId: string, read: boolean) {
+  const chat = chats.value.find(c => c.user_id === userId)
+  if (!chat || chat.unread === !read) return
+
+  const previous = chat.unread
+  chat.unread = !read
+  markingRead.value = userId
+  try {
+    const res = await call<{ unread: boolean, admin_last_read_at: string | null }>(
+      `/chats/${userId}/read`,
+      { method: 'POST', body: { read } }
+    )
+    chat.unread = res?.unread ?? !read
+    chat.admin_last_read_at = res?.admin_last_read_at ?? null
+  } catch (err) {
+    chat.unread = previous
+    const e = err as { data?: { detail?: string }, message?: string }
+    toast.add({ title: t('admin.chatsSection.markFailed'), description: e.data?.detail || e.message, color: 'error' })
+  } finally {
+    markingRead.value = null
+  }
+}
 
 const messages = ref<ChatMessage[]>([])
 const loadingMsgs = ref(false)
@@ -183,6 +212,9 @@ watch(reply, (val) => {
 async function open(userId: string) {
   selected.value = userId
   loadingMsgs.value = true
+  // Reading it IS reading it. Fire and forget — a failed stamp must not block
+  // the thread from loading.
+  markRead(userId, true)
   joinTyping(userId, {
     listenFor: 'customer',
     sendAs: 'seller',
@@ -369,42 +401,60 @@ const isPaidDeal = computed(() => {
               size="sm"
               class="p-6 text-center"
             />
-            <button
+            <div
               v-for="c in visibleChats"
               v-else
               :key="c.user_id"
-              class="w-full text-left px-3 py-3 border-b border-default hover:bg-elevated/50 transition-colors"
+              class="relative border-b border-default"
               :class="selected === c.user_id ? 'bg-elevated' : ''"
-              @click="open(c.user_id)"
             >
-              <div class="flex items-center gap-2 mb-1">
-                <UAvatar
-                  :src="c.avatar_url || undefined"
-                  :alt="c.display_name"
-                  size="2xs"
-                  icon="i-lucide-user"
-                />
-                <span class="text-sm font-medium text-highlighted truncate">{{ c.display_name }}</span>
-                <UBadge
-                  v-if="c.ai_enabled === false"
-                  color="warning"
-                  variant="subtle"
+              <button
+                class="w-full text-left px-3 py-3 pr-16 hover:bg-elevated/50 transition-colors"
+                @click="open(c.user_id)"
+              >
+                <div class="flex items-center gap-2 mb-1">
+                  <UAvatar
+                    :src="c.avatar_url || undefined"
+                    :alt="c.display_name"
+                    size="2xs"
+                    icon="i-lucide-user"
+                  />
+                  <span class="text-sm font-medium text-highlighted truncate">{{ c.display_name }}</span>
+                  <UBadge
+                    v-if="c.ai_enabled === false"
+                    color="warning"
+                    variant="subtle"
+                    size="xs"
+                    label="HITL"
+                    class="ml-1"
+                  />
+                </div>
+                <p class="text-sm text-default truncate">
+                  {{ c.last_message || '—' }}
+                </p>
+                <p class="text-xs text-dimmed">
+                  {{ c.message_count }} messages
+                </p>
+              </button>
+
+              <!-- SPEC-053: the read toggle sits OUTSIDE the row button (nesting one
+                   button in another is invalid markup) so a thread can be dismissed
+                   without being opened. -->
+              <div class="absolute top-2.5 right-2 flex items-center gap-1.5">
+                <UChip v-if="c.unread" />
+                <UButton
+                  :data-testid="`chat-read-toggle-${c.user_id}`"
                   size="xs"
-                  label="HITL"
-                  class="ml-1"
-                />
-                <UChip
-                  v-if="c.unread"
-                  class="ml-auto"
+                  variant="ghost"
+                  color="neutral"
+                  :icon="c.unread ? 'i-lucide-mail-open' : 'i-lucide-mail'"
+                  :loading="markingRead === c.user_id"
+                  :aria-label="c.unread ? $t('admin.chatsSection.markRead') : $t('admin.chatsSection.markUnread')"
+                  :title="c.unread ? $t('admin.chatsSection.markRead') : $t('admin.chatsSection.markUnread')"
+                  @click="markRead(c.user_id, c.unread)"
                 />
               </div>
-              <p class="text-sm text-default truncate">
-                {{ c.last_message || '—' }}
-              </p>
-              <p class="text-xs text-dimmed">
-                {{ c.message_count }} messages
-              </p>
-            </button>
+            </div>
           </div>
         </aside>
       </template>
@@ -624,42 +674,60 @@ const isPaidDeal = computed(() => {
             size="sm"
             class="p-6 text-center"
           />
-          <button
+          <div
             v-for="c in visibleChats"
             v-else
             :key="c.user_id"
-            class="w-full text-left px-3 py-3 border-b border-default hover:bg-elevated/50 transition-colors"
+            class="relative border-b border-default"
             :class="selected === c.user_id ? 'bg-elevated' : ''"
-            @click="open(c.user_id)"
           >
-            <div class="flex items-center gap-2 mb-1">
-              <UAvatar
-                :src="c.avatar_url || undefined"
-                :alt="c.display_name"
-                size="2xs"
-                icon="i-lucide-user"
-              />
-              <span class="text-sm font-medium text-highlighted truncate">{{ c.display_name }}</span>
-              <UBadge
-                v-if="c.ai_enabled === false"
-                color="warning"
-                variant="subtle"
+            <button
+              class="w-full text-left px-3 py-3 pr-16 hover:bg-elevated/50 transition-colors"
+              @click="open(c.user_id)"
+            >
+              <div class="flex items-center gap-2 mb-1">
+                <UAvatar
+                  :src="c.avatar_url || undefined"
+                  :alt="c.display_name"
+                  size="2xs"
+                  icon="i-lucide-user"
+                />
+                <span class="text-sm font-medium text-highlighted truncate">{{ c.display_name }}</span>
+                <UBadge
+                  v-if="c.ai_enabled === false"
+                  color="warning"
+                  variant="subtle"
+                  size="xs"
+                  label="HITL"
+                  class="ml-1"
+                />
+              </div>
+              <p class="text-sm text-default truncate">
+                {{ c.last_message || '—' }}
+              </p>
+              <p class="text-xs text-dimmed">
+                {{ c.message_count }} messages
+              </p>
+            </button>
+
+            <!-- SPEC-053: the read toggle sits OUTSIDE the row button (nesting one
+                 button in another is invalid markup) so a thread can be dismissed
+                 without being opened. -->
+            <div class="absolute top-2.5 right-2 flex items-center gap-1.5">
+              <UChip v-if="c.unread" />
+              <UButton
+                :data-testid="`chat-read-toggle-${c.user_id}`"
                 size="xs"
-                label="HITL"
-                class="ml-1"
-              />
-              <UChip
-                v-if="c.unread"
-                class="ml-auto"
+                variant="ghost"
+                color="neutral"
+                :icon="c.unread ? 'i-lucide-mail-open' : 'i-lucide-mail'"
+                :loading="markingRead === c.user_id"
+                :aria-label="c.unread ? $t('admin.chatsSection.markRead') : $t('admin.chatsSection.markUnread')"
+                :title="c.unread ? $t('admin.chatsSection.markRead') : $t('admin.chatsSection.markUnread')"
+                @click="markRead(c.user_id, c.unread)"
               />
             </div>
-            <p class="text-sm text-default truncate">
-              {{ c.last_message || '—' }}
-            </p>
-            <p class="text-xs text-dimmed">
-              {{ c.message_count }} messages
-            </p>
-          </button>
+          </div>
         </div>
       </aside>
 

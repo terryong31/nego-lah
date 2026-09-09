@@ -84,6 +84,68 @@ def test_send_unread_message_email_success():
         assert "RM120 if you pick it up" in payload["html"]
 
 
+# ---------------------------------------------------------------------------
+# SPEC-052 — the batched digest that replaced the per-message send
+# ---------------------------------------------------------------------------
+
+def _capture_send(fn, *args, **kwargs):
+    """Run a sender against a mocked Resend and hand back its request payload."""
+    with patch("httpx.Client") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_client.post.return_value = mock_response
+        mock_client_cls.return_value.__enter__.return_value = mock_client
+
+        result = fn(*args, **kwargs)
+        call_args = mock_client.post.call_args
+        payload = (call_args.kwargs.get("json") or call_args[1].get("json")) if call_args else None
+        return result, payload
+
+
+def test_send_unread_digest_email_carries_every_message():
+    res, payload = _capture_send(
+        email_service.send_unread_digest_email,
+        "buyer@example.com",
+        [
+            {"content": "hey, still keen?"},
+            {"content": "I can do RM90"},
+            {"content": "posting tomorrow if you are"},
+        ],
+        item_name="Mechanical Keyboard",
+    )
+
+    assert res is True
+    assert payload["to"] == ["buyer@example.com"]
+    # One email, three quotes.
+    assert "3 new messages from the seller" in payload["subject"]
+    assert "Mechanical Keyboard" in payload["subject"]
+    for text in ("hey, still keen?", "I can do RM90", "posting tomorrow if you are"):
+        assert text in payload["html"]
+
+
+def test_send_unread_digest_email_reads_naturally_for_a_single_message():
+    """A digest of one is the common case and must not say "1 new messages"."""
+    res, payload = _capture_send(
+        email_service.send_unread_digest_email,
+        "buyer@example.com",
+        [{"content": "Can we meet tomorrow?"}],
+    )
+
+    assert res is True
+    assert payload["subject"] == "New message from the seller"
+    assert "Can we meet tomorrow?" in payload["html"]
+    assert "1 new messages" not in payload["html"]
+
+
+def test_send_unread_digest_email_skips_empty_bodies():
+    res, payload = _capture_send(
+        email_service.send_unread_digest_email, "buyer@example.com", [{"content": "   "}, {}]
+    )
+    assert res is False
+    assert payload is None
+
+
 def test_send_human_transfer_alert_success():
     with patch("httpx.Client") as mock_client_cls:
         mock_client = MagicMock()
@@ -167,6 +229,19 @@ def test_render_email_template_all_templates():
     })
     assert "New message" in unread
     assert "Can we meet tomorrow?" in unread
+
+    digest = email_service.render_email_template("unread_digest.html", {
+        "subject": "2 new messages",
+        "messages": [{"content": "Can we meet tomorrow?"}, {"content": "Or Friday?"}],
+        "count": 2,
+        "item_name": "Vintage Camera",
+        "chat_url": "https://example.com/chat",
+    })
+    assert "2 new messages" in digest
+    assert "Can we meet tomorrow?" in digest
+    assert "Or Friday?" in digest
+    # Same Ledger vocabulary as every other template (SPEC-049).
+    assert "#10b981" in digest
 
     transfer = email_service.render_email_template("human_transfer_alert.html", {
         "subject": "Transfer",

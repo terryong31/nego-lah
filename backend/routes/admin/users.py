@@ -6,7 +6,8 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 
 from admin_session import verify_admin, write_audit
-from core.uploads import validate_image_upload
+from core.images import MAX_AVATAR_EDGE, process_upload
+from core.uploads import MAX_AVATAR_IMAGE_BYTES
 from env import STORAGE_BUCKET
 from logger import logger
 from schemas import AIToggleRequest, BanRequest, UserProfileUpdateRequest
@@ -106,7 +107,12 @@ async def upload_user_avatar(
     # Outside the try below, deliberately: that block falls back to inlining the
     # bytes as a `data:` URL, so validating inside it would turn a rejected file
     # into a stored `data:text/html` profile picture instead of a 400.
-    content_type, ext = validate_image_upload(contents)
+    contents, content_type, ext = await asyncio.to_thread(
+        process_upload,
+        contents,
+        max_edge=MAX_AVATAR_EDGE,
+        max_bytes=MAX_AVATAR_IMAGE_BYTES,
+    )
 
     # Supabase's client is synchronous and this handler must stay `async def`
     # (it awaits the upload), so the storage round trip goes through a thread —

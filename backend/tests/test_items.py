@@ -10,11 +10,15 @@ Tests for items.py:
 - delete_item / update_item: soft delete / partial update, and their
   except-returns-False fallback paths.
 """
+import io
 import json
 import time
 
+from PIL import Image, ImageFilter
+
 from cache import cache_items_with_hash, redis_client
-from conftest import make_supabase_result
+from conftest import PNG_BYTES, make_supabase_result
+from core.images import MAX_ITEM_EDGE
 from items import (
     compute_items_hash,
     delete_item,
@@ -28,14 +32,28 @@ from items import (
 )
 
 
+def _encode_photo(size) -> bytes:
+    """A photographic JPEG of a given size — blurred noise, not a flat fill, so
+    the compression assertions describe what a real photo does."""
+    channels = [Image.effect_noise(size, 64).filter(ImageFilter.GaussianBlur(2)) for _ in range(3)]
+    buf = io.BytesIO()
+    Image.merge("RGB", channels).save(buf, format="JPEG", quality=92)
+    return buf.getvalue()
+
+
 class FakeUploadFile:
     """Minimal stand-in for fastapi.UploadFile -- upload_item only touches
-    `.filename`, `.content_type`, and `await .read()`."""
+    `.filename`, `.content_type`, and `await .read()`.
 
-    def __init__(self, filename, content=b"fake-bytes", content_type="image/jpeg"):
+    Since SPEC-054 the bytes are DECODED on the way in, so `content` has to be a
+    real image; `filename` and `content_type` are still accepted (and still
+    passed by these tests) precisely so we can assert they no longer decide
+    anything about what gets stored."""
+
+    def __init__(self, filename, content=None, content_type="image/jpeg"):
         self.filename = filename
         self.content_type = content_type
-        self._content = content
+        self._content = PNG_BYTES if content is None else content
 
     async def read(self):
         return self._content
@@ -278,7 +296,7 @@ async def test_upload_item_success_uploads_images_and_inserts_row(patch_supabase
     fake_supabase.storage.from_.return_value.get_public_url.return_value = "https://cdn.example.com/img0.jpg"
     fake_supabase.table.return_value.insert.return_value.execute.return_value = make_supabase_result([{"id": "x"}])
 
-    images = [FakeUploadFile("photo.png", content=b"pngdata")]
+    images = [FakeUploadFile("photo.png", content=PNG_BYTES)]
     ok = await upload_item(
         name="Widget",
         description="A nice widget",
@@ -291,9 +309,13 @@ async def test_upload_item_success_uploads_images_and_inserts_row(patch_supabase
     assert ok is True
     fake_supabase.storage.from_.assert_any_call("test-images")
     upload_call = fake_supabase.storage.from_.return_value.upload.call_args
-    assert upload_call.kwargs["file"] == b"pngdata"
+    # SPEC-054: the extension and content type come from the DECODE, not from
+    # the filename or the client's content_type (which claims jpeg here). This
+    # PNG is too small for a re-encode to pay for itself, so the original bytes
+    # are what gets stored.
+    assert upload_call.kwargs["file"] == PNG_BYTES
     assert upload_call.kwargs["path"].endswith("/0.png")
-    assert upload_call.kwargs["file_options"]["content-type"] == "image/jpeg"
+    assert upload_call.kwargs["file_options"]["content-type"] == "image/png"
 
     insert_call = fake_supabase.table.return_value.insert.call_args
     item_data = insert_call.args[0]
@@ -326,11 +348,15 @@ async def test_upload_item_without_min_price_omits_it(patch_supabase, fake_supab
     assert "min_price" not in item_data
 
 
-async def test_upload_item_missing_filename_defaults_extension_to_dat(patch_supabase, fake_supabase):
+async def test_upload_item_ignores_the_filename_entirely(patch_supabase, fake_supabase):
+    """SPEC-054: the extension used to be `filename.split(".")[-1]`, so a photo
+    with no filename was stored as `.dat` and a lying filename decided how the
+    CDN would later serve the bytes. The decode decides both now, so a missing
+    filename is simply irrelevant."""
     patch_supabase("items", admin=fake_supabase)
     fake_supabase.storage.from_.return_value.get_public_url.return_value = "https://cdn.example.com/img"
 
-    images = [FakeUploadFile(filename=None)]
+    images = [FakeUploadFile(filename=None, content=PNG_BYTES)]
     ok = await upload_item(
         name="NoExt",
         description="desc",
@@ -341,7 +367,39 @@ async def test_upload_item_missing_filename_defaults_extension_to_dat(patch_supa
 
     assert ok is True
     upload_call = fake_supabase.storage.from_.return_value.upload.call_args
-    assert upload_call.kwargs["path"].endswith("/0.dat")
+    assert upload_call.kwargs["path"].endswith("/0.png")
+    assert upload_call.kwargs["file_options"]["content-type"] == "image/png"
+
+
+async def test_upload_item_rejects_a_payload_that_is_not_an_image(patch_supabase, fake_supabase):
+    """A listing photo now goes through the same gate as an avatar (SPEC-044/054)."""
+    patch_supabase("items", admin=fake_supabase)
+
+    images = [FakeUploadFile("evil.png", content=b"<svg onload=alert(1)></svg>")]
+    ok = await upload_item(
+        name="Nope", description="desc", condition="used", uploaded_images=images, price=1.0
+    )
+
+    assert ok is False
+    fake_supabase.storage.from_.return_value.upload.assert_not_called()
+
+
+async def test_upload_item_downscales_and_recompresses_a_large_photo(patch_supabase, fake_supabase):
+    """The whole point: a phone photo is not served to the storefront at 12 MP."""
+    patch_supabase("items", admin=fake_supabase)
+    fake_supabase.storage.from_.return_value.get_public_url.return_value = "https://cdn.example.com/img"
+    fake_supabase.table.return_value.insert.return_value.execute.return_value = make_supabase_result([{"id": "x"}])
+
+    big = _encode_photo((4000, 3000))
+    ok = await upload_item(
+        name="Big", description="desc", condition="used",
+        uploaded_images=[FakeUploadFile("huge.jpg", content=big)], price=1.0,
+    )
+
+    assert ok is True
+    stored = fake_supabase.storage.from_.return_value.upload.call_args.kwargs["file"]
+    assert len(stored) < len(big)
+    assert max(Image.open(io.BytesIO(stored)).size) == MAX_ITEM_EDGE
 
 
 async def test_upload_item_multiple_images_all_uploaded(patch_supabase, fake_supabase):
@@ -362,7 +420,8 @@ async def test_upload_item_multiple_images_all_uploaded(patch_supabase, fake_sup
     assert fake_supabase.storage.from_.return_value.upload.call_count == 3
     item_data = fake_supabase.table.return_value.insert.call_args.args[0]
     urls = json.loads(item_data["image_path"])
-    assert set(urls.keys()) == {"0.jpg", "1.png", "2.gif"}
+    # All three are the same PNG regardless of what they were named.
+    assert set(urls.keys()) == {"0.png", "1.png", "2.png"}
 
 
 async def test_upload_item_stores_images_in_the_order_they_were_given(patch_supabase, fake_supabase):
@@ -373,7 +432,7 @@ async def test_upload_item_stores_images_in_the_order_they_were_given(patch_supa
 
     # Make the first upload the slowest, so a naive gather-and-collect would
     # end up with it last.
-    delays = {"0.jpg": 0.03, "1.png": 0.02, "2.gif": 0.0}
+    delays = {"0.png": 0.03, "1.png": 0.02, "2.png": 0.0}
 
     def slow_upload(*, file, path, file_options):
         time.sleep(delays[path.rsplit("/", 1)[-1]])
@@ -394,7 +453,7 @@ async def test_upload_item_stores_images_in_the_order_they_were_given(patch_supa
 
     assert ok is True
     urls = json.loads(fake_supabase.table.return_value.insert.call_args.args[0]["image_path"])
-    assert list(urls.keys()) == ["0.jpg", "1.png", "2.gif"]
+    assert list(urls.keys()) == ["0.png", "1.png", "2.png"]
 
 
 async def test_upload_item_exception_returns_false(patch_supabase, fake_supabase):
@@ -454,14 +513,14 @@ async def test_sync_item_images_uploads_new_files_at_their_requested_position(pa
     result = await sync_item_images(
         "item-1",
         ["new:0", "https://cdn.example.com/a.jpg"],
-        [FakeUploadFile("fresh.png", content=b"pngdata", content_type="image/png")],
+        [FakeUploadFile("fresh.png", content=PNG_BYTES, content_type="image/png")],
     )
 
     urls = json.loads(result)
     assert list(urls.values()) == ["https://cdn.example.com/new.png", "https://cdn.example.com/a.jpg"]
 
     upload_call = fake_supabase.storage.from_.return_value.upload.call_args
-    assert upload_call.kwargs["file"] == b"pngdata"
+    assert upload_call.kwargs["file"] == PNG_BYTES
     assert upload_call.kwargs["path"].startswith("items/item-1/")
     assert upload_call.kwargs["path"].endswith(".png")
     assert upload_call.kwargs["file_options"]["content-type"] == "image/png"

@@ -26,15 +26,45 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi import HTTPException
 
-from core.uploads import sniff_image, validate_image_upload
+from core.uploads import MAX_AVATAR_IMAGE_BYTES, sniff_image, validate_image_upload
 from routes.admin import users as admin_users
 
-# Magic bytes are all the sniffer reads, so the fixtures are a real header
-# followed by filler rather than whole encoded images.
-PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
-JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 64
-GIF = b"GIF89a" + b"\x00" * 64
-WEBP = b"RIFF" + b"\x00\x00\x00\x00" + b"WEBP" + b"\x00" * 64
+
+def _encode(fmt: str, size=(8, 8), mode="RGB", color=(200, 30, 30)) -> bytes:
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new(mode, size, color).save(buf, format=fmt)
+    return buf.getvalue()
+
+
+def _encode_heic(size=(8, 8)) -> bytes:
+    import io
+
+    import pillow_heif
+    from PIL import Image
+
+    pillow_heif.register_heif_opener()
+    buf = io.BytesIO()
+    Image.new("RGB", size, (20, 140, 90)).save(buf, format="HEIF")
+    return buf.getvalue()
+
+
+# Magic bytes are all the *sniffer* reads, but since SPEC-054 the routes also
+# DECODE what gets past it, so these have to be whole encoded images.
+# Deliberately tiny and flat: re-encoding one costs more bytes than it saves, so
+# the pipeline keeps the original and these tests still describe the format that
+# was actually posted rather than the pipeline's preferred output.
+PNG = _encode("PNG")
+JPEG = _encode("JPEG")
+GIF = _encode("GIF")
+WEBP = _encode("WEBP")
+
+# A HEIC frame — the format most phone photos actually arrive in, and the one
+# the sniffer used to reject outright.
+HEIC = _encode_heic()
 
 HTML = b"<html><script>alert(document.cookie)</script></html>"
 SVG = b'<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'
@@ -186,6 +216,29 @@ async def test_profile_avatar_stores_the_sniffed_type_not_the_declared_one(
     assert upload_args[2]["content-type"] == "image/png"
 
 
+async def test_profile_avatar_accepts_a_heic_photo_and_stores_it_as_jpeg(
+    client, auth_user, patch_supabase
+):
+    """SPEC-054: HEIC is what an iPhone actually produces. It used to be
+    rejected by the sniffer, and would have been unrenderable by every browser
+    but Safari if it had got through — so it is accepted and converted."""
+    auth_user("user-1")
+    fake_admin = _user_admin_client()
+    patch_supabase("routes.user", admin=fake_admin, user=MagicMock())
+
+    resp = await client.put(
+        "/user/user-1/profile",
+        files={"avatar": ("IMG_0042.HEIC", HEIC, "image/heic")},
+    )
+
+    assert resp.status_code == 200
+    upload_args = fake_admin.storage.from_.return_value.upload.call_args[0]
+    assert upload_args[0].endswith(".jpg")
+    assert upload_args[2]["content-type"] == "image/jpeg"
+    # Converted, not passed through: no browser renders the original.
+    assert upload_args[1] != HEIC
+
+
 async def test_profile_avatar_extension_comes_from_the_bytes(
     client, auth_user, patch_supabase
 ):
@@ -298,7 +351,7 @@ async def test_admin_avatar_enforces_a_size_ceiling(
 
     resp = await client.post(
         "/admin/users/target-user/avatar",
-        files={"avatar": ("big.png", PNG + b"\x00" * (2 * 1024 * 1024), "image/png")},
+        files={"avatar": ("big.png", PNG + b"\x00" * MAX_AVATAR_IMAGE_BYTES, "image/png")},
     )
 
     assert resp.status_code == 400

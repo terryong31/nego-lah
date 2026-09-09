@@ -13,6 +13,7 @@ from cache import (
     redis_client,
 )
 from connector import admin_supabase, user_supabase
+from core.images import MAX_ITEM_EDGE, process_upload
 from env import STORAGE_BUCKET
 from logger import logger
 
@@ -182,9 +183,16 @@ async def upload_item(
         random_uuid = str(uuid.uuid4())
 
         async def upload_image(i: int, img: UploadFile) -> tuple[str, str]:
-            img_extension = img.filename.split(".")[-1] if img.filename else "dat"
+            raw = await img.read()
+            # SPEC-054: the extension and content type come from what actually
+            # decoded, never from `filename` / `content_type` — the browser's
+            # word for both. Decoding also caps the pixels, compresses, and
+            # converts a phone's HEIC into something a browser can render.
+            # CPU-bound, so it goes to a thread like the upload itself.
+            file_content, content_type, img_extension = await asyncio.to_thread(
+                process_upload, raw, max_edge=MAX_ITEM_EDGE
+            )
             img_name = f"{i}.{img_extension}"
-            file_content = await img.read()
             # The storage client is synchronous, so each upload gets its own
             # thread — otherwise a five-photo listing pays for five round trips
             # back to back.
@@ -192,7 +200,7 @@ async def upload_item(
                 admin_supabase.storage.from_(STORAGE_BUCKET).upload,
                 file=file_content,
                 path=f"items/{random_uuid}/{img_name}",
-                file_options={"content-type": img.content_type or "application/octet-stream"}
+                file_options={"content-type": content_type}
             )
             public_url_response = admin_supabase.storage.from_(STORAGE_BUCKET).get_public_url(path=f"items/{random_uuid}/{img_name}")
             return img_name, public_url_response
@@ -268,17 +276,19 @@ async def sync_item_images(
         by_url = {url: name for name, url in current.items()}
 
         async def upload_new(img: UploadFile) -> tuple[str, str]:
-            img_extension = img.filename.split(".")[-1] if img.filename else "dat"
+            raw = await img.read()
+            file_content, content_type, img_extension = await asyncio.to_thread(
+                process_upload, raw, max_edge=MAX_ITEM_EDGE
+            )
             # Random names, not positional ones: a photo added at slot 0 must
             # never overwrite the object of a photo the listing still points at.
             img_name = f"{uuid.uuid4().hex[:8]}.{img_extension}"
             path = f"items/{item_id}/{img_name}"
-            file_content = await img.read()
             await asyncio.to_thread(
                 admin_supabase.storage.from_(STORAGE_BUCKET).upload,
                 file=file_content,
                 path=path,
-                file_options={"content-type": img.content_type or "application/octet-stream"}
+                file_options={"content-type": content_type}
             )
             return img_name, admin_supabase.storage.from_(STORAGE_BUCKET).get_public_url(path=path)
 

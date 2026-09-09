@@ -72,12 +72,38 @@ async def _payment_cleanup_loop():
         await asyncio.sleep(CLEANUP_INTERVAL_SECONDS)
 
 
+async def _unread_digest_loop():
+    """
+    SPEC-052: sweep the buffered unread-message queues and send the digests that
+    have come due.
+
+    Unlike the payment cleanup above this needs no slot lock: `drain_digest` is
+    a single MULTI/EXEC read-then-delete, so if every worker sweeps at once the
+    first to reach a queue takes it and the rest find it empty. The lock would
+    only be saving a handful of no-op scans.
+    """
+    from services.unread_digest import UNREAD_DIGEST_SWEEP_SECONDS, flush_due_digests
+
+    # Same courtesy delay as the cleanup worker: don't compete with startup.
+    await asyncio.sleep(30)
+    while True:
+        try:
+            # Redis reads plus a synchronous Resend call — always off the loop.
+            sent = await asyncio.to_thread(flush_due_digests)
+            if sent:
+                logger.info(f"📧 Sent {sent} unread-message digest(s)")
+        except Exception as e:
+            logger.error(f"❌ Unread digest loop error: {e}")
+        await asyncio.sleep(UNREAD_DIGEST_SWEEP_SECONDS)
+
+
 @contextlib.asynccontextmanager
 async def lifespan(_app: FastAPI):
     # Serverless (Vercel) can't keep a background loop alive across invocations;
     # only start the worker on a long-running server. Opt out with
     # DISABLE_PAYMENT_CLEANUP=1 if you run cleanup via an external scheduler.
     task = None
+    digest_task = None
     from notifications import notification_broker
 
     # One Redis pub/sub connection per worker, so a notification published by
@@ -90,14 +116,18 @@ async def lifespan(_app: FastAPI):
         if os.environ.get("DISABLE_PAYMENT_CLEANUP") != "1":
             task = asyncio.create_task(_payment_cleanup_loop())
             logger.info("🧹 Payment cleanup worker started")
+        if os.environ.get("DISABLE_UNREAD_DIGEST") != "1":
+            digest_task = asyncio.create_task(_unread_digest_loop())
+            logger.info("📧 Unread-message digest worker started")
     try:
         yield
     finally:
         await notification_broker.stop()
-        if task:
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
+        for background in (task, digest_task):
+            if background:
+                background.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await background
         if not os.environ.get("VERCEL"):
             from core.database import close_db_pool
             await close_db_pool()

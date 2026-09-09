@@ -23,7 +23,8 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 from auth_middleware import get_user_id_from_body_or_token, verify_user_token
 from cache import invalidate_token
 from connector import admin_supabase, user_supabase
-from core.uploads import validate_image_upload
+from core.images import MAX_AVATAR_EDGE, process_upload
+from core.uploads import MAX_AVATAR_IMAGE_BYTES
 from env import STORAGE_BUCKET
 from logger import logger
 from schemas import EmailUpdateSchema, LanguageUpdateSchema, PasswordUpdateSchema
@@ -169,7 +170,16 @@ async def update_profile(
         # request (SPEC-044 C). The bucket is public: a forwarded `text/html`
         # got HTML served as HTML from our own storage origin, and an
         # unsanitised filename put slashes into the storage key.
-        content_type, ext = validate_image_upload(contents)
+        # SPEC-054 additionally decodes and re-encodes: the long edge is capped
+        # at avatar size, the file is compressed, a phone's HEIC is converted to
+        # something browsers render, and the EXIF (GPS included) is dropped.
+        # CPU-bound, so it goes through a thread like the upload below.
+        contents, content_type, ext = await asyncio.to_thread(
+            process_upload,
+            contents,
+            max_edge=MAX_AVATAR_EDGE,
+            max_bytes=MAX_AVATAR_IMAGE_BYTES,
+        )
         file_path = f"avatars/{user_id}/{uuid.uuid4().hex}.{ext}"
         try:
             def _upload() -> str:

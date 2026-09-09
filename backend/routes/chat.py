@@ -62,6 +62,12 @@ async def get_chat_history(
     # Validate token matches requested user_id
     get_user_id_from_body_or_token(user_id, token_user_id)
 
+    # SPEC-052: opening the chat IS reading it, so any digest still waiting to
+    # be emailed is dropped. Best-effort — a Redis blip must not fail the read.
+    with contextlib.suppress(Exception):
+        from services.unread_digest import mark_conversation_seen
+        await asyncio.to_thread(mark_conversation_seen, user_id)
+
     try:
         from agent.memory import conversation_memory
 
@@ -202,6 +208,13 @@ async def chat_stream(request: Request):
     remaining = await asyncio.to_thread(
         get_rate_limit_remaining, rate_key, CHAT_RATE_LIMIT_MAX
     )
+
+    # SPEC-052: a buyer typing is a buyer who is present. Anything the seller
+    # queued for them is by definition seen, so it must not arrive as an email
+    # five minutes into a live conversation.
+    with contextlib.suppress(Exception):
+        from services.unread_digest import mark_conversation_seen
+        await asyncio.to_thread(mark_conversation_seen, user_id)
 
     # Stable id correlating all text parts of this single assistant message.
     text_id = "0"

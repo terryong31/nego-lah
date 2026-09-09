@@ -467,7 +467,10 @@
       "sortUnread": "Belum dibaca dahulu",
       "sortMessages": "Paling banyak mesej",
       "emptyList": "Tiada perbualan lagi.",
-      "noMatch": "Tiada perbualan sepadan."
+      "noMatch": "Tiada perbualan sepadan.",
+      "markRead": "Tandakan sudah dibaca",
+      "markUnread": "Tandakan belum dibaca",
+      "markFailed": "Gagal mengemas kini status bacaan"
     },
     "usersSection": {
       "usersTitle": "Pengguna",

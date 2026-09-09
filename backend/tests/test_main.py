@@ -245,10 +245,17 @@ async def test_lifespan_no_background_task_on_vercel_even_if_cleanup_enabled(mon
 
 
 @pytest.mark.asyncio
-async def test_lifespan_creates_background_task_when_enabled(monkeypatch):
-    # Both gates must be open: not on Vercel, and cleanup not disabled.
+def _started_worker_names(mock_create_task) -> set[str]:
+    """The coroutine functions the lifespan actually scheduled."""
+    return {call.args[0].__qualname__ for call in mock_create_task.call_args_list}
+
+
+@pytest.mark.asyncio
+async def test_lifespan_creates_background_tasks_when_enabled(monkeypatch):
+    # Every gate must be open: not on Vercel, and neither worker disabled.
     monkeypatch.delenv("VERCEL", raising=False)
     monkeypatch.delenv("DISABLE_PAYMENT_CLEANUP", raising=False)
+    monkeypatch.delenv("DISABLE_UNREAD_DIGEST", raising=False)
 
     real_create_task = asyncio.create_task
     mock_create_task = MagicMock(side_effect=real_create_task)
@@ -259,4 +266,29 @@ async def test_lifespan_creates_background_task_when_enabled(monkeypatch):
             pass
     finally:
         main.asyncio.create_task = orig_create_task
-    mock_create_task.assert_called_once()
+
+    # SPEC-052 added the digest sweeper alongside the payment cleanup worker.
+    assert _started_worker_names(mock_create_task) == {
+        "_payment_cleanup_loop", "_unread_digest_loop"
+    }
+
+
+@pytest.mark.asyncio
+async def test_lifespan_can_disable_the_digest_worker_alone(monkeypatch):
+    """SPEC-052: DISABLE_UNREAD_DIGEST opts out of digests without also
+    stopping payment cleanup — they are separate concerns on separate switches."""
+    monkeypatch.delenv("VERCEL", raising=False)
+    monkeypatch.delenv("DISABLE_PAYMENT_CLEANUP", raising=False)
+    monkeypatch.setenv("DISABLE_UNREAD_DIGEST", "1")
+
+    real_create_task = asyncio.create_task
+    mock_create_task = MagicMock(side_effect=real_create_task)
+    orig_create_task = main.asyncio.create_task
+    main.asyncio.create_task = mock_create_task
+    try:
+        async with main.lifespan(main.app):
+            pass
+    finally:
+        main.asyncio.create_task = orig_create_task
+
+    assert _started_worker_names(mock_create_task) == {"_payment_cleanup_loop"}

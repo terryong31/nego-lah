@@ -110,31 +110,33 @@ async def test_stream_handshake_does_not_block_the_event_loop(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_admin_send_message_triggers_notification_and_email(client, admin_user, monkeypatch):
+async def test_admin_send_message_notifies_live_buyers_and_queues_for_offline_ones(client, admin_user, monkeypatch):
+    """SPEC-052 changed the offline half of this: the seller's message is now
+    QUEUED for a digest rather than emailed on the spot. The live half is
+    unchanged — a buyer with a stream gets the event and nothing else."""
+    from services.unread_digest import drain_digest
+
     admin_user(user_id="admin-1", email="admin@example.com", ip="127.0.0.1")
 
-    # Mock buyer user lookup
-    fake_user = MagicMock()
-    fake_user.user.email = "buyer@example.com"
-    monkeypatch.setattr("connector.admin_supabase.auth.admin.get_user_by_id", lambda uid: fake_user)
-
+    # No email may leave on the send path at all any more.
     fake_send_email = MagicMock()
     monkeypatch.setattr("services.email_service.send_unread_message_email", fake_send_email)
+    monkeypatch.setattr("services.email_service.send_unread_digest_email", fake_send_email)
 
     fake_memory = MagicMock()
     monkeypatch.setattr("agent.memory.conversation_memory", fake_memory, raising=False)
 
-    # Case 1: Buyer is offline (no subscribers)
+    # Case 1: Buyer is offline (no subscribers) -> queued, not emailed.
     assert notification_broker.has_subscribers("offline-buyer") is False
     res = await client.post(
         "/admin/chats/offline-buyer/message",
         json={"message": "Special deal for you!"}
     )
     assert res.status_code == 200
-    fake_send_email.assert_called_once_with("buyer@example.com", "Special deal for you!")
+    fake_send_email.assert_not_called()
+    assert [m["content"] for m in drain_digest("offline-buyer")] == ["Special deal for you!"]
 
-    # Case 2: Buyer is online (subscribed)
-    fake_send_email.reset_mock()
+    # Case 2: Buyer is online (subscribed) -> delivered live, nothing queued.
     q = await notification_broker.subscribe("online-buyer")
     try:
         res = await client.post(
@@ -142,8 +144,8 @@ async def test_admin_send_message_triggers_notification_and_email(client, admin_
             json={"message": "Are you there?"}
         )
         assert res.status_code == 200
-        # Email should NOT be sent when user is online/subscribed
         fake_send_email.assert_not_called()
+        assert drain_digest("online-buyer") == []
 
         # Message should be delivered to queue -- exactly once. It used to be
         # published twice (once by broadcast_to_chat, once here), which is what

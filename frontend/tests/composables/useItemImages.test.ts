@@ -112,6 +112,27 @@ describe('composables/useItemImages', () => {
 
       expect(names(images.value)).toEqual(['shot.png'])
     })
+
+    it('onDropFiles accepts a HEIC photo the browser gives no MIME type for', () => {
+      // SPEC-054: Chrome and Firefox report an empty `type` for .heic, so the
+      // `type.startsWith('image/')` filter silently swallowed every iPhone
+      // photo dropped onto the grid. The extension is the only signal left.
+      const { images, onDropFiles } = useItemImages()
+      const heic = new File(['x'], 'IMG_0042.HEIC', { type: '' })
+
+      onDropFiles({ dataTransfer: { files: [heic] } } as unknown as DragEvent)
+
+      expect(names(images.value)).toEqual(['IMG_0042.HEIC'])
+    })
+
+    it('onDropFiles still rejects a typeless file that is not an image', () => {
+      const { images, onDropFiles } = useItemImages()
+      const blob = new File(['x'], 'archive.zip', { type: '' })
+
+      onDropFiles({ dataTransfer: { files: [blob] } } as unknown as DragEvent)
+
+      expect(images.value).toEqual([])
+    })
   })
 
   describe('object-URL hygiene', () => {

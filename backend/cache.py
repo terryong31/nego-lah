@@ -13,6 +13,7 @@ class _InMemoryRedis:
         self._store: dict[str, str] = {}
         self._hash_store: dict[str, dict[str, str]] = {}
         self._zset_store: dict[str, dict[str, float]] = {}
+        self._list_store: dict[str, list[str]] = {}
         self._exp: dict[str, float] = {}
 
     def _purge(self, key: str):
@@ -21,6 +22,7 @@ class _InMemoryRedis:
             self._store.pop(key, None)
             self._hash_store.pop(key, None)
             self._zset_store.pop(key, None)
+            self._list_store.pop(key, None)
             self._exp.pop(key, None)
 
     def set(self, key: str, value: str, ex: int | None = None, nx: bool = False) -> bool:
@@ -46,6 +48,7 @@ class _InMemoryRedis:
         self._store.pop(key, None)
         self._hash_store.pop(key, None)
         self._zset_store.pop(key, None)
+        self._list_store.pop(key, None)
         self._exp.pop(key, None)
 
     def hset(self, key: str, mapping: dict[str, str]):
@@ -58,7 +61,8 @@ class _InMemoryRedis:
     def ttl(self, key: str) -> int:
         """Mirrors Redis: -2 when the key is gone, -1 when it never expires."""
         self._purge(key)
-        if key not in self._store and key not in self._hash_store and key not in self._zset_store:
+        if not any(key in store for store in
+                   (self._store, self._hash_store, self._zset_store, self._list_store)):
             return -2
         exp = self._exp.get(key)
         if exp is None:
@@ -72,7 +76,7 @@ class _InMemoryRedis:
     def keys(self, pattern: str = "*") -> list[str]:
         for key in list(self._exp.keys()):
             self._purge(key)
-        all_keys = set(self._store) | set(self._hash_store) | set(self._zset_store)
+        all_keys = set(self._store) | set(self._hash_store) | set(self._zset_store) | set(self._list_store)
         return [k for k in all_keys if fnmatch.fnmatch(k, pattern)]
 
     def scan_iter(self, match: str = "*", count: int | None = None):
@@ -113,6 +117,24 @@ class _InMemoryRedis:
             f"_InMemoryRedis.eval does not know this script: {normalized!r}"
         )
 
+    def rpush(self, key: str, *values: str) -> int:
+        """Append to a list, creating it if absent — the digest queue (SPEC-052)."""
+        self._purge(key)
+        bucket = self._list_store.setdefault(key, [])
+        bucket.extend(str(v) for v in values)
+        return len(bucket)
+
+    def lrange(self, key: str, start: int, end: int) -> list[str]:
+        """Redis slice semantics: `end` is INCLUSIVE, and -1 means the last item."""
+        self._purge(key)
+        bucket = self._list_store.get(key, [])
+        stop = None if end == -1 else end + 1
+        return bucket[start:stop]
+
+    def llen(self, key: str) -> int:
+        self._purge(key)
+        return len(self._list_store.get(key, []))
+
     def zadd(self, key: str, mapping: dict[str, float]):
         self._purge(key)
         self._zset_store.setdefault(key, {}).update(mapping)
@@ -142,6 +164,14 @@ class _InMemoryPipeline:
         self.ops.append(("incr", key, None))
         return self
 
+    def lrange(self, key: str, start: int, end: int):
+        self.ops.append(("lrange", key, (start, end)))
+        return self
+
+    def delete(self, key: str):
+        self.ops.append(("delete", key, None))
+        return self
+
     def incrby(self, key: str, amount: int):
         self.ops.append(("incrby", key, amount))
         return self
@@ -151,18 +181,36 @@ class _InMemoryPipeline:
         return self
 
     def execute(self):
+        """Run the queued ops in order, returning one result per op.
+
+        Real redis-py pipelines are MULTI/EXEC by default and return a list of
+        results; the read-then-delete drain in services/unread_digest.py depends
+        on both properties, so the double reproduces them.
+        """
+        results = []
         for op, key, val in self.ops:
             if op == "incr":
                 current = self.client.get(key)
                 next_val = int(current) + 1 if current else 1
                 self.client._store[key] = str(next_val)
+                results.append(next_val)
             elif op == "incrby":
                 current = self.client.get(key)
                 next_val = int(current) + int(val) if current else int(val)
                 self.client._store[key] = str(next_val)
+                results.append(next_val)
             elif op == "expire":
                 self.client.expire(key, int(val))
+                results.append(True)
+            elif op == "lrange":
+                results.append(self.client.lrange(key, val[0], val[1]))
+            elif op == "delete":
+                self.client.delete(key)
+                results.append(1)
+            else:
+                results.append(None)
         self.ops = []
+        return results
 
 
 def _create_redis_client():

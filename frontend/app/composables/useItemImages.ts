@@ -19,6 +19,18 @@ export type PendingImage
   = | { id: string, kind: 'new', file: File, url: string }
     | { id: string, kind: 'existing', url: string }
 
+// Extensions the browser may hand over with no MIME type at all. Chrome and
+// Firefox report `type: ''` for .heic/.heif — the format most phone photos
+// actually arrive in — so a `type.startsWith('image/')` filter silently
+// swallowed every iPhone photo dropped onto the grid (SPEC-054). The server
+// still decides what a file really is; this only decides what to offer it.
+const IMAGE_EXTENSIONS = /\.(jpe?g|png|gif|webp|heic|heif|avif|bmp|tiff?)$/i
+
+export function isImageFile(file: File): boolean {
+  if (file.type) return file.type.startsWith('image/')
+  return IMAGE_EXTENSIONS.test(file.name || '')
+}
+
 export function makePendingImage(file: File): PendingImage {
   return {
     id: `${file.name}-${file.size}-${file.lastModified}-${Math.random().toString(36).slice(2, 8)}`,
@@ -92,7 +104,7 @@ export function useItemImages() {
 
   function onDropFiles(event: DragEvent) {
     // An in-grid reorder drag has no files attached — let dropOn handle it.
-    const dropped = Array.from(event.dataTransfer?.files || []).filter(f => f.type.startsWith('image/'))
+    const dropped = Array.from(event.dataTransfer?.files || []).filter(isImageFile)
     if (dropped.length) addImages(dropped)
   }
 

@@ -10,6 +10,7 @@ per conftest.py's guidance. `Depends(verify_user_token)` is bypassed with the
 from unittest.mock import MagicMock
 
 from conftest import PNG_BYTES
+from core.uploads import MAX_AVATAR_IMAGE_BYTES
 
 # ---------------------------------------------------------------------------
 # GET /user/{id}/account
@@ -296,7 +297,7 @@ async def test_update_profile_avatar_too_large(client, auth_user, patch_supabase
     fake_admin.auth.admin.get_user_by_id.return_value = _existing_user_result()
     patch_supabase("routes.user", admin=fake_admin, user=MagicMock())
 
-    big_file = PNG_BYTES + b"\x00" * (2 * 1024 * 1024 + 1 - len(PNG_BYTES))
+    big_file = PNG_BYTES + b"\x00" * (MAX_AVATAR_IMAGE_BYTES + 1 - len(PNG_BYTES))
     resp = await client.put(
         "/user/user-1/profile",
         files={"avatar": ("big.png", big_file, "image/png")},
@@ -308,15 +309,21 @@ async def test_update_profile_avatar_too_large(client, auth_user, patch_supabase
     fake_admin.auth.admin.update_user_by_id.assert_not_called()
 
 
-async def test_update_profile_avatar_exactly_2mb_allowed(client, auth_user, patch_supabase):
-    """Boundary check: exactly 2MB should NOT trigger the 'too large' rejection."""
+async def test_update_profile_avatar_exactly_at_the_ceiling_allowed(client, auth_user, patch_supabase):
+    """Boundary check: exactly at the ceiling should NOT be rejected.
+
+    SPEC-054 raised that ceiling from 2 MB to 8 MB, because the limit is
+    measured on the bytes that arrive and a raw HEIC frame off a modern phone
+    clears 2 MB on its own — the old limit rejected the very format the
+    conversion pipeline exists to accept. What gets *stored* is the normalized
+    output, which is a fraction of this."""
     auth_user("user-1")
     fake_admin = MagicMock()
     fake_admin.auth.admin.get_user_by_id.return_value = _existing_user_result()
     fake_admin.storage.from_.return_value.get_public_url.return_value = "https://cdn/x.png"
     patch_supabase("routes.user", admin=fake_admin, user=MagicMock())
 
-    exact_file = PNG_BYTES + b"\x00" * (2 * 1024 * 1024 - len(PNG_BYTES))
+    exact_file = PNG_BYTES + b"\x00" * (MAX_AVATAR_IMAGE_BYTES - len(PNG_BYTES))
     resp = await client.put(
         "/user/user-1/profile",
         files={"avatar": ("exact.png", exact_file, "image/png")},

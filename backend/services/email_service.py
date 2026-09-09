@@ -174,6 +174,44 @@ def send_unread_message_email(buyer_email: str, message_snippet: str, item_name:
     return _send_email_via_resend(buyer_email, subject, html)
 
 
+def send_unread_digest_email(
+    buyer_email: str,
+    messages: list[dict],
+    item_name: str | None = None,
+) -> bool:
+    """Send ONE email covering every seller message queued for this buyer.
+
+    SPEC-052: replaces the per-message send. `messages` are oldest-first, each
+    a dict with at least `content`; anything without content is dropped rather
+    than rendering an empty quote block.
+    """
+    bodies = [
+        {"content": (m.get("content") or "").strip()}
+        for m in (messages or [])
+        if (m.get("content") or "").strip()
+    ]
+    if not bodies:
+        logger.info("No message bodies to digest; skipping unread digest email.")
+        return False
+
+    count = len(bodies)
+    if count == 1:
+        subject = "New message from the seller" + (f" — {item_name}" if item_name else "")
+    else:
+        subject = f"{count} new messages from the seller" + (f" — {item_name}" if item_name else "")
+
+    chat_url = f"{FRONTEND_URL}/chat"
+    context = {
+        "subject": subject,
+        "messages": bodies,
+        "count": count,
+        "item_name": item_name,
+        "chat_url": chat_url,
+    }
+    html = render_email_template("unread_digest.html", context)
+    return _send_email_via_resend(buyer_email, subject, html)
+
+
 def send_human_transfer_alert(user_id: str, reason: str, user_email: str = None, summary: str = None) -> bool:
     """Send an urgent alert to the admin/seller when an AI chat is transferred to human."""
     admin_email = RESEND_FORWARD_TO or "terry@negolah.my"

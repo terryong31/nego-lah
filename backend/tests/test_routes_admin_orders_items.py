@@ -46,7 +46,7 @@ import agent.tools.listing_pipeline as listing_pipeline_module
 import agent.tools.market_price as market_price_module
 import items as items_module
 import payment.payment_state as payment_state_module
-from conftest import make_supabase_result
+from conftest import JPEG_BYTES, PNG_BYTES, make_supabase_result
 
 # ---------------------------------------------------------------------------
 # Local composite fixture: patches BOTH connector.admin_supabase (used by
@@ -415,7 +415,7 @@ async def test_analyze_image_success_with_market_data(client, admin_user, monkey
     market_mock = MagicMock(return_value={"estimated_price": 120, "currency": "MYR"})
     monkeypatch.setattr(market_price_module.market_service, "get_market_valuation", market_mock)
 
-    files = [("images", ("lamp.jpg", b"fake-image-bytes", "image/jpeg"))]
+    files = [("images", ("lamp.jpg", PNG_BYTES, "image/jpeg"))]
     response = await client.post("/admin/analyze-image", files=files)
 
     assert response.status_code == 200
@@ -425,7 +425,9 @@ async def test_analyze_image_success_with_market_data(client, admin_user, monkey
     analyze_mock.assert_awaited_once()
     images_arg = analyze_mock.await_args[0][0]
     assert len(images_arg) == 1
-    assert images_arg[0]["mime_type"] == "image/jpeg"
+    # SPEC-054: the type describes the DECODED bytes, not the "image/jpeg" this
+    # multipart part declared.
+    assert images_arg[0]["mime_type"] == "image/png"
     market_mock.assert_called_once_with(query="Vintage Lamp", condition="good", category="home")
 
 
@@ -438,8 +440,8 @@ async def test_analyze_image_multiple_images(client, admin_user, monkeypatch):
     )
 
     files = [
-        ("images", ("a.jpg", b"aaa", "image/jpeg")),
-        ("images", ("b.png", b"bbb", "image/png")),
+        ("images", ("a.jpg", PNG_BYTES, "image/jpeg")),
+        ("images", ("b.png", PNG_BYTES, "image/png")),
     ]
     response = await client.post("/admin/analyze-image", files=files)
 
@@ -459,7 +461,7 @@ async def test_analyze_image_market_valuation_failure_sets_none(client, admin_us
 
     monkeypatch.setattr(market_price_module.market_service, "get_market_valuation", _boom)
 
-    files = [("images", ("chair.jpg", b"fake", "image/jpeg"))]
+    files = [("images", ("chair.jpg", PNG_BYTES, "image/jpeg"))]
     response = await client.post("/admin/analyze-image", files=files)
 
     assert response.status_code == 200
@@ -473,7 +475,7 @@ async def test_analyze_image_analyzer_exception_returns_500(client, admin_user, 
     analyze_mock = AsyncMock(side_effect=RuntimeError("gemini exploded"))
     monkeypatch.setattr(image_analyzer_module.image_analyzer, "analyze", analyze_mock)
 
-    files = [("images", ("broken.jpg", b"fake", "image/jpeg"))]
+    files = [("images", ("broken.jpg", PNG_BYTES, "image/jpeg"))]
     response = await client.post("/admin/analyze-image", files=files)
 
     assert response.status_code == 500
@@ -516,7 +518,7 @@ async def test_analyze_image_stream_emits_progress_then_the_final_result(client,
 
     monkeypatch.setattr(listing_pipeline_module, "analyze_listing", fake_pipeline)
 
-    files = [("images", ("lamp.jpg", b"fake-image-bytes", "image/jpeg"))]
+    files = [("images", ("lamp.jpg", PNG_BYTES, "image/jpeg"))]
     response = await client.post("/admin/analyze-image/stream", files=files)
 
     assert response.status_code == 200
@@ -542,33 +544,60 @@ async def test_analyze_image_stream_passes_every_encoded_image_through(client, a
     monkeypatch.setattr(listing_pipeline_module, "analyze_listing", fake_pipeline)
 
     files = [
-        ("images", ("a.jpg", b"aaa", "image/jpeg")),
-        ("images", ("b.png", b"bbb", "image/png")),
+        # Declared types deliberately swapped: what arrives must follow the
+        # bytes, not the labels (SPEC-054).
+        ("images", ("a.jpg", JPEG_BYTES, "image/png")),
+        ("images", ("b.png", PNG_BYTES, "image/jpeg")),
     ]
     response = await client.post("/admin/analyze-image/stream", files=files)
 
     assert response.status_code == 200
     # Order is preserved, and each image arrives base64-encoded with its type.
     assert [i["mime_type"] for i in seen["images"]] == ["image/jpeg", "image/png"]
-    assert seen["images"][0]["base64_image"] == base64.b64encode(b"aaa").decode()
+    assert seen["images"][1]["base64_image"] == base64.b64encode(PNG_BYTES).decode()
 
 
-async def test_encode_images_defaults_a_missing_content_type_to_jpeg():
-    # Exercised directly: an HTTP client always fills in *some* content type
-    # (httpx defaults to application/octet-stream), so this branch is only
-    # reachable from an UploadFile that carries none.
+async def test_encode_images_takes_the_mime_type_from_the_bytes_not_the_upload():
+    """SPEC-054: the mime type used to be `img.content_type or "image/jpeg"` —
+    the client's word, with a guess as the fallback. It now comes from what
+    actually decoded, so an upload carrying no content type at all is answered
+    correctly rather than optimistically."""
     import io
 
     from fastapi import UploadFile
 
     from routes.admin.listings import _encode_images
 
-    upload = UploadFile(filename="mystery", file=io.BytesIO(b"data"))
+    upload = UploadFile(filename="mystery", file=io.BytesIO(PNG_BYTES))
     assert upload.content_type is None
 
     encoded = await _encode_images([upload])
 
-    assert encoded == [{"base64_image": base64.b64encode(b"data").decode(), "mime_type": "image/jpeg"}]
+    assert encoded == [{
+        "base64_image": base64.b64encode(PNG_BYTES).decode(),
+        "mime_type": "image/png",
+    }]
+
+
+async def test_encode_images_converts_a_heic_photo_for_the_vision_model():
+    """A HEIC forwarded verbatim is bytes the model cannot decode."""
+    import io
+
+    import pillow_heif
+    from fastapi import UploadFile
+    from PIL import Image
+
+    from routes.admin.listings import _encode_images
+
+    pillow_heif.register_heif_opener()
+    buf = io.BytesIO()
+    Image.new("RGB", (64, 64), (20, 140, 90)).save(buf, format="HEIF")
+
+    encoded = await _encode_images([UploadFile(filename="IMG_1.HEIC", file=io.BytesIO(buf.getvalue()))])
+
+    assert encoded[0]["mime_type"] == "image/jpeg"
+    decoded = base64.b64decode(encoded[0]["base64_image"])
+    assert Image.open(io.BytesIO(decoded)).format == "JPEG"
 
 
 async def test_analyze_image_stream_reports_a_pipeline_failure_as_an_error_event(client, admin_user, monkeypatch):
@@ -579,7 +608,7 @@ async def test_analyze_image_stream_reports_a_pipeline_failure_as_an_error_event
 
     monkeypatch.setattr(listing_pipeline_module, "analyze_listing", boom)
 
-    files = [("images", ("broken.jpg", b"fake", "image/jpeg"))]
+    files = [("images", ("broken.jpg", PNG_BYTES, "image/jpeg"))]
     response = await client.post("/admin/analyze-image/stream", files=files)
 
     # The stream has already started, so the failure is delivered in-band
@@ -745,7 +774,7 @@ async def test_admin_create_item_success(client, admin_user, admin_supabase, mon
     monkeypatch.setattr(items_module, "upload_item", upload_mock)
 
     data = {"name": "Widget", "description": "A nice widget", "condition": "good", "price": "19.99"}
-    files = [("images", ("widget.jpg", b"fake-bytes", "image/jpeg"))]
+    files = [("images", ("widget.jpg", PNG_BYTES, "image/jpeg"))]
     response = await client.post("/admin/items", data=data, files=files)
 
     assert response.status_code == 201
@@ -772,7 +801,7 @@ async def test_admin_create_item_with_min_price(client, admin_user, admin_supaba
         "price": "19.99",
         "min_price": "9.99",
     }
-    files = [("images", ("widget.jpg", b"fake-bytes", "image/jpeg"))]
+    files = [("images", ("widget.jpg", PNG_BYTES, "image/jpeg"))]
     response = await client.post("/admin/items", data=data, files=files)
 
     assert response.status_code == 201
@@ -793,7 +822,7 @@ async def test_admin_create_item_with_translations(client, admin_user, admin_sup
         "price": "19.99",
         "translations": json.dumps(translations_dict),
     }
-    files = [("images", ("widget.jpg", b"fake-bytes", "image/jpeg"))]
+    files = [("images", ("widget.jpg", PNG_BYTES, "image/jpeg"))]
     response = await client.post("/admin/items", data=data, files=files)
 
     assert response.status_code == 201
@@ -807,7 +836,7 @@ async def test_admin_create_item_upload_failure_500(client, admin_user, admin_su
     monkeypatch.setattr(items_module, "upload_item", upload_mock)
 
     data = {"name": "Widget", "description": "A nice widget", "condition": "good", "price": "19.99"}
-    files = [("images", ("widget.jpg", b"fake-bytes", "image/jpeg"))]
+    files = [("images", ("widget.jpg", PNG_BYTES, "image/jpeg"))]
     response = await client.post("/admin/items", data=data, files=files)
 
     assert response.status_code == 500
@@ -889,7 +918,7 @@ async def test_admin_update_item_syncs_images_when_an_order_is_given(client, adm
     response = await client.put(
         "/admin/items/item-1",
         data={"name": "New Name", "images_order": json.dumps(order)},
-        files=[("new_images", ("fresh.png", b"fake-bytes", "image/png"))],
+        files=[("new_images", ("fresh.png", PNG_BYTES, "image/png"))],
     )
 
     assert response.status_code == 200
@@ -947,7 +976,7 @@ async def test_admin_update_item_image_sync_failure_500(client, admin_user, admi
     response = await client.put(
         "/admin/items/item-1",
         data={"name": "New Name", "images_order": json.dumps(["new:0"])},
-        files=[("new_images", ("fresh.png", b"fake-bytes", "image/png"))],
+        files=[("new_images", ("fresh.png", PNG_BYTES, "image/png"))],
     )
 
     assert response.status_code == 500

@@ -447,12 +447,12 @@ defineExpose({
             <UFileUpload
               v-model="files"
               multiple
-              accept="image/*"
+              accept="image/*,.heic,.heif"
               layout="grid"
               :interactive="true"
               :disabled="isAnalyzing"
               label="Drop images here"
-              description="PNG, JPG up to a few MB each"
+              description="PNG, JPG or HEIC — compressed automatically"
               class="w-full min-h-32"
               @update:model-value="onPhotosUploaded"
             />
@@ -579,7 +579,7 @@ defineExpose({
             <input
               ref="addInput"
               type="file"
-              accept="image/*"
+              accept="image/*,.heic,.heif"
               multiple
               class="hidden"
               @change="onAddFiles"

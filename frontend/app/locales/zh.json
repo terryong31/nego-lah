@@ -467,7 +467,10 @@
       "sortUnread": "未读优先",
       "sortMessages": "消息最多",
       "emptyList": "暂无会话。",
-      "noMatch": "没有匹配的会话。"
+      "noMatch": "没有匹配的会话。",
+      "markRead": "标记为已读",
+      "markUnread": "标记为未读",
+      "markFailed": "无法更新已读状态"
     },
     "usersSection": {
       "usersTitle": "用户管理",

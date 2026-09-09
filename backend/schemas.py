@@ -81,6 +81,15 @@ class AdminMessageRequest(BaseModel):
     message: str
 
 
+class AdminReadStateRequest(BaseModel):
+    """SPEC-053 — set or clear a conversation's read watermark.
+
+    Defaults to True so the common call (the console opening a thread) can post
+    an empty body.
+    """
+    read: bool = True
+
+
 class UserProfileUpdateRequest(BaseModel):
     display_name: str | None = None
     avatar_url: str | None = None

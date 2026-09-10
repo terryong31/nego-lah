@@ -75,7 +75,11 @@ export default defineNuxtPlugin(() => {
     }
     gtag('event', 'page_view', {
       page_path: to.fullPath,
-      page_title: document.title
+      // `afterEach` is queued, so it can run after the document has gone —
+      // during teardown in a test environment, or a navigation racing unload.
+      // A missing title is worth losing; an unhandled rejection out of an
+      // analytics hook is not.
+      page_title: typeof document === 'undefined' ? undefined : document.title
     })
   })
 })

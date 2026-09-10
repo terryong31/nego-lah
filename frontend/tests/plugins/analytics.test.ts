@@ -1,6 +1,34 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, beforeEach } from 'vitest'
 
+// ---------------------------------------------------------------------------
+// Analytics must be OFF in the test environment
+//
+// `nuxt.config.ts` falls back to the production GA measurement ID when
+// NUXT_PUBLIC_GA_ID is unset, and `.env.test` does not set it — so every test
+// run was booting the real analytics plugin: injecting a googletagmanager.com
+// script tag into the test DOM and registering a `router.afterEach` that reads
+// `document.title`.
+//
+// That afterEach is queued, so on a slow machine it fires AFTER the environment
+// is torn down, `document` is gone, and vitest reports an unhandled rejection.
+// The suite then exits non-zero while printing "930 passed" — CI red with no
+// failing test, which is the worst way for this to show up.
+// ---------------------------------------------------------------------------
+
+describe('analytics is disabled in the test environment', () => {
+  it('has no analytics ids configured, so the plugin returns before doing anything', () => {
+    const config = useRuntimeConfig()
+
+    expect(config.public.gaId || '').toBe('')
+    expect(config.public.gtmId || '').toBe('')
+  })
+
+  it('never injects a googletagmanager script into the test DOM', () => {
+    expect(document.querySelector('script[src*="googletagmanager.com"]')).toBeNull()
+  })
+})
+
 describe('analytics plugin logic', () => {
   beforeEach(() => {
     document.head.innerHTML = ''

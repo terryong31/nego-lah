@@ -22,6 +22,22 @@ export default defineVitestConfig({
         overrides: {
           icon: {
             fallbackToApi: false
+          },
+          // Analytics OFF in tests. `nuxt.config.ts` falls back to the
+          // production GA measurement ID when NUXT_PUBLIC_GA_ID is unset, and
+          // `.env.test` cannot switch that off (`'' || 'G-…'` still yields the
+          // fallback) — so every test run was booting the real plugin: a
+          // googletagmanager.com script tag in the test DOM, and a queued
+          // `router.afterEach` reading `document.title` that fired AFTER the
+          // environment was torn down. Vitest reported that as an unhandled
+          // rejection and exited non-zero while printing "930 passed", i.e. CI
+          // red with no failing test. Overridden here rather than in
+          // nuxt.config so production behaviour is untouched.
+          runtimeConfig: {
+            public: {
+              gaId: '',
+              gtmId: ''
+            }
           }
         }
       }

@@ -13,6 +13,7 @@ Tests for items.py:
 import io
 import json
 import time
+from datetime import UTC, datetime
 
 from PIL import Image, ImageFilter
 
@@ -325,6 +326,11 @@ async def test_upload_item_success_uploads_images_and_inserts_row(patch_supabase
     assert item_data["price"] == 19.99
     assert item_data["min_price"] == 9.99
     assert item_data["status"] == "available"
+    # SPEC-066: `created_at` is a `timestamptz`, so a naive literal means
+    # whatever zone the API host happens to be in — eight hours out, here.
+    created_at = datetime.fromisoformat(item_data["created_at"])
+    assert created_at.tzinfo is not None
+    assert abs((created_at - datetime.now(UTC)).total_seconds()) < 5
     urls = json.loads(item_data["image_path"])
     assert urls == {"0.png": "https://cdn.example.com/img0.jpg"}
 
@@ -644,7 +650,9 @@ def test_delete_item_success_sets_deleted_at(patch_supabase, fake_supabase):
     assert ok is True
     update_call = fake_supabase.table.return_value.update.call_args
     update_payload = update_call.args[0]
-    assert "deleted_at" in update_payload
+    deleted_at = datetime.fromisoformat(update_payload["deleted_at"])
+    assert deleted_at.tzinfo is not None, "SPEC-066 — a soft delete is dated in UTC"
+    assert abs((deleted_at - datetime.now(UTC)).total_seconds()) < 5
     fake_supabase.table.return_value.update.return_value.eq.assert_called_with("id", "item-1")
 
 

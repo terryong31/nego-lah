@@ -376,17 +376,26 @@ describe('components/admin/AdminOrders.vue', () => {
     })
   })
 
-  describe('rendered per-row controls (status USelect + delete UButton)', () => {
-    it('changing the rendered status select fires changeStatus through the real @update:model-value binding', async () => {
+  describe('rendered per-row controls (SPEC-064 overflow menu)', () => {
+    /** The row's action menu, flattened across its groups. */
+    function rowMenu(wrapper: { findComponent: (o: object) => { props: (p: string) => unknown } }) {
+      const groups = wrapper.findComponent({ name: 'UDropdownMenu' }).props('items') as
+        { label: string, onSelect?: () => void }[][]
+      return groups.flat()
+    }
+
+    it('changes status from the overflow menu, the select having been redundant with the Status column', async () => {
       const order = makeOrder({ status: 'pending_info' })
       callMock.mockResolvedValueOnce(makeResponse([order]))
       const wrapper = await mountSuspended(AdminOrders)
+      await flushPromises()
       callMock.mockResolvedValueOnce({})
 
-      const select = wrapper.findComponent({ name: 'USelect' })
-      expect(select.exists()).toBe(true)
+      expect(wrapper.findComponent({ name: 'USelect' }).exists()).toBe(false)
 
-      await select.vm.$emit('update:modelValue', 'confirmed')
+      const confirm = rowMenu(wrapper).find(i => /confirmed/i.test(i.label))
+      expect(confirm, 'the transition must survive losing the select').toBeTruthy()
+      confirm!.onSelect!()
       await flushPromises()
 
       expect(callMock).toHaveBeenCalledWith('/orders/o1/status', {
@@ -397,18 +406,16 @@ describe('components/admin/AdminOrders.vue', () => {
       expect(toastAddMock).toHaveBeenCalledWith({ title: 'Order marked confirmed', color: 'success' })
     })
 
-    it('clicking the rendered delete button confirms via window.confirm and issues the DELETE request', async () => {
+    it('deletes from the overflow menu, confirming via window.confirm first', async () => {
       vi.spyOn(window, 'confirm').mockReturnValueOnce(true)
       const order = makeOrder()
       callMock.mockResolvedValueOnce(makeResponse([order]))
       const wrapper = await mountSuspended(AdminOrders)
+      await flushPromises()
       callMock.mockResolvedValueOnce({}) // DELETE
       callMock.mockResolvedValueOnce(makeResponse([])) // refresh() after delete
 
-      const deleteButton = wrapper.findAll('button').find(b => b.html().includes('i-lucide:trash-2'))
-      expect(deleteButton).toBeTruthy()
-
-      await deleteButton!.trigger('click')
+      rowMenu(wrapper).find(i => /delete/i.test(i.label))!.onSelect!()
       await flushPromises()
 
       expect(window.confirm).toHaveBeenCalledWith('Delete this order for "Widget"?')
@@ -416,19 +423,18 @@ describe('components/admin/AdminOrders.vue', () => {
       expect(toastAddMock).toHaveBeenCalledWith({ title: 'Order deleted', color: 'success' })
     })
 
-    it('clicking the rendered delete button does not call the API when window.confirm is declined', async () => {
+    it('does not call the API when window.confirm is declined', async () => {
       vi.spyOn(window, 'confirm').mockReturnValueOnce(false)
       const order = makeOrder()
       callMock.mockResolvedValueOnce(makeResponse([order]))
       const wrapper = await mountSuspended(AdminOrders)
+      await flushPromises()
+      callMock.mockClear()
 
-      const deleteButton = wrapper.findAll('button').find(b => b.html().includes('i-lucide:trash-2'))
-      expect(deleteButton).toBeTruthy()
-
-      await deleteButton!.trigger('click')
+      rowMenu(wrapper).find(i => /delete/i.test(i.label))!.onSelect!()
       await flushPromises()
 
-      expect(callMock).toHaveBeenCalledTimes(1)
+      expect(callMock).not.toHaveBeenCalled()
       expect(toastAddMock).not.toHaveBeenCalled()
     })
   })
@@ -477,6 +483,18 @@ describe('recording postage', () => {
     await flushPromises()
     return wrapper
   }
+
+  // This block is a sibling of the main describe, so it never inherited that
+  // one's reset. `useAsyncData('admin-orders')` is shared across every mount in
+  // the file, and `recordShipment` mutates the order object in place — so
+  // without this, one test's shipped order became the next test's starting
+  // state, and drafts seeded from `shipped_at` (SPEC-064) read the wrong one.
+  beforeEach(() => {
+    callMock.mockReset()
+    toastAddMock.mockReset()
+    shipmentReply = undefined
+    clearNuxtData('admin-orders')
+  })
 
   it('PUTs courier, tracking number and the notify flag', async () => {
     const wrapper = await mountWith()

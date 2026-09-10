@@ -1,13 +1,17 @@
 <script setup lang="ts">
 import type { SplitterItem } from '@nuxt/ui'
+import type { ChatSummary } from '~/utils/adminChat'
 
 const { t } = useI18n()
 const { call } = useAdminApi()
 const toast = useToast()
 
+// SPEC-062: the list defaulted to 20% and could be dragged down to 18, which is
+// narrower than a display name plus its preview. Both floors have to fit in
+// 100%, so the thread's minimum comes down to make room for the list's.
 const splitterItems: SplitterItem[] = [
-  { slot: 'list', minSize: 18, defaultSize: 20, maxSize: 45, class: 'flex flex-col min-h-0' },
-  { slot: 'thread', minSize: 40, defaultSize: 80, class: 'flex flex-col min-h-0' }
+  { slot: 'list', minSize: 30, defaultSize: 32, maxSize: 45, class: 'flex flex-col min-h-0' },
+  { slot: 'thread', minSize: 55, defaultSize: 68, class: 'flex flex-col min-h-0' }
 ]
 
 // Live typing presence — mirrors the customer chat page. The admin client isn't
@@ -15,49 +19,34 @@ const splitterItems: SplitterItem[] = [
 // the broadcast channel is public so the anon client can still send/receive.
 const { remoteTyping: customerTyping, join: joinTyping, ping: pingTyping } = useTypingChannel()
 
-interface ChatSummary {
-  user_id: string
-  display_name: string
-  avatar_url: string | null
-  message_count: number
-  last_message: string
-  last_role: string
-  unread: boolean
-  ai_enabled?: boolean
-  admin_intervening?: boolean
-  last_activity?: string | null
-  admin_last_read_at?: string | null
-}
 interface ChatMessage {
   role: string
   content: string
   source?: string
 }
 
+// SPEC-063: archived conversations are off the list unless asked for. The
+// toggle re-fetches rather than filtering client-side — the server is the one
+// that knows what has been archived, and an archive can be arbitrarily large.
+const showArchived = ref(false)
+
 const { data: chats, pending, refresh } = useAsyncData<ChatSummary[]>(
   'admin-chats',
-  () => call<ChatSummary[]>('/chats'),
-  { default: () => [] }
+  () => call<ChatSummary[]>(showArchived.value ? '/chats?include_archived=true' : '/chats'),
+  {
+    default: () => [],
+    watch: [showArchived],
+    // Nuxt 4 hands `data` back as a shallow ref, so mutating a row in place —
+    // which is what every optimistic action here does — changes nothing any
+    // computed is watching. `markRead` only appeared to work because the
+    // `markingRead` ref re-rendered the child around it; a row leaving the list
+    // on archive is decided by a computed and had no such accident to lean on.
+    deep: true
+  }
 )
 
 const selected = ref<string | null>(null)
 const selectedChat = computed(() => chats.value.find(c => c.user_id === selected.value))
-
-// Read/unread filter for the conversation list.
-type ChatFilter = 'all' | 'unread' | 'read'
-const filter = ref<ChatFilter>('all')
-const filterItems = computed(() => [
-  { label: t('admin.chatsSection.filterAll'), value: 'all' as const },
-  { label: t('admin.filterUnread'), value: 'unread' as const },
-  { label: t('admin.filterRead'), value: 'read' as const }
-])
-const filteredChats = computed(() =>
-  chats.value.filter((c) => {
-    if (filter.value === 'unread') return c.unread
-    if (filter.value === 'read') return !c.unread
-    return true
-  })
-)
 
 // Free-text search over the conversation list — name + last message, client-side.
 const search = ref('')
@@ -79,7 +68,9 @@ function activityTime(c: ChatSummary): number {
 
 const visibleChats = computed(() => {
   const q = search.value.trim().toLowerCase()
-  const rows = filteredChats.value.filter((c) => {
+  const rows = chats.value.filter((c) => {
+    // An optimistic archive removes the row before the server confirms it.
+    if (Boolean(c.archived) !== showArchived.value) return false
     if (!q) return true
     return c.display_name.toLowerCase().includes(q)
       || (c.last_message || '').toLowerCase().includes(q)
@@ -120,6 +111,59 @@ async function markRead(userId: string, read: boolean) {
   } finally {
     markingRead.value = null
   }
+}
+
+// SPEC-063 — archiving is a soft hide, so it is safe to apply optimistically:
+// the row leaves the list at once and comes back if the write is refused.
+// Nothing in `messages` is touched either way.
+const archiving = ref<string | null>(null)
+
+async function toggleArchive(userId: string, archived: boolean) {
+  const chat = chats.value.find(c => c.user_id === userId)
+  if (!chat || archiving.value) return
+
+  const previous = Boolean(chat.archived)
+  chat.archived = archived
+  archiving.value = userId
+  try {
+    const res = await call<{ archived: boolean, archived_at: string | null }>(
+      `/chats/${userId}/archive`,
+      { method: 'POST', body: { archived } }
+    )
+    chat.archived = res?.archived ?? archived
+    chat.archived_at = res?.archived_at ?? null
+    // The open thread just left the list; don't leave the operator replying
+    // into a conversation they can no longer see.
+    if (chat.archived && selected.value === userId) {
+      selected.value = null
+    }
+  } catch (err) {
+    chat.archived = previous
+    const e = err as { data?: { detail?: string }, message?: string }
+    toast.add({ title: t('admin.chatsSection.archiveFailed'), description: e.data?.detail || e.message, color: 'error' })
+  } finally {
+    archiving.value = null
+  }
+}
+
+// User Info panel. Every field comes off the row the list already has
+// (SPEC-063), so opening it is not a request.
+const infoChat = ref<ChatSummary | null>(null)
+const infoOpen = computed({
+  get: () => infoChat.value !== null,
+  set: (open: boolean) => {
+    if (!open) infoChat.value = null
+  }
+})
+
+function showInfo(chat: ChatSummary) {
+  infoChat.value = chat
+}
+
+function formatDate(value?: string | null) {
+  if (!value) return '—'
+  const ms = Date.parse(value)
+  return Number.isNaN(ms) ? '—' : new Date(ms).toLocaleString()
 }
 
 const messages = ref<ChatMessage[]>([])
@@ -342,121 +386,23 @@ const isPaidDeal = computed(() => {
     >
       <!-- Conversation list -->
       <template #list>
-        <aside class="w-full h-full flex flex-col min-h-0 overflow-hidden">
-          <div class="h-12 px-3 flex items-center gap-2 border-b border-default shrink-0">
-            <div class="flex-1 flex gap-0.5 p-0.5 rounded-md bg-elevated/50">
-              <UButton
-                v-for="f in filterItems"
-                :key="f.value"
-                size="xs"
-                :color="filter === f.value ? 'primary' : 'neutral'"
-                :variant="filter === f.value ? 'solid' : 'ghost'"
-                class="flex-1 justify-center"
-                :label="f.label"
-                @click="filter = f.value"
-              />
-            </div>
-            <UButton
-              size="xs"
-              variant="ghost"
-              icon="i-lucide-refresh-cw"
-              :loading="pending"
-              @click="refresh()"
-            />
-          </div>
-
-          <div class="px-3 py-2 flex items-center gap-2 border-b border-default shrink-0">
-            <UInput
-              v-model="search"
-              size="xs"
-              icon="i-lucide-search"
-              class="flex-1"
-              :placeholder="$t('admin.chatsSection.searchPlaceholder')"
-              :aria-label="$t('admin.chatsSection.searchPlaceholder')"
-            />
-            <USelect
-              v-model="sortKey"
-              size="xs"
-              :items="sortItems"
-              class="w-32 shrink-0"
-              :aria-label="$t('admin.chatsSection.sortLabel')"
-            />
-          </div>
-
-          <div class="flex-1 overflow-y-auto">
-            <div
-              v-if="pending"
-              class="p-3 space-y-2"
-            >
-              <USkeleton
-                v-for="i in 6"
-                :key="i"
-                class="h-14 w-full"
-              />
-            </div>
-            <UEmpty
-              v-else-if="visibleChats.length === 0"
-              :description="chats.length === 0 ? $t('admin.chatsSection.emptyList') : $t('admin.chatsSection.noMatch')"
-              variant="naked"
-              size="sm"
-              class="p-6 text-center"
-            />
-            <div
-              v-for="c in visibleChats"
-              v-else
-              :key="c.user_id"
-              class="relative border-b border-default"
-              :class="selected === c.user_id ? 'bg-elevated' : ''"
-            >
-              <button
-                class="w-full text-left px-3 py-3 pr-16 hover:bg-elevated/50 transition-colors"
-                @click="open(c.user_id)"
-              >
-                <div class="flex items-center gap-2 mb-1">
-                  <UAvatar
-                    :src="c.avatar_url || undefined"
-                    :alt="c.display_name"
-                    size="2xs"
-                    icon="i-lucide-user"
-                  />
-                  <span class="text-sm font-medium text-highlighted truncate">{{ c.display_name }}</span>
-                  <UBadge
-                    v-if="c.ai_enabled === false"
-                    color="warning"
-                    variant="subtle"
-                    size="xs"
-                    label="HITL"
-                    class="ml-1"
-                  />
-                </div>
-                <p class="text-sm text-default truncate">
-                  {{ c.last_message || '—' }}
-                </p>
-                <p class="text-xs text-dimmed">
-                  {{ c.message_count }} messages
-                </p>
-              </button>
-
-              <!-- SPEC-053: the read toggle sits OUTSIDE the row button (nesting one
-                   button in another is invalid markup) so a thread can be dismissed
-                   without being opened. -->
-              <div class="absolute top-2.5 right-2 flex items-center gap-1.5">
-                <UChip v-if="c.unread" />
-                <UButton
-                  :data-testid="`chat-read-toggle-${c.user_id}`"
-                  size="xs"
-                  variant="ghost"
-                  color="neutral"
-                  :icon="c.unread ? 'i-lucide-mail-open' : 'i-lucide-mail'"
-                  :loading="markingRead === c.user_id"
-                  :aria-label="c.unread ? $t('admin.chatsSection.markRead') : $t('admin.chatsSection.markUnread')"
-                  :title="c.unread ? $t('admin.chatsSection.markRead') : $t('admin.chatsSection.markUnread')"
-                  @click="markRead(c.user_id, c.unread)"
-                />
-              </div>
-            </div>
-          </div>
-        </aside>
+        <AdminChatList
+          v-model:search="search"
+          v-model:sort-key="sortKey"
+          v-model:show-archived="showArchived"
+          :chats="visibleChats"
+          :total="chats.length"
+          :pending="pending"
+          :selected="selected"
+          :marking-read="markingRead"
+          :archiving="archiving"
+          :sort-items="sortItems"
+          @refresh="refresh()"
+          @open="open"
+          @mark-read="markRead"
+          @archive="toggleArchive"
+          @info="showInfo"
+        />
       </template>
 
       <!-- Conversation thread -->
@@ -471,33 +417,32 @@ const isPaidDeal = computed(() => {
           />
 
           <template v-else>
-            <!-- Thread header -->
-            <header class="h-12 px-4 flex items-center justify-between gap-2 border-b border-default shrink-0">
+            <!-- Thread header. Sized `md` throughout, to match the list's
+                 control strip across the splitter (SPEC-062).
+
+                 AI state has no badge of its own: the button already says it,
+                 and says it as an action the operator can take. "Take over"
+                 can only mean the AI is answering; "Resume AI" can only mean it
+                 is not. A badge beside it was the same fact twice. -->
+            <header class="h-14 px-4 flex items-center justify-between gap-2 border-b border-default shrink-0">
               <div class="flex items-center gap-2 min-w-0">
                 <div
                   v-if="selectedChat"
-                  class="flex items-center gap-2 min-w-0"
+                  class="flex items-center gap-2.5 min-w-0"
                 >
                   <UAvatar
                     :src="selectedChat.avatar_url || undefined"
                     :alt="selectedChat.display_name"
-                    size="2xs"
+                    size="md"
                     icon="i-lucide-user"
                   />
-                  <span class="text-sm font-medium text-highlighted truncate">{{ selectedChat.display_name }}</span>
+                  <span class="text-base font-medium text-highlighted truncate">{{ selectedChat.display_name }}</span>
                 </div>
               </div>
 
               <div class="flex items-center gap-2 shrink-0">
-                <UBadge
-                  :color="currentAiEnabled ? 'success' : 'warning'"
-                  variant="subtle"
-                  size="md"
-                >
-                  {{ currentAiEnabled ? 'AI Active' : 'AI Paused' }}
-                </UBadge>
                 <UButton
-                  size="xs"
+                  size="md"
                   :color="currentAiEnabled ? 'warning' : 'primary'"
                   variant="solid"
                   :icon="currentAiEnabled ? 'i-lucide-pause-circle' : 'i-lucide-bot'"
@@ -611,125 +556,25 @@ const isPaidDeal = computed(() => {
       v-else
       class="flex-1 min-h-0 w-full flex flex-col overflow-hidden"
     >
-      <!-- Conversation list on mobile -->
-      <aside
+      <!-- Conversation list on mobile: same component, master-detail wrapper -->
+      <AdminChatList
         v-if="!selected"
-        class="w-full h-full flex flex-col min-h-0 overflow-hidden"
-      >
-        <div class="h-12 px-3 flex items-center gap-2 border-b border-default shrink-0">
-          <div class="flex-1 flex gap-0.5 p-0.5 rounded-md bg-elevated/50">
-            <UButton
-              v-for="f in filterItems"
-              :key="f.value"
-              size="xs"
-              :color="filter === f.value ? 'primary' : 'neutral'"
-              :variant="filter === f.value ? 'solid' : 'ghost'"
-              class="flex-1 justify-center"
-              :label="f.label"
-              @click="filter = f.value"
-            />
-          </div>
-          <UButton
-            size="xs"
-            variant="ghost"
-            icon="i-lucide-refresh-cw"
-            :loading="pending"
-            @click="refresh()"
-          />
-        </div>
-
-        <div class="px-3 py-2 flex items-center gap-2 border-b border-default shrink-0">
-          <UInput
-            v-model="search"
-            size="xs"
-            icon="i-lucide-search"
-            class="flex-1"
-            :placeholder="$t('admin.chatsSection.searchPlaceholder')"
-            :aria-label="$t('admin.chatsSection.searchPlaceholder')"
-          />
-          <USelect
-            v-model="sortKey"
-            size="xs"
-            :items="sortItems"
-            class="w-32 shrink-0"
-            :aria-label="$t('admin.chatsSection.sortLabel')"
-          />
-        </div>
-
-        <div class="flex-1 overflow-y-auto">
-          <div
-            v-if="pending"
-            class="p-3 space-y-2"
-          >
-            <USkeleton
-              v-for="i in 6"
-              :key="i"
-              class="h-14 w-full"
-            />
-          </div>
-          <UEmpty
-            v-else-if="visibleChats.length === 0"
-            :description="chats.length === 0 ? $t('admin.chatsSection.emptyList') : $t('admin.chatsSection.noMatch')"
-            variant="naked"
-            size="sm"
-            class="p-6 text-center"
-          />
-          <div
-            v-for="c in visibleChats"
-            v-else
-            :key="c.user_id"
-            class="relative border-b border-default"
-            :class="selected === c.user_id ? 'bg-elevated' : ''"
-          >
-            <button
-              class="w-full text-left px-3 py-3 pr-16 hover:bg-elevated/50 transition-colors"
-              @click="open(c.user_id)"
-            >
-              <div class="flex items-center gap-2 mb-1">
-                <UAvatar
-                  :src="c.avatar_url || undefined"
-                  :alt="c.display_name"
-                  size="2xs"
-                  icon="i-lucide-user"
-                />
-                <span class="text-sm font-medium text-highlighted truncate">{{ c.display_name }}</span>
-                <UBadge
-                  v-if="c.ai_enabled === false"
-                  color="warning"
-                  variant="subtle"
-                  size="xs"
-                  label="HITL"
-                  class="ml-1"
-                />
-              </div>
-              <p class="text-sm text-default truncate">
-                {{ c.last_message || '—' }}
-              </p>
-              <p class="text-xs text-dimmed">
-                {{ c.message_count }} messages
-              </p>
-            </button>
-
-            <!-- SPEC-053: the read toggle sits OUTSIDE the row button (nesting one
-                 button in another is invalid markup) so a thread can be dismissed
-                 without being opened. -->
-            <div class="absolute top-2.5 right-2 flex items-center gap-1.5">
-              <UChip v-if="c.unread" />
-              <UButton
-                :data-testid="`chat-read-toggle-${c.user_id}`"
-                size="xs"
-                variant="ghost"
-                color="neutral"
-                :icon="c.unread ? 'i-lucide-mail-open' : 'i-lucide-mail'"
-                :loading="markingRead === c.user_id"
-                :aria-label="c.unread ? $t('admin.chatsSection.markRead') : $t('admin.chatsSection.markUnread')"
-                :title="c.unread ? $t('admin.chatsSection.markRead') : $t('admin.chatsSection.markUnread')"
-                @click="markRead(c.user_id, c.unread)"
-              />
-            </div>
-          </div>
-        </div>
-      </aside>
+        v-model:search="search"
+        v-model:sort-key="sortKey"
+        v-model:show-archived="showArchived"
+        :chats="visibleChats"
+        :total="chats.length"
+        :pending="pending"
+        :selected="selected"
+        :marking-read="markingRead"
+        :archiving="archiving"
+        :sort-items="sortItems"
+        @refresh="refresh()"
+        @open="open"
+        @mark-read="markRead"
+        @archive="toggleArchive"
+        @info="showInfo"
+      />
 
       <!-- Thread view on mobile -->
       <section
@@ -763,13 +608,6 @@ const isPaidDeal = computed(() => {
           </div>
 
           <div class="flex items-center gap-1.5 shrink-0">
-            <UBadge
-              :color="currentAiEnabled ? 'success' : 'warning'"
-              variant="subtle"
-              size="md"
-            >
-              {{ currentAiEnabled ? 'AI Active' : 'AI Paused' }}
-            </UBadge>
             <UButton
               size="xs"
               :color="currentAiEnabled ? 'warning' : 'primary'"
@@ -872,5 +710,93 @@ const isPaidDeal = computed(() => {
         </div>
       </section>
     </div>
+
+    <!-- User Info (SPEC-063). Rendered once, outside the row loop: it is a
+         view of whichever row was asked about, not one panel per row. -->
+    <USlideover
+      v-model:open="infoOpen"
+      :title="$t('admin.chatsSection.userInfo')"
+    >
+      <template #body>
+        <div
+          v-if="infoChat"
+          class="flex flex-col gap-4"
+        >
+          <div class="flex items-center gap-3">
+            <UAvatar
+              :src="infoChat.avatar_url || undefined"
+              :alt="infoChat.display_name"
+              size="lg"
+              icon="i-lucide-user"
+            />
+            <div class="min-w-0">
+              <p class="font-medium text-highlighted truncate">
+                {{ infoChat.display_name }}
+              </p>
+              <p class="text-sm text-muted truncate">
+                {{ infoChat.email || '—' }}
+              </p>
+            </div>
+          </div>
+
+          <!-- Only the exceptional states. AI status lives in the thread
+               header, next to the control that changes it. -->
+          <div
+            v-if="infoChat.is_banned || infoChat.archived"
+            class="flex flex-wrap gap-1.5"
+          >
+            <UBadge
+              v-if="infoChat.is_banned"
+              color="error"
+              variant="subtle"
+              size="sm"
+              :label="$t('admin.chatsSection.banned')"
+            />
+            <UBadge
+              v-if="infoChat.archived"
+              color="neutral"
+              variant="subtle"
+              size="sm"
+              :label="$t('admin.chatsSection.archived')"
+            />
+          </div>
+
+          <dl class="text-sm divide-y divide-default">
+            <div class="flex items-start justify-between gap-3 py-2">
+              <dt class="text-muted shrink-0">
+                {{ $t('admin.chatsSection.infoUserId') }}
+              </dt>
+              <dd class="text-highlighted break-all text-right">
+                {{ infoChat.user_id }}
+              </dd>
+            </div>
+            <div class="flex items-start justify-between gap-3 py-2">
+              <dt class="text-muted shrink-0">
+                {{ $t('admin.chatsSection.infoJoined') }}
+              </dt>
+              <dd class="text-highlighted text-right">
+                {{ formatDate(infoChat.created_at) }}
+              </dd>
+            </div>
+            <div class="flex items-start justify-between gap-3 py-2">
+              <dt class="text-muted shrink-0">
+                {{ $t('admin.chatsSection.infoMessages') }}
+              </dt>
+              <dd class="text-highlighted text-right">
+                {{ infoChat.message_count }}
+              </dd>
+            </div>
+            <div class="flex items-start justify-between gap-3 py-2">
+              <dt class="text-muted shrink-0">
+                {{ $t('admin.chatsSection.infoLastActivity') }}
+              </dt>
+              <dd class="text-highlighted text-right">
+                {{ formatDate(infoChat.last_activity) }}
+              </dd>
+            </div>
+          </dl>
+        </div>
+      </template>
+    </USlideover>
   </div>
 </template>

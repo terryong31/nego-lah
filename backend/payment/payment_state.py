@@ -6,7 +6,7 @@ Stores Stripe IDs for cleanup when links expire or are cancelled.
 """
 
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 
 import stripe
 
@@ -53,7 +53,7 @@ def store_pending_payment(
         "product_id": product_id,
         "price_id": price_id,
         "payment_url": payment_url,
-        "created_at": datetime.now().isoformat()
+        "created_at": datetime.now(UTC).isoformat()
     }
 
     try:

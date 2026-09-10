@@ -101,6 +101,45 @@ async def test_recording_postage_writes_tracking_and_moves_the_order_to_shipped(
     assert written["shipped_at"]
 
 
+async def test_correcting_a_shipment_keeps_the_original_ship_date(
+    client, admin_user, admin_supabase, csrf, notifications
+):
+    """SPEC-064. The seller mistypes a tracking number, notices, and fixes it.
+
+    Re-stamping `shipped_at` on every write makes that correction silently move
+    the ship date — so the buyer's email says one day, the order says another,
+    and the record of when the parcel actually left is gone. The date belongs to
+    the act of posting, which happened once.
+    """
+    admin_user()
+    shipped = {**ORDER, "status": "shipped", "shipped_at": "2026-09-01T02:00:00+00:00"}
+    _order_lookup(admin_supabase, shipped)
+    _order_update(admin_supabase, shipped)
+
+    res = await _ship(client, csrf, tracking_number="630999999999", notify=False)
+
+    assert res.status_code == 200
+    written = admin_supabase.table.return_value.update.call_args[0][0]
+    assert written["tracking_number"] == "630999999999"
+    assert written["shipped_at"] == "2026-09-01T02:00:00+00:00", (
+        "correcting a typo moved the ship date"
+    )
+
+
+async def test_a_first_shipment_still_stamps_the_ship_date(
+    client, admin_user, admin_supabase, csrf, notifications
+):
+    """The order has never been posted, so now is exactly right."""
+    admin_user()
+    _order_lookup(admin_supabase, {**ORDER, "shipped_at": None})
+    _order_update(admin_supabase, ORDER)
+
+    await _ship(client, csrf)
+
+    written = admin_supabase.table.return_value.update.call_args[0][0]
+    assert written["shipped_at"]
+
+
 async def test_the_tracking_url_is_derived_from_the_courier(
     client, admin_user, admin_supabase, csrf, notifications
 ):

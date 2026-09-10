@@ -213,6 +213,25 @@ describe('components/admin/AdminItems.vue', () => {
   // reachable via findComponent even though its slot content never renders.
 
   describe('DOM interactions: header/row buttons and modal open v-model', () => {
+    it('parks the header actions at the right, with Add ahead of Refresh', async () => {
+      // The search and the count read left-to-right; the things you DO with the
+      // list belong together at the far end, and adding a listing is the one
+      // you reach for.
+      callMock.mockResolvedValueOnce([])
+      const wrapper = await mountSuspended(AdminItems)
+      await flushPromises()
+
+      const refresh = wrapper.findAllComponents({ name: 'UButton' })
+        .find(b => b.props('label') === 'Refresh')!
+      const group = refresh.element.parentElement!
+
+      expect([...group.classList], 'the actions must sit at the right edge').toContain('ms-auto')
+
+      const order = [...group.children].map(el => el.textContent?.trim())
+      expect(order[0]).toContain('Upload item')
+      expect(order[1]).toContain('Refresh')
+    })
+
     it('clicking the Refresh button in the header re-fetches the item list', async () => {
       callMock.mockResolvedValueOnce([])
       const wrapper = await mountSuspended(AdminItems)

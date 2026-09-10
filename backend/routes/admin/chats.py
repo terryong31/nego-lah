@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from admin_session import verify_admin, write_audit
 from logger import logger
-from schemas import AdminMessageRequest, AdminReadStateRequest
+from schemas import AdminArchiveRequest, AdminMessageRequest, AdminReadStateRequest
 
 from ._profiles import resolve_avatar_url
 
@@ -38,14 +38,22 @@ def _is_unread(admin_last_read_at, last_human_at, last_role: str) -> bool:
     With no usable watermark (never marked, or a value we can't read) this is
     the original rule: the customer spoke last and is still waiting.
     """
+    from agent.memory import MESSAGE_FUTURE_GRACE
+
     read_at = _parse_ts(admin_last_read_at)
     if read_at is None:
         return last_role == 'human'
 
     human_at = _parse_ts(last_human_at)
-    if human_at is None:
+    if human_at is None or human_at > datetime.now(UTC) + MESSAGE_FUTURE_GRACE:
         # Marked read, and nothing datable from the customer since. Trust the
         # mark — that is the whole point of having one.
+        #
+        # "Nothing datable" includes a row from the future (SPEC-066): every
+        # message written before that fix carries the API host's local time in
+        # a UTC column, so on a UTC+8 host it is dated eight hours out and beats
+        # any watermark the seller can write. It is not a message they have yet
+        # to read — it is one they read this morning.
         return False
     return human_at > read_at
 
@@ -61,8 +69,19 @@ def _stamp_read(user_id: str, read_at: str | None):
     }).execute()
 
 
+def _stamp_archived(user_id: str, archived_at: str | None):
+    """Move a conversation out of the console list, or back in. Raises on failure."""
+    from connector import admin_supabase
+
+    admin_supabase.table('chat_settings').upsert({
+        'user_id': user_id,
+        'archived_at': archived_at,
+        'updated_at': 'now()',
+    }).execute()
+
+
 @router.get("/chats")
-def get_all_chats():
+def get_all_chats(include_archived: bool = False):
     """Get list of all active conversations, enriched with the user's display
     name / avatar and an `unread` flag.
 
@@ -70,6 +89,12 @@ def get_all_chats():
     CUSTOMER message is newer than `chat_settings.admin_last_read_at`. A
     conversation that has never been marked falls back to the original rule —
     the customer sent the last message and is still waiting for a reply.
+
+    Archived conversations (SPEC-063) are omitted unless `include_archived`.
+    Every row also carries the identity fields the console's customer panel
+    shows — this handler already holds every auth user and profile, so asking
+    for them again from a second endpoint would be a round trip for data that
+    is already in hand.
     """
     from agent.memory import conversation_memory
     from connector import admin_supabase
@@ -90,7 +115,7 @@ def get_all_chats():
         # HITL status + read watermark per conversation — same bulk read /users
         # uses (SPEC-046 #39, SPEC-053).
         settings = admin_supabase.table('chat_settings').select(
-            'user_id, ai_enabled, admin_intervening, admin_last_read_at'
+            'user_id, ai_enabled, admin_intervening, admin_last_read_at, archived_at'
         ).execute()
         settings_map = {s.get('user_id'): s for s in (settings.data or []) if s.get('user_id')}
         # Newest message per conversation, and separately the newest CUSTOMER
@@ -121,8 +146,13 @@ def get_all_chats():
             or profile.get('display_name')
             or (email.split('@')[0] if email else 'Unknown user')
         )
-        avatar_url = resolve_avatar_url(meta, profile)
-        return display_name, avatar_url
+        return {
+            "display_name": display_name,
+            "avatar_url": resolve_avatar_url(meta, profile),
+            "email": email,
+            "created_at": getattr(user, 'created_at', None) if user else None,
+            "is_banned": bool(profile.get('is_banned', False)),
+        }
 
     # Get all user histories
     all_histories = conversation_memory.get_all_histories()
@@ -130,20 +160,29 @@ def get_all_chats():
     chats = []
     for user_id, history in all_histories.items():
         if history:
+            setting = settings_map.get(user_id, {})
+            archived_at = setting.get('archived_at')
+            if archived_at and not include_archived:
+                continue
+
             last_message = history[-1] if history else None
             last_role = last_message.get('role', '') if last_message else ''
-            display_name, avatar_url = _user_info(user_id)
-            setting = settings_map.get(user_id, {})
+            info = _user_info(user_id)
             read_at = setting.get('admin_last_read_at')
             chats.append({
                 "user_id": user_id,
-                "display_name": display_name,
-                "avatar_url": avatar_url,
+                "display_name": info["display_name"],
+                "avatar_url": info["avatar_url"],
+                "email": info["email"],
+                "created_at": info["created_at"],
+                "is_banned": info["is_banned"],
                 "message_count": len(history),
                 "last_message": last_message.get('content', '')[:100] if last_message else '',
                 "last_role": last_role,
                 "unread": _is_unread(read_at, last_human_map.get(user_id), last_role),
                 "admin_last_read_at": read_at,
+                "archived": bool(archived_at),
+                "archived_at": archived_at,
                 "ai_enabled": setting.get('ai_enabled', True),
                 "admin_intervening": setting.get('admin_intervening', False),
                 "last_activity": last_activity_map.get(user_id),
@@ -169,11 +208,18 @@ def set_chat_read_state(
 ):
     """Mark a conversation read (or back to unread) — SPEC-053.
 
-    `read: true` stamps the watermark at now, which clears the dot until the
-    customer says something new. `read: false` clears it, putting the thread
-    back in the Unread filter so it can be triaged later.
+    `read: true` stamps the watermark over every customer message already in
+    the thread, which clears the dot until they say something new. `read:
+    false` clears it, putting the thread back in the Unread filter so it can be
+    triaged later.
+
+    The mark covers the transcript rather than reading the clock (SPEC-066):
+    rows written before that fix carry the API host's local time in a UTC
+    column, and a `now` stamp never gets past them.
     """
-    read_at = datetime.now(UTC).isoformat() if request.read else None
+    from agent.memory import conversation_memory
+
+    read_at = conversation_memory.read_watermark(user_id, 'human') if request.read else None
 
     try:
         _stamp_read(user_id, read_at)
@@ -187,6 +233,33 @@ def set_chat_read_state(
     return {"user_id": user_id, "unread": not request.read, "admin_last_read_at": read_at}
 
 
+@router.post("/chats/{user_id}/archive")
+def set_chat_archived(
+    user_id: str,
+    request: AdminArchiveRequest = AdminArchiveRequest(),
+    admin: dict = Depends(verify_admin),
+):
+    """Archive a conversation out of the console list, or restore it — SPEC-063.
+
+    Reversible by construction: this writes one timestamp and never touches
+    `messages`. Mounted on the `protected` router, so the admin session and the
+    CSRF header are already required by the time this runs.
+    """
+    archived_at = datetime.now(UTC).isoformat() if request.archived else None
+
+    try:
+        _stamp_archived(user_id, archived_at)
+    except Exception as e:
+        # Same rule as the read watermark: a click that silently does nothing is
+        # the bug, not the error message.
+        logger.warning(f"⚠️ Failed to write archive state for {user_id}: {e}")
+        raise HTTPException(status_code=503, detail="Could not update archive state") from e
+
+    action = "chat.archive" if request.archived else "chat.unarchive"
+    write_audit(admin.get("user_id"), admin.get("email"), action, user_id, admin.get("ip"))
+    return {"user_id": user_id, "archived": request.archived, "archived_at": archived_at}
+
+
 @router.post("/chats/{user_id}/message")
 def admin_send_message(user_id: str, request: AdminMessageRequest, admin: dict = Depends(verify_admin)):
     """Send a message to a user as the admin (seller)."""
@@ -198,7 +271,7 @@ def admin_send_message(user_id: str, request: AdminMessageRequest, admin: dict =
     # Replying is proof of having read it, so the watermark moves with the
     # reply — otherwise the dot would clear only until the next list refresh.
     try:
-        _stamp_read(user_id, datetime.now(UTC).isoformat())
+        _stamp_read(user_id, conversation_memory.read_watermark(user_id, "human"))
     except Exception as e:
         logger.warning(f"⚠️ Failed to stamp read state on reply for {user_id}: {e}")
 

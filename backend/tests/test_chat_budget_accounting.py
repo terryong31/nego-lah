@@ -180,18 +180,26 @@ async def test_errored_turn_is_still_charged(client, monkeypatch, chat_env, budg
     assert len(budget) == 1, f"an errored turn must be charged: {budget}"
 
 
-async def test_abandoned_turn_is_charged_when_the_generator_closes(
-    monkeypatch, chat_env, budget
-):
-    """The actual abuse case: start a turn, read a token, hang up. This is the
-    path that never returned, so it never reached any of the charges above."""
+async def test_abandoned_turn_is_charged_when_it_finishes(monkeypatch, chat_env, budget):
+    """The actual abuse case: start a turn, read a token, hang up.
+
+    SPEC-060 changed WHEN this settles, not whether it does. The turn used to be
+    killed by the hang-up, so the charge had to happen in the generator's
+    cleanup and could only ever cover the fragment already streamed. The turn
+    now outlives the response, so it charges on its own way out — for
+    everything it generated, including the tokens produced after the buyer
+    stopped reading. Aborting on the first token buys nothing.
+    """
     user_id = "budget-abandoned"
     chat_env(user_id)
 
+    finished = asyncio.Event()
+
     async def slow(user_id, message, item_id=None, files=None):
         yield "first chunk"
-        await asyncio.sleep(30)
-        yield "buyer never waits this long"
+        await asyncio.sleep(0.05)
+        yield "the rest of a real answer, generated whether or not anyone reads it"
+        finished.set()
 
     monkeypatch.setattr("agent.bot.chat_stream", slow)
 
@@ -199,10 +207,7 @@ async def test_abandoned_turn_is_charged_when_the_generator_closes(
     body = response.body_iterator
 
     # Pull frames until the first real token has been streamed, then walk away
-    # exactly as a closed browser tab does. Breaking on the delivered frame
-    # rather than on a flag inside the agent matters: the agent only advances
-    # past its first `yield` when the consumer asks for the next chunk, so
-    # waiting for the flag would mean waiting out the 30s sleep.
+    # exactly as a closed browser tab does.
     async for frame in body:
         if "first chunk" in frame:
             break
@@ -210,10 +215,19 @@ async def test_abandoned_turn_is_charged_when_the_generator_closes(
     assert not budget, "nothing should be charged while the turn is still open"
 
     await body.aclose()
+    await asyncio.wait_for(finished.wait(), timeout=2)
+    # The charge lands in the producer's tail, one scheduler pass after the
+    # agent's last yield.
+    for _ in range(50):
+        if budget:
+            break
+        await asyncio.sleep(0.01)
 
     assert len(budget) == 1, f"an abandoned turn must be charged: {budget}"
     assert budget[0][0] == user_id
-    assert budget[0][2] > 0, "tokens streamed before the hang-up must be charged"
+    assert budget[0][2] > 10, (
+        f"the charge must cover what the model generated unwatched: {budget}"
+    )
 
 
 async def test_abandoned_turn_is_not_charged_twice_when_it_also_completed(

@@ -105,6 +105,21 @@ async function remove(u: AdminUser) {
   }
 }
 
+// SPEC-065 — filtering goes through the table's own row model (TanStack's
+// `getFilteredRowModel`, which `UTable` already wires) rather than a filter over
+// the source array, so sorting keeps working on the filtered set.
+const globalFilter = ref('')
+const table = useTemplateRef<{ tableApi?: { getFilteredRowModel: () => { rows: unknown[] } } }>('table')
+
+// The count describes what is on screen: a filtered table claiming the full
+// total above three visible rows is simply false. Falls back to the source
+// length until the table has mounted.
+const visibleCount = computed(() => {
+  void globalFilter.value
+  void users.value
+  return table.value?.tableApi?.getFilteredRowModel().rows.length ?? users.value.length
+})
+
 const columns = computed<TableColumn<AdminUser>[]>(() => [
   { accessorKey: 'display_name', header: t('admin.usersSection.colName') },
   { accessorKey: 'is_banned', header: t('admin.usersSection.colStatus') },
@@ -116,12 +131,21 @@ const columns = computed<TableColumn<AdminUser>[]>(() => [
 
 <template>
   <div class="space-y-4">
-    <div class="flex items-center justify-between">
-      <p class="text-sm text-muted">
-        {{ users.length }} user(s)
+    <div class="flex items-center gap-3">
+      <UInput
+        v-model="globalFilter"
+        size="md"
+        icon="i-lucide-search"
+        class="flex-1 min-w-0 max-w-xs"
+        :placeholder="$t('admin.usersSection.searchPlaceholder')"
+        :aria-label="$t('admin.usersSection.searchPlaceholder')"
+      />
+      <p class="text-sm text-muted shrink-0">
+        {{ visibleCount }} user(s)
       </p>
       <UButton
-        size="xs"
+        class="ms-auto shrink-0"
+        size="md"
         variant="ghost"
         icon="i-lucide-refresh-cw"
         :label="$t('admin.ordersSection.refresh')"
@@ -131,6 +155,8 @@ const columns = computed<TableColumn<AdminUser>[]>(() => [
     </div>
 
     <UTable
+      ref="table"
+      v-model:global-filter="globalFilter"
       :columns="columns"
       :data="users"
       :loading="pending"
@@ -138,9 +164,9 @@ const columns = computed<TableColumn<AdminUser>[]>(() => [
     >
       <template #empty>
         <UEmpty
-          icon="i-lucide-users"
-          :title="$t('admin.usersSection.emptyTitle')"
-          :description="$t('admin.usersSection.emptyDesc')"
+          :icon="globalFilter ? 'i-lucide-search-x' : 'i-lucide-users'"
+          :title="globalFilter ? $t('admin.usersSection.noMatchTitle') : $t('admin.usersSection.emptyTitle')"
+          :description="globalFilter ? $t('admin.usersSection.noMatchDesc') : $t('admin.usersSection.emptyDesc')"
           variant="naked"
           class="py-6"
         />

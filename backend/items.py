@@ -2,7 +2,7 @@ import asyncio
 import hashlib
 import json
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 from fastapi import UploadFile
 
@@ -218,7 +218,7 @@ async def upload_item(
             "condition" : condition,
             "image_path": json.dumps(urls),
             "status": "available",  # Default status for new items
-            "created_at": datetime.now().isoformat()
+            "created_at": datetime.now(UTC).isoformat()
         }
 
         # Only include min_price if provided
@@ -334,7 +334,7 @@ def delete_item(item_id: str) -> bool:
     """
     try:
         admin_supabase.table('items').update(
-            {"deleted_at": datetime.now().isoformat()}
+            {"deleted_at": datetime.now(UTC).isoformat()}
         ).eq("id", item_id).execute()
         invalidate_item_cache(item_id)  # Clear cache so it drops off the storefront
         return True

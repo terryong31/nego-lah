@@ -89,6 +89,15 @@ class AdminMessageRequest(BaseModel):
     message: str
 
 
+class AdminArchiveRequest(BaseModel):
+    """SPEC-063 — move a conversation out of the console list, or back into it.
+
+    Soft state only: nothing in `messages` is touched, so this is reversible and
+    a transcript can never be lost to a triage gesture.
+    """
+    archived: bool = True
+
+
 class AdminReadStateRequest(BaseModel):
     """SPEC-053 — set or clear a conversation's read watermark.
 

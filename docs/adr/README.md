@@ -27,3 +27,5 @@ changes an earlier one, add a new ADR and mark the old one's status.
 | [0018](0018-pre-launch-security-remediation.md) | Pre-Launch Security Remediation — Trust Boundaries an Audit Found Open | Accepted |
 | [0019](0019-seller-reported-shipment-tracking.md) | Seller-Reported Shipment Tracking | Accepted |
 | [0020](0020-item-knowledge-card-over-per-turn-vision.md) | An Item Knowledge Card Instead of Re-Sending the Photos Every Turn | Accepted |
+| [0021](0021-agent-turns-outlive-their-http-response.md) | Agent Turns Outlive the HTTP Response That Requested Them | Accepted |
+| [0022](0022-a-message-from-the-future-is-history.md) | A Message From the Future Is History, Not News | Accepted |

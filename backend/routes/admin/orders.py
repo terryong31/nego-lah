@@ -199,7 +199,11 @@ def record_shipment(order_id: str, request: ShipmentUpdate, admin: dict = Depend
         # An explicit URL wins: the seller may be using a carrier the registry
         # doesn't know, or a consignment link that isn't the generic search page.
         'tracking_url': (request.tracking_url or "").strip() or resolve_tracking_url(courier, tracking_number),
-        'shipped_at': datetime.now(UTC).isoformat(),
+        # SPEC-064: the date belongs to the act of posting, which happened once.
+        # Re-stamping it on every write meant correcting a mistyped tracking
+        # number silently moved the ship date — leaving the buyer's email and
+        # the order disagreeing about a day that is now unrecoverable.
+        'shipped_at': existing.data[0].get('shipped_at') or datetime.now(UTC).isoformat(),
         'status': 'shipped',
     }
 

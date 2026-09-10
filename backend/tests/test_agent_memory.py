@@ -13,6 +13,7 @@ MagicMock and the attribute is restored afterwards so other modules touching
 the same singleton aren't affected.
 """
 
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
 import pytest
@@ -82,6 +83,22 @@ def test_add_message_writes_to_the_messages_table(mem_supabase):
     assert payload["item_id"] == "item-2"
     assert payload["source"] == "human"
     assert payload["created_at"]
+
+
+def test_add_message_writes_an_aware_utc_timestamp(mem_supabase):
+    """SPEC-066. `created_at` is a `timestamptz`, and Postgres reads a naive
+    literal as the *session's* zone — UTC on Supabase. A naive `datetime.now()`
+    on a UTC+8 host therefore stored every message eight hours in the future,
+    where no read watermark stamped at `now(UTC)` could ever get past it."""
+    _insert_execute(mem_supabase).return_value = make_supabase_result([])
+
+    conversation_memory.add_message("user-1", "ai", "sure")
+
+    written = datetime.fromisoformat(
+        mem_supabase.table.return_value.insert.call_args[0][0]["created_at"]
+    )
+    assert written.tzinfo is not None, "a naive literal means whatever the host's zone is"
+    assert abs((written - datetime.now(UTC)).total_seconds()) < 5
 
 
 def test_add_message_defaults_item_id_and_source(mem_supabase):
@@ -229,3 +246,86 @@ def test_broadcast_message_is_a_noop():
     """Realtime delivery is handled elsewhere; this exists so callers that
     expect the hook don't have to care."""
     assert conversation_memory.broadcast_message("u", "ai", "hi", "ai") is None
+
+
+# ---------------------------------------------------------------------------
+# `read_watermark` — a mark that covers the transcript, not the clock
+# ---------------------------------------------------------------------------
+
+def _watermark(monkeypatch, newest):
+    monkeypatch.setattr(conversation_memory, "newest_at", lambda *_a, **_k: newest)
+    return datetime.fromisoformat(conversation_memory.read_watermark("user-1", "ai"))
+
+
+def test_read_watermark_is_now_when_nothing_is_newer(monkeypatch):
+    """The ordinary case, and the one anchoring must not disturb: stamping must
+    never drag a watermark backwards to an old message."""
+    old = (datetime.now(UTC) - timedelta(days=2)).isoformat()
+
+    assert abs((_watermark(monkeypatch, old) - datetime.now(UTC)).total_seconds()) < 5
+
+
+def test_read_watermark_covers_a_row_this_clock_has_not_reached(monkeypatch):
+    """SPEC-066. The row was dated by whoever wrote it, and two clocks that both
+    believe they are on UTC can still disagree. A mark that stops a second short
+    of the newest message is a chip that comes back after being read."""
+    just_ahead = (datetime.now(UTC) + timedelta(seconds=30)).isoformat()
+
+    assert _watermark(monkeypatch, just_ahead) == datetime.fromisoformat(just_ahead)
+
+
+def test_read_watermark_falls_back_to_now_without_a_readable_row(monkeypatch):
+    """`newest_at` fails soft, and so must this: a chip is not worth a 503."""
+    assert abs((_watermark(monkeypatch, None) - datetime.now(UTC)).total_seconds()) < 5
+
+
+# ---------------------------------------------------------------------------
+# The future horizon — a mis-stamped row is history, not news (SPEC-066)
+# ---------------------------------------------------------------------------
+
+def _newest_at_chain(fake):
+    return (
+        fake.table.return_value.select.return_value
+        .eq.return_value.eq.return_value.lte.return_value
+        .order.return_value.limit.return_value.execute
+    )
+
+
+def _count_chain(fake):
+    return (
+        fake.table.return_value.select.return_value
+        .eq.return_value.eq.return_value.lte.return_value
+        .gt.return_value.limit.return_value.execute
+    )
+
+
+def _horizon_arg(lte_mock):
+    column, value = lte_mock.call_args[0]
+    assert column == "created_at"
+    return datetime.fromisoformat(value)
+
+
+def test_newest_at_will_not_believe_a_row_from_the_future(mem_supabase):
+    """Rows written before the fix are dated by the API host's local clock in a
+    UTC column — eight hours out on a UTC+8 box. Taking one for "the newest
+    thing said" would drag the unread cutoff past every message that follows."""
+    _newest_at_chain(mem_supabase).return_value = make_supabase_result(
+        [{"created_at": "2026-09-10T10:00:00+00:00"}]
+    )
+
+    assert conversation_memory.newest_at("user-1", "human") == "2026-09-10T10:00:00+00:00"
+
+    lte = mem_supabase.table.return_value.select.return_value.eq.return_value.eq.return_value.lte
+    horizon = _horizon_arg(lte)
+    assert datetime.now(UTC) < horizon <= datetime.now(UTC) + timedelta(minutes=2)
+
+
+def test_count_since_will_not_count_a_row_from_the_future(mem_supabase):
+    """The other half: those rows are the buyer's own read history, and counting
+    them is a chip that cannot be cleared until the wall clock catches up."""
+    _count_chain(mem_supabase).return_value = make_supabase_result([{"id": 1}], count=1)
+
+    assert conversation_memory.count_since("user-1", "ai", "2026-09-10T09:00:00+00:00", 99) == 1
+
+    lte = mem_supabase.table.return_value.select.return_value.eq.return_value.eq.return_value.lte
+    assert _horizon_arg(lte) > datetime.now(UTC)

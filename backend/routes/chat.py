@@ -41,9 +41,56 @@ CHAT_MESSAGE_MAX_CHARS = int(os.getenv("CHAT_MESSAGE_MAX_CHARS", "4000"))
 CHAT_TURN_DEADLINE_SECONDS = float(os.getenv("CHAT_TURN_DEADLINE_SECONDS", "180"))
 
 
+# Highest unread count the badge will report. It is a chip on an avatar, not a
+# ledger — past this the exact number tells the buyer nothing they don't
+# already know, and asking for it costs a full count on a neglected thread.
+UNREAD_COUNT_CAP = 99
+
+
 def _sse(obj: dict) -> str:
     """Serialize a dict as a single Server-Sent Event line."""
     return f"data: {json.dumps(obj)}\n\n"
+
+
+def _buyer_read_watermark(user_id: str) -> str | None:
+    """When this buyer last read their conversation, or None if never.
+
+    SPEC-061, the mirror of the seller's `admin_last_read_at`. Read failures
+    return None rather than raising: the caller's fallback rule (count from the
+    buyer's own last message) is a worse answer than the watermark but a much
+    better one than a 500 over a notification chip.
+    """
+    try:
+        result = (
+            admin_supabase.table('chat_settings')
+            .select('user_last_read_at')
+            .eq('user_id', user_id)
+            .execute()
+        )
+        rows = result.data or []
+        return rows[0].get('user_last_read_at') if rows else None
+    except Exception as e:
+        logger.debug(f"Could not read the unread watermark for {user_id}: {e}")
+        return None
+
+
+def _stamp_buyer_read(user_id: str) -> str:
+    """Mark this buyer's conversation read. Raises on failure.
+
+    The mark covers every agent/seller message already in the transcript, which
+    is not the same as `now` (SPEC-066): rows written before that fix carry the
+    API host's local time in a UTC column, hours ahead of any clock reading it
+    back, and a `now` stamp leaves them counted as unread for the whole offset.
+    """
+    from agent.memory import conversation_memory
+
+    read_at = conversation_memory.read_watermark(user_id, 'ai')
+    admin_supabase.table('chat_settings').upsert({
+        'user_id': user_id,
+        'user_last_read_at': read_at,
+        'updated_at': 'now()',
+    }).execute()
+    return read_at
 
 
 @router.get("/chat/history/{user_id}")
@@ -67,6 +114,12 @@ async def get_chat_history(
     with contextlib.suppress(Exception):
         from services.unread_digest import mark_conversation_seen
         await asyncio.to_thread(mark_conversation_seen, user_id)
+
+    # SPEC-061: and the same act moves the unread watermark. This is the
+    # backstop for a hard load, which paints the transcript before the header's
+    # composable ever gets to stamp it.
+    with contextlib.suppress(Exception):
+        await asyncio.to_thread(_stamp_buyer_read, user_id)
 
     try:
         from agent.memory import conversation_memory
@@ -117,6 +170,353 @@ async def get_chat_settings(
     except Exception as e:
         logger.error(f"Error getting chat settings: {e}")
         return {"ai_enabled": True}  # Default to enabled on error
+
+
+# --- Detached turns --------------------------------------------------------
+#
+# SPEC-060. A turn belongs to the buyer's conversation, not to the HTTP
+# response that happened to ask for it. It used to run *inside* the
+# `StreamingResponse` generator, so closing the tab cancelled it at whichever
+# `await` it was sitting on — usually mid-token — and the agent never reached
+# the `add_message` that persists its reply. The buyer's own message was
+# already saved, so the transcript read as a question the seller ignored.
+#
+# Producers are held in a module-level set because asyncio keeps only a weak
+# reference to a running task: without a strong one the garbage collector can
+# stop a turn mid-sentence, which is the exact failure this indirection exists
+# to prevent.
+_running_turns: set[asyncio.Task] = set()
+
+# Pushed by the producer when there is nothing more to send.
+_TURN_END = object()
+
+
+class _TurnRelay:
+    """The only thing an in-flight turn and its HTTP response share.
+
+    The response reads frames off this queue and does nothing else, so the
+    cancellation a closed tab delivers has no application logic to interrupt.
+    `detach()` is what the response's `finally` calls; after it, emitted frames
+    are dropped rather than queued behind a reader that is never coming back.
+    """
+
+    def __init__(self) -> None:
+        self._frames: asyncio.Queue = asyncio.Queue()
+        self._attached = True
+
+    @property
+    def attached(self) -> bool:
+        """False once the client has hung up. The turn plays on regardless —
+        this only says whether anyone is still watching it happen."""
+        return self._attached
+
+    def emit(self, frame: dict) -> None:
+        if self._attached:
+            self._frames.put_nowait(frame)
+
+    def end(self) -> None:
+        self._frames.put_nowait(_TURN_END)
+
+    def detach(self) -> None:
+        self._attached = False
+
+    async def frames(self):
+        while True:
+            frame = await self._frames.get()
+            if frame is _TURN_END:
+                return
+            yield frame
+
+
+async def _deliver(user_id: str, text: str) -> None:
+    """Put a finished reply in front of the buyer, wherever they are.
+
+    Live streams get it through the broker; a buyer with no stream at all gets
+    it batched into the same digest email a seller's message would take
+    (SPEC-052), instead of it waiting silently in a transcript nobody has open.
+    """
+    if not text:
+        return
+
+    from payment.fulfillment import broadcast_to_chat
+    await asyncio.to_thread(broadcast_to_chat, user_id, text, role="ai", source="ai")
+
+    try:
+        from notifications import notification_broker
+        if notification_broker.has_subscribers(user_id):
+            return
+        from services.unread_digest import queue_unread_message
+        await asyncio.to_thread(queue_unread_message, user_id, text)
+    except Exception as e:
+        logger.debug(f"Unread digest queue skipped for {user_id}: {e}")
+
+
+async def _run_turn(
+    *,
+    user_id: str,
+    message: str,
+    item_id: str | None,
+    file_data: list,
+    remaining: int,
+    relay: _TurnRelay,
+) -> None:
+    """Drive one agent turn to completion, whatever the buyer's browser does.
+
+    Everything with a side effect lives here rather than in the response
+    generator: the incoming broadcast, the AI-enabled check, the token budget,
+    the agent stream, and the delivery of what it produced. A closed tab
+    therefore costs the buyer a live view of the answer and nothing else.
+    """
+    from agent.bot import chat_stream
+    from agent.memory import conversation_memory
+
+    # Stable id correlating all text parts of this single assistant message.
+    text_id = "0"
+
+    try:
+        from payment.fulfillment import broadcast_to_chat
+
+        # Broadcast incoming human message to Realtime channel for live admin
+        # console synchronization.
+        await asyncio.to_thread(broadcast_to_chat, user_id, message, role="user", source="human")
+
+        # Check if AI is enabled for this user
+        ai_enabled = True
+        try:
+            settings = await asyncio.to_thread(
+                lambda: admin_supabase.table('chat_settings')
+                .select('ai_enabled').eq('user_id', user_id).execute()
+            )
+            if settings.data and len(settings.data) > 0:
+                ai_enabled = settings.data[0].get('ai_enabled', True)
+        except Exception as e:
+            logger.debug(f"Could not check ai_enabled for {user_id}, defaulting to enabled: {e}")
+
+        if not ai_enabled:
+            # Save user message to memory but don't respond with AI.
+            await asyncio.to_thread(
+                conversation_memory.add_message, user_id, "human", message, source="human"
+            )
+            # Emit an empty-but-well-formed message so useChat clears its loading state.
+            relay.emit({"type": "start"})
+            relay.emit({"type": "finish"})
+            return
+
+        # Check AI token rate limit (1M tokens per 30 minutes)
+        is_within_limit, current_usage = await asyncio.to_thread(
+            check_ai_token_limit, user_id
+        )
+        if not is_within_limit:
+            # Rate limit exceeded - disable AI and hand over to admin
+            rate_limit_message = "Sorry you messaged me too many times, may try again later.\n\nI will hand this conversation to Terry so you can discuss with him directly"
+
+            # Save user message first
+            await asyncio.to_thread(
+                conversation_memory.add_message, user_id, "human", message, source="human"
+            )
+
+            # Send the rate limit message as an AI response
+            await asyncio.to_thread(
+                conversation_memory.add_message, user_id, "ai", rate_limit_message, source="ai"
+            )
+
+            # Update chat_settings to disable AI and enable admin intervention
+            await asyncio.to_thread(
+                lambda: admin_supabase.table('chat_settings').upsert({
+                    'user_id': user_id,
+                    'ai_enabled': False,
+                    'admin_intervening': True,
+                    'updated_at': 'now()'
+                }).execute()
+            )
+
+            # Add system message about AI retiring
+            system_msg = "--- The AI has retired from the chat and Terry will take over now ---"
+            await asyncio.to_thread(
+                conversation_memory.add_message, user_id, "system", system_msg, source="system"
+            )
+
+            await _deliver(user_id, rate_limit_message)
+            await asyncio.to_thread(
+                broadcast_to_chat, user_id, system_msg, role="system", source="system"
+            )
+
+            # Deliver the rate-limit notice as a normal assistant message.
+            relay.emit({"type": "start"})
+            relay.emit({"type": "text-start", "id": text_id})
+            relay.emit({"type": "text-delta", "id": text_id, "delta": rate_limit_message})
+            relay.emit({"type": "text-end", "id": text_id})
+            relay.emit({"type": "finish"})
+            return
+
+        # Stream the agent's response. `text-start` is emitted lazily on the
+        # first real token so the client keeps showing its "thinking" shimmer
+        # while the model is still generating (no empty bubble during the wait).
+        relay.emit({"type": "start"})
+
+        # Early warning: the buyer is close to the per-minute cooldown. Sent as
+        # a data part rather than words in the transcript — it's a UI state, not
+        # something the assistant said.
+        if remaining <= CHAT_RATE_LIMIT_WARN_AT_REMAINING:
+            relay.emit({
+                "type": "data-cooldown-warning",
+                "id": "cooldown-warning",
+                "data": {"remaining": remaining},
+            })
+
+        collected = []
+        started = False
+        timed_out = False
+        charged = False
+
+        def charge_for_turn() -> None:
+            """Settle this turn against the AI token budget, at most once.
+
+            Every way out of the turn has to come through here. Charging only
+            where the turn ran to completion meant a turn that timed out or
+            threw cost real money upstream and incremented nothing — so the
+            1M/30min ceiling was only ever enforced against clients that waited
+            for their answer.
+            """
+            nonlocal charged
+            if charged:
+                return
+            charged = True
+            partial = "".join(collected)
+            # ~4 chars per token, same estimate the completed path has always used.
+            track_ai_tokens(
+                user_id,
+                len(message) // 4 + 1,
+                len(partial) // 4 + 1 if partial else 0,
+            )
+
+        # chat_stream is a native async generator (LangGraph .astream), so the
+        # LLM's network I/O yields control and never blocks the event loop —
+        # concurrent chats and the admin console stay responsive.
+        turn = chat_stream(
+            user_id=user_id,
+            message=message or "Please analyze these files.",
+            item_id=item_id,
+            files=file_data if file_data else None,
+        )
+        # One budget for the whole turn, not per chunk: a turn that dribbles a
+        # token every few seconds forever is just as stuck as one that never
+        # yields at all, and only a wall-clock deadline catches both.
+        deadline = time.monotonic() + CHAT_TURN_DEADLINE_SECONDS
+        try:
+            while True:
+                time_left = deadline - time.monotonic()
+                if time_left <= 0:
+                    timed_out = True
+                    break
+                try:
+                    delta = await asyncio.wait_for(turn.__anext__(), timeout=time_left)
+                except StopAsyncIteration:
+                    break
+                except TimeoutError:
+                    timed_out = True
+                    break
+
+                if not delta:
+                    continue
+
+                # SPEC-041: drain any discount committed by evaluate_offer before
+                # forwarding the chunk. The ContextVar is set by the tool and reset
+                # to None here so it fires at most once per turn.
+                discount = pending_discount.get()
+                if discount is not None:
+                    pending_discount.set(None)
+                    relay.emit({"type": "data-discount", "id": "discount", "data": {"discounted_price": discount}})
+
+                if isinstance(delta, dict):
+                    # SPEC-020: which engine served this turn (self-hosted Apple
+                    # M5 vs Gemini overflow). Emitted as an AI SDK data part —
+                    # this stream speaks the UI message protocol, where a bare
+                    # `event: metadata` frame would be dropped by the client.
+                    provider = delta.get("provider")
+                    if provider:
+                        relay.emit({"type": "data-provider", "id": "provider", "data": provider})
+                        continue
+
+                    status = delta.get("status", "")
+                    if status:
+                        if not started:
+                            relay.emit({"type": "text-start", "id": text_id})
+                            started = True
+                        relay.emit({"type": "text-delta", "id": text_id, "delta": f"[[STATUS:{status}]]"})
+                    continue
+                collected.append(delta)
+                if not started:
+                    relay.emit({"type": "text-start", "id": text_id})
+                    started = True
+                relay.emit({"type": "text-delta", "id": text_id, "delta": delta})
+        except Exception as e:
+            logger.error(f"Error during chat stream: {e}")
+            # Whatever was streamed before it broke was still generated upstream.
+            await asyncio.to_thread(charge_for_turn)
+            relay.emit({"type": "error", "errorText": "Something went wrong. Please try again."})
+            if started:
+                relay.emit({"type": "text-end", "id": text_id})
+            relay.emit({"type": "finish"})
+            return
+        finally:
+            # Closing the generator runs its `finally`, which is what releases
+            # the local-LLM lease and the overflow permit. On the happy path it
+            # has already run to completion and this is a no-op; on the timeout
+            # and error paths it is what stops the model mid-flight.
+            await turn.aclose()
+
+        if timed_out:
+            logger.warning(
+                f"Chat turn for {user_id} exceeded {CHAT_TURN_DEADLINE_SECONDS}s — ending the stream."
+            )
+            # Running out of time doesn't refund what the model already produced.
+            await asyncio.to_thread(charge_for_turn)
+            partial = "".join(collected)
+            # `aclose()` above stopped the agent before its own `add_message`,
+            # so a partial answer only survives if this writes it. Gated on the
+            # client being gone: someone still watching gets the retry the
+            # timeout frame offers, and a persisted partial would then sit in
+            # the transcript in front of the answer that replaces it.
+            if partial and not relay.attached:
+                await asyncio.to_thread(
+                    conversation_memory.add_message, user_id, "ai", partial, item_id
+                )
+                await _deliver(user_id, partial)
+            # A distinct part, not the generic error frame: the UI offers a
+            # retry for this, and nothing actually broke — the turn just ran
+            # out of time. Anything already streamed stays on screen.
+            relay.emit({
+                "type": "data-turn-timeout",
+                "id": "turn-timeout",
+                "data": {"partial": bool(collected)},
+            })
+            if started:
+                relay.emit({"type": "text-end", "id": text_id})
+            relay.emit({"type": "finish"})
+            return
+
+        await asyncio.to_thread(charge_for_turn)
+
+        # The agent persisted the reply itself on its way out; this is what
+        # tells the buyer it happened.
+        await _deliver(user_id, "".join(collected))
+
+        if started:
+            relay.emit({"type": "text-end", "id": text_id})
+        relay.emit({"type": "finish"})
+    except asyncio.CancelledError:
+        # Server shutdown, not a client hang-up — that cancels the relay loop,
+        # never this task. Nothing to salvage.
+        raise
+    except Exception as e:
+        logger.error(f"Chat turn for {user_id} failed: {e}")
+        relay.emit({"type": "error", "errorText": "Something went wrong. Please try again."})
+        relay.emit({"type": "finish"})
+    finally:
+        # Unconditional: a response waiting on frames that never end would hang
+        # the buyer's browser on a spinner for as long as it kept the socket.
+        relay.end()
 
 
 @router.post("/chat/stream")
@@ -216,255 +616,29 @@ async def chat_stream(request: Request):
         from services.unread_digest import mark_conversation_seen
         await asyncio.to_thread(mark_conversation_seen, user_id)
 
-    # Stable id correlating all text parts of this single assistant message.
-    text_id = "0"
+    # The turn is started here and owned by nobody but itself (SPEC-060): the
+    # response below is one optional viewer of it.
+    relay = _TurnRelay()
+    producer = asyncio.create_task(_run_turn(
+        user_id=user_id,
+        message=message,
+        item_id=item_id,
+        file_data=file_data,
+        remaining=remaining,
+        relay=relay,
+    ))
+    _running_turns.add(producer)
+    producer.add_done_callback(_running_turns.discard)
 
     async def generate():
-        from agent.bot import chat_stream
-        from agent.memory import conversation_memory
-        from payment.fulfillment import broadcast_to_chat
-
-        # Broadcast incoming human message to Realtime channel for live admin console synchronization
-        await asyncio.to_thread(broadcast_to_chat, user_id, message, role="user", source="human")
-
-        # Check if AI is enabled for this user
-        ai_enabled = True
+        # Relay only. Every side effect lives in the producer, so the
+        # cancellation a closed tab delivers here interrupts nothing.
         try:
-            settings = await asyncio.to_thread(
-                lambda: admin_supabase.table('chat_settings')
-                .select('ai_enabled').eq('user_id', user_id).execute()
-            )
-            if settings.data and len(settings.data) > 0:
-                ai_enabled = settings.data[0].get('ai_enabled', True)
-        except Exception as e:
-            logger.debug(f"Could not check ai_enabled for {user_id}, defaulting to enabled: {e}")
-
-        if not ai_enabled:
-            # Save user message to memory but don't respond with AI.
-            await asyncio.to_thread(
-                conversation_memory.add_message, user_id, "human", message, source="human"
-            )
-            # Emit an empty-but-well-formed message so useChat clears its loading state.
-            yield _sse({"type": "start"})
-            yield _sse({"type": "finish"})
+            async for frame in relay.frames():
+                yield _sse(frame)
             yield "data: [DONE]\n\n"
-            return
-
-        # Check AI token rate limit (1M tokens per 30 minutes)
-        is_within_limit, current_usage = await asyncio.to_thread(
-            check_ai_token_limit, user_id
-        )
-        if not is_within_limit:
-            # Rate limit exceeded - disable AI and hand over to admin
-            rate_limit_message = "Sorry you messaged me too many times, may try again later.\n\nI will hand this conversation to Terry so you can discuss with him directly"
-
-            # Save user message first
-            await asyncio.to_thread(
-                conversation_memory.add_message, user_id, "human", message, source="human"
-            )
-
-            # Send the rate limit message as an AI response
-            await asyncio.to_thread(
-                conversation_memory.add_message, user_id, "ai", rate_limit_message, source="ai"
-            )
-
-            # Update chat_settings to disable AI and enable admin intervention
-            await asyncio.to_thread(
-                lambda: admin_supabase.table('chat_settings').upsert({
-                    'user_id': user_id,
-                    'ai_enabled': False,
-                    'admin_intervening': True,
-                    'updated_at': 'now()'
-                }).execute()
-            )
-
-            # Add system message about AI retiring
-            system_msg = "--- The AI has retired from the chat and Terry will take over now ---"
-            await asyncio.to_thread(
-                conversation_memory.add_message, user_id, "system", system_msg, source="system"
-            )
-
-            await asyncio.to_thread(
-                broadcast_to_chat, user_id, rate_limit_message, role="ai", source="ai"
-            )
-            await asyncio.to_thread(
-                broadcast_to_chat, user_id, system_msg, role="system", source="system"
-            )
-
-            # Deliver the rate-limit notice as a normal assistant message.
-            yield _sse({"type": "start"})
-            yield _sse({"type": "text-start", "id": text_id})
-            yield _sse({"type": "text-delta", "id": text_id, "delta": rate_limit_message})
-            yield _sse({"type": "text-end", "id": text_id})
-            yield _sse({"type": "finish"})
-            yield "data: [DONE]\n\n"
-            return
-
-        # Stream the agent's response. `text-start` is emitted lazily on the
-        # first real token so the client keeps showing its "thinking" shimmer
-        # while the model is still generating (no empty bubble during the wait).
-        yield _sse({"type": "start"})
-
-        # Early warning: the buyer is close to the per-minute cooldown. Sent as
-        # a data part rather than words in the transcript — it's a UI state, not
-        # something the assistant said.
-        if remaining <= CHAT_RATE_LIMIT_WARN_AT_REMAINING:
-            yield _sse({
-                "type": "data-cooldown-warning",
-                "id": "cooldown-warning",
-                "data": {"remaining": remaining},
-            })
-
-        collected = []
-        started = False
-        timed_out = False
-        charged = False
-
-        def charge_for_turn() -> None:
-            """Settle this turn against the AI token budget, at most once.
-
-            Every way out of the stream has to come through here. Charging only
-            where the turn ran to completion meant a turn that timed out, threw,
-            or was abandoned by the client cost real money upstream and
-            incremented nothing — so the 1M/30min ceiling was only ever enforced
-            against clients that waited for their answer. Aborting each turn on
-            the first token was unmetered spend.
-            """
-            nonlocal charged
-            if charged:
-                return
-            charged = True
-            partial = "".join(collected)
-            # ~4 chars per token, same estimate the completed path has always used.
-            track_ai_tokens(
-                user_id,
-                len(message) // 4 + 1,
-                len(partial) // 4 + 1 if partial else 0,
-            )
-
-        # chat_stream is a native async generator (LangGraph .astream), so the
-        # LLM's network I/O yields control and never blocks the event loop —
-        # concurrent chats and the admin console stay responsive.
-        turn = chat_stream(
-            user_id=user_id,
-            message=message or "Please analyze these files.",
-            item_id=item_id,
-            files=file_data if file_data else None,
-        )
-        # One budget for the whole turn, not per chunk: a turn that dribbles a
-        # token every few seconds forever is just as stuck as one that never
-        # yields at all, and only a wall-clock deadline catches both.
-        deadline = time.monotonic() + CHAT_TURN_DEADLINE_SECONDS
-        drained = False
-        try:
-            while True:
-                time_left = deadline - time.monotonic()
-                if time_left <= 0:
-                    timed_out = True
-                    break
-                try:
-                    delta = await asyncio.wait_for(turn.__anext__(), timeout=time_left)
-                except StopAsyncIteration:
-                    break
-                except TimeoutError:
-                    timed_out = True
-                    break
-
-                if not delta:
-                    continue
-
-                # SPEC-041: drain any discount committed by evaluate_offer before
-                # forwarding the chunk. The ContextVar is set by the tool and reset
-                # to None here so it fires at most once per turn.
-                discount = pending_discount.get()
-                if discount is not None:
-                    pending_discount.set(None)
-                    yield _sse({"type": "data-discount", "id": "discount", "data": {"discounted_price": discount}})
-
-                if isinstance(delta, dict):
-                    # SPEC-020: which engine served this turn (self-hosted Apple
-                    # M5 vs Gemini overflow). Emitted as an AI SDK data part —
-                    # this stream speaks the UI message protocol, where a bare
-                    # `event: metadata` frame would be dropped by the client.
-                    provider = delta.get("provider")
-                    if provider:
-                        yield _sse({"type": "data-provider", "id": "provider", "data": provider})
-                        continue
-
-                    status = delta.get("status", "")
-                    if status:
-                        if not started:
-                            yield _sse({"type": "text-start", "id": text_id})
-                            started = True
-                        yield _sse({"type": "text-delta", "id": text_id, "delta": f"[[STATUS:{status}]]"})
-                    continue
-                collected.append(delta)
-                if not started:
-                    yield _sse({"type": "text-start", "id": text_id})
-                    started = True
-                yield _sse({"type": "text-delta", "id": text_id, "delta": delta})
-            drained = True
-        except Exception as e:
-            logger.error(f"Error during chat stream: {e}")
-            # Whatever was streamed before it broke was still generated upstream.
-            await asyncio.to_thread(charge_for_turn)
-            yield _sse({"type": "error", "errorText": "Something went wrong. Please try again."})
-            if started:
-                yield _sse({"type": "text-end", "id": text_id})
-            yield _sse({"type": "finish"})
-            yield "data: [DONE]\n\n"
-            return
         finally:
-            if not drained:
-                # We got here without the loop finishing, so a client hung up
-                # and GeneratorExit was thrown in at a `yield`. That path
-                # reaches none of the awaited charges, and it is exactly the
-                # one worth abusing: abort every turn on the first token and
-                # the budget never moves. Settle it here.
-                #
-                # Synchronously, deliberately — a generator being closed must
-                # not suspend, and a cancelled task's `await` raises before it
-                # can run, so `to_thread` would silently drop the charge.
-                # Before `aclose()`, for the same reason: cancellation must not
-                # get a chance to interrupt us first.
-                with contextlib.suppress(Exception):
-                    charge_for_turn()
-            # Closing the generator runs its `finally`, which is what releases
-            # the local-LLM lease and the overflow permit. Without this an
-            # abandoned turn would hold both until their TTLs expired.
-            await turn.aclose()
-
-        if timed_out:
-            logger.warning(
-                f"Chat turn for {user_id} exceeded {CHAT_TURN_DEADLINE_SECONDS}s — ending the stream."
-            )
-            # Running out of time doesn't refund what the model already produced.
-            await asyncio.to_thread(charge_for_turn)
-            # A distinct part, not the generic error frame: the UI offers a
-            # retry for this, and nothing actually broke — the turn just ran
-            # out of time. Anything already streamed stays on screen.
-            yield _sse({
-                "type": "data-turn-timeout",
-                "id": "turn-timeout",
-                "data": {"partial": bool(collected)},
-            })
-            if started:
-                yield _sse({"type": "text-end", "id": text_id})
-            yield _sse({"type": "finish"})
-            yield "data: [DONE]\n\n"
-            return
-
-        response_text = "".join(collected)
-        await asyncio.to_thread(charge_for_turn)
-
-        # Broadcast completed AI response to Realtime & notification broker
-        if response_text:
-            await asyncio.to_thread(broadcast_to_chat, user_id, response_text, role="ai", source="ai")
-
-        if started:
-            yield _sse({"type": "text-end", "id": text_id})
-        yield _sse({"type": "finish"})
-        yield "data: [DONE]\n\n"
+            relay.detach()
 
     return StreamingResponse(
         generate(),
@@ -476,6 +650,57 @@ async def chat_stream(request: Request):
             "x-vercel-ai-ui-message-stream": "v1",
         }
     )
+
+
+@router.get("/chat/unread")
+async def get_unread(user_id: str = Depends(verify_user_token)):
+    """How many seller/agent messages this buyer hasn't read (SPEC-061).
+
+    The count is the header chip's only source of truth across a reload. Both
+    the user and the scope come from the JWT — there is no `user_id` in the
+    path and therefore nothing to scope optionally
+    (`docs/SECURITY_ANTI_PATTERNS.md`).
+
+    Cutoff is the later of the watermark and the buyer's own newest message:
+    typing is proof of presence, and it is what a conversation with no
+    watermark yet counts from, so shipping this does not mark an existing
+    user's whole history unread.
+
+    `role='ai'` is both the agent and the seller — the console writes seller
+    replies as `role='ai', source='admin'`. `system` separators are not
+    messages anyone is waiting on.
+    """
+    from agent.memory import conversation_memory
+
+    read_at, last_human_at = await asyncio.gather(
+        asyncio.to_thread(_buyer_read_watermark, user_id),
+        asyncio.to_thread(conversation_memory.newest_at, user_id, "human"),
+    )
+    cutoff = max(filter(None, (read_at, last_human_at)), default=None)
+
+    count = await asyncio.to_thread(
+        conversation_memory.count_since, user_id, "ai", cutoff, UNREAD_COUNT_CAP
+    )
+    return {"count": count, "has_unread": count > 0}
+
+
+@router.post("/chat/read")
+async def mark_read(user_id: str = Depends(verify_user_token)):
+    """Mark this buyer's conversation read, at now (SPEC-061)."""
+    try:
+        read_at = await asyncio.to_thread(_stamp_buyer_read, user_id)
+    except Exception as e:
+        # Surfaced rather than swallowed: a chip that clears on screen and
+        # comes back on the next load is worse than one that never cleared.
+        logger.warning(f"⚠️ Failed to stamp the read watermark for {user_id}: {e}")
+        raise HTTPException(status_code=503, detail="Could not update read state") from e
+
+    # SPEC-052: reading is reading, whichever door they came through.
+    with contextlib.suppress(Exception):
+        from services.unread_digest import mark_conversation_seen
+        await asyncio.to_thread(mark_conversation_seen, user_id)
+
+    return {"read_at": read_at}
 
 
 @router.post("/chat/notifications/ticket")

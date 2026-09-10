@@ -42,6 +42,21 @@ async function remove(item: AdminItem) {
   }
 }
 
+// SPEC-065 — filtering goes through the table's own row model (TanStack's
+// `getFilteredRowModel`, which `UTable` already wires) rather than a filter over
+// the source array, so sorting keeps working on the filtered set.
+const globalFilter = ref('')
+const table = useTemplateRef<{ tableApi?: { getFilteredRowModel: () => { rows: unknown[] } } }>('table')
+
+// The count describes what is on screen: a filtered table claiming the full
+// total above three visible rows is simply false. Falls back to the source
+// length until the table has mounted.
+const visibleCount = computed(() => {
+  void globalFilter.value
+  void items.value
+  return table.value?.tableApi?.getFilteredRowModel().rows.length ?? items.value.length
+})
+
 const columns = computed<TableColumn<AdminItem>[]>(() => [
   { accessorKey: 'name', header: t('admin.itemsSection.colName') },
   { accessorKey: 'price', header: t('admin.itemsSection.colPrice') },
@@ -54,29 +69,42 @@ const columns = computed<TableColumn<AdminItem>[]>(() => [
 
 <template>
   <div class="space-y-4">
-    <div class="flex items-center justify-between">
-      <p class="text-sm text-muted">
-        {{ items.length }} item(s)
+    <div class="flex items-center gap-3">
+      <UInput
+        v-model="globalFilter"
+        size="md"
+        icon="i-lucide-search"
+        class="flex-1 min-w-0 max-w-xs"
+        :placeholder="$t('admin.itemsSection.searchPlaceholder')"
+        :aria-label="$t('admin.itemsSection.searchPlaceholder')"
+      />
+      <p class="text-sm text-muted shrink-0">
+        {{ visibleCount }} item(s)
       </p>
-      <div class="flex items-center gap-2">
+      <!-- The search and the count read left-to-right; what you DO with the
+           list belongs together at the far end, with the action you actually
+           reach for first. `md` to match the search beside it. -->
+      <div class="ms-auto shrink-0 flex items-center gap-2">
         <UButton
-          size="sm"
+          size="md"
+          icon="i-lucide-plus"
+          :label="$t('admin.itemsSection.uploadItem')"
+          @click="formModal?.openCreate()"
+        />
+        <UButton
+          size="md"
           variant="ghost"
           icon="i-lucide-refresh-cw"
           :label="$t('admin.ordersSection.refresh')"
           :loading="pending"
           @click="refresh()"
         />
-        <UButton
-          size="sm"
-          icon="i-lucide-plus"
-          :label="$t('admin.itemsSection.uploadItem')"
-          @click="formModal?.openCreate()"
-        />
       </div>
     </div>
 
     <UTable
+      ref="table"
+      v-model:global-filter="globalFilter"
       :columns="columns"
       :data="items"
       :loading="pending"
@@ -84,11 +112,11 @@ const columns = computed<TableColumn<AdminItem>[]>(() => [
     >
       <template #empty>
         <UEmpty
-          icon="i-lucide-tag"
-          :title="$t('admin.itemsSection.emptyTitle')"
-          :description="$t('admin.itemsSection.emptyDesc')"
+          :icon="globalFilter ? 'i-lucide-search-x' : 'i-lucide-tag'"
+          :title="globalFilter ? $t('admin.itemsSection.noMatchTitle') : $t('admin.itemsSection.emptyTitle')"
+          :description="globalFilter ? $t('admin.itemsSection.noMatchDesc') : $t('admin.itemsSection.emptyDesc')"
           variant="naked"
-          :actions="[
+          :actions="globalFilter ? [] : [
             {
               icon: 'i-lucide-plus',
               label: t('admin.itemsSection.uploadItem'),

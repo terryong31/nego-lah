@@ -10,7 +10,7 @@ _.python.venv = { path = "backend/.venv", create = true }
 [tasks."dev:backend"]
 description = "Start FastAPI backend server with Infisical secrets"
 dir = "backend"
-run = "infisical run --env=dev --path=/Backend -- uv run uvicorn main:app --host 127.0.0.1 --port 8000 --reload || { echo 'Infisical login expired — run: infisical login'; exit 1; }"
+run = "infisical run --env=dev --path=/Backend -- uv run uvicorn main:app --host 127.0.0.1 --port 8000 --reload --timeout-graceful-shutdown 5 || { echo 'Infisical login expired — run: infisical login'; exit 1; }"
 
 [tasks."dev:frontend"]
 description = "Start Nuxt frontend dev server with Infisical secrets"

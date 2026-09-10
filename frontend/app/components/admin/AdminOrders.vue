@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, h, reactive, ref, resolveComponent } from 'vue'
-import type { TableColumn } from '@nuxt/ui'
+import type { DropdownMenuItem, TableColumn } from '@nuxt/ui'
 
 const UButton = resolveComponent('UButton')
 
@@ -84,8 +84,29 @@ function shipmentDraft(o: Order): ShipmentDraft {
     courier: o.courier || '',
     trackingNumber: o.tracking_number || '',
     trackingUrl: o.tracking_url || '',
-    notify: true
+    // A first post tells the buyer. A correction does not, unless the seller
+    // says so: the buyer has already been told once, and re-telling them should
+    // be a decision rather than something a mistyped digit drags along.
+    notify: !o.shipped_at
   })
+}
+
+// SPEC-064 — the postage form lives in a modal now. It used to be four fields
+// inside an expanded row, so posting a parcel meant noticing there was a
+// chevron, expanding, scrolling past the address, and filling in a form sharing
+// a cramped grid column. Nothing on the collapsed row said an order still
+// needed posting.
+const shippingOrder = ref<Order | null>(null)
+const shippingOpen = computed({
+  get: () => shippingOrder.value !== null,
+  set: (open: boolean) => {
+    if (!open) shippingOrder.value = null
+  }
+})
+
+function openShipment(o: Order) {
+  shipmentDraft(o)
+  shippingOrder.value = o
 }
 
 async function recordShipment(o: Order) {
@@ -119,6 +140,9 @@ async function recordShipment(o: Order) {
     })
     draft.courier = res.order.courier || draft.courier
     draft.trackingUrl = res.order.tracking_url || ''
+    // It is recorded; there is nothing left in the form to lose. A failed write
+    // deliberately leaves the modal open with the draft intact.
+    shippingOrder.value = null
 
     // Say what actually happened. "Recorded" when the buyer was told, and a
     // distinct warning when the write landed but the notification didn't —
@@ -185,6 +209,53 @@ function hasShippingInfo(o: Order) {
   return o.recipient_name || o.address || o.phone
 }
 
+// SPEC-064 — the select restated the Status column and made the seller's most
+// common act look like a dropdown choice. What replaces it is one contextual
+// button for the thing this order actually needs, and a menu for the rest: the
+// transitions still have to exist, they just don't deserve the widest column.
+function shipLabel(o: Order): string | null {
+  if (o.shipped_at || o.status === 'shipped' || o.status === 'delivered') {
+    return t('admin.ordersSection.editShipment')
+  }
+  if (o.status === 'confirmed') {
+    return t('admin.ordersSection.ship')
+  }
+  return null
+}
+
+function rowActions(o: Order): DropdownMenuItem[][] {
+  const transitions = statusItems.value
+    .filter(i => i.value !== o.status)
+    .map(i => ({
+      label: t('admin.ordersSection.markAs', { status: i.label }),
+      onSelect: () => changeStatus(o, i.value)
+    }))
+
+  return [
+    transitions,
+    [{
+      label: t('admin.ordersSection.delete'),
+      icon: 'i-lucide-trash-2',
+      color: 'error' as const,
+      onSelect: () => remove(o)
+    }]
+  ]
+}
+
+// SPEC-065 — filtering goes through the table's own row model rather than a
+// filter over `orders`, so sorting and row expansion keep working on the
+// filtered set.
+const globalFilter = ref('')
+const table = useTemplateRef<{ tableApi?: { getFilteredRowModel: () => { rows: unknown[] } } }>('table')
+
+// The count has to describe what is on screen: "42 order(s)" above three rows
+// is simply false. Falls back to the source length until the table has mounted.
+const visibleCount = computed(() => {
+  void globalFilter.value
+  void orders.value
+  return table.value?.tableApi?.getFilteredRowModel().rows.length ?? orders.value.length
+})
+
 const columns = computed<TableColumn<Order>[]>(() => [
   {
     id: 'expand',
@@ -211,12 +282,21 @@ const columns = computed<TableColumn<Order>[]>(() => [
 
 <template>
   <div class="space-y-4">
-    <div class="flex items-center justify-between">
-      <p class="text-sm text-muted">
-        {{ $t('admin.ordersSection.count', { n: orders.length }) }}
+    <div class="flex items-center gap-3">
+      <UInput
+        v-model="globalFilter"
+        size="md"
+        icon="i-lucide-search"
+        class="flex-1 min-w-0 max-w-xs"
+        :placeholder="$t('admin.ordersSection.searchPlaceholder')"
+        :aria-label="$t('admin.ordersSection.searchPlaceholder')"
+      />
+      <p class="text-sm text-muted shrink-0">
+        {{ $t('admin.ordersSection.count', { n: visibleCount }) }}
       </p>
       <UButton
-        size="xs"
+        class="ms-auto shrink-0"
+        size="md"
         variant="ghost"
         icon="i-lucide-refresh-cw"
         :label="$t('admin.ordersSection.refresh')"
@@ -226,7 +306,9 @@ const columns = computed<TableColumn<Order>[]>(() => [
     </div>
 
     <UTable
+      ref="table"
       v-model:expanded="expanded"
+      v-model:global-filter="globalFilter"
       :columns="columns"
       :data="orders"
       :loading="pending"
@@ -234,9 +316,9 @@ const columns = computed<TableColumn<Order>[]>(() => [
     >
       <template #empty>
         <UEmpty
-          icon="i-lucide-package"
-          :title="$t('admin.ordersSection.emptyTitle')"
-          :description="$t('admin.ordersSection.emptyDesc')"
+          :icon="globalFilter ? 'i-lucide-search-x' : 'i-lucide-package'"
+          :title="globalFilter ? $t('admin.ordersSection.noMatchTitle') : $t('admin.ordersSection.emptyTitle')"
+          :description="globalFilter ? $t('admin.ordersSection.noMatchDesc') : $t('admin.ordersSection.emptyDesc')"
           variant="naked"
           class="py-6"
         />
@@ -279,23 +361,30 @@ const columns = computed<TableColumn<Order>[]>(() => [
       </template>
 
       <template #actions-cell="{ row }">
-        <div class="flex items-center justify-end gap-2">
-          <USelect
-            :model-value="row.original.status"
-            :items="statusItems"
-            size="sm"
-            class="w-36"
-            :disabled="busy === row.original.id"
-            @update:model-value="(s: string) => changeStatus(row.original, s)"
-          />
+        <div class="flex items-center justify-end gap-1">
           <UButton
-            size="xs"
-            color="error"
-            variant="soft"
-            icon="i-lucide-trash-2"
+            v-if="shipLabel(row.original)"
+            variant="link"
+            size="sm"
+            icon="i-lucide-truck"
+            :label="shipLabel(row.original) || undefined"
             :loading="busy === row.original.id"
-            @click="remove(row.original)"
+            @click="openShipment(row.original)"
           />
+          <UDropdownMenu
+            :items="rowActions(row.original)"
+            :content="{ align: 'end' }"
+          >
+            <UButton
+              :data-testid="`order-actions-${row.original.id}`"
+              size="sm"
+              variant="ghost"
+              color="neutral"
+              icon="i-lucide-ellipsis-vertical"
+              :loading="busy === row.original.id"
+              :aria-label="$t('admin.ordersSection.rowActions')"
+            />
+          </UDropdownMenu>
         </div>
       </template>
 
@@ -321,9 +410,8 @@ const columns = computed<TableColumn<Order>[]>(() => [
             </p>
           </div>
 
-          <!-- SPEC-057: postage. One submit records the tracking AND tells the
-               buyer, because a seller who has to remember to do the second half
-               separately eventually won't. -->
+          <!-- SPEC-064: a record, not an editor. The form moved to the modal
+               the row's own Ship / Edit shipment button opens. -->
           <div>
             <div class="flex items-center justify-between mb-2 gap-2">
               <p class="text-sm font-semibold text-highlighted">
@@ -339,59 +427,26 @@ const columns = computed<TableColumn<Order>[]>(() => [
               </span>
             </div>
 
-            <div class="space-y-3">
-              <UFormField :label="$t('admin.ordersSection.courier')">
-                <UInputMenu
-                  v-model="shipmentDraft(row.original).courier"
-                  :items="COURIERS"
-                  create-item
-                  :placeholder="$t('admin.ordersSection.courierPlaceholder')"
-                  class="w-full"
-                  @create="(v: string) => { shipmentDraft(row.original).courier = v }"
-                />
-              </UFormField>
-
-              <UFormField :label="$t('admin.ordersSection.trackingNumber')">
-                <UInput
-                  v-model="shipmentDraft(row.original).trackingNumber"
-                  :placeholder="$t('admin.ordersSection.trackingNumberPlaceholder')"
-                  class="w-full"
-                  @keyup.enter="recordShipment(row.original)"
-                />
-              </UFormField>
-
-              <UFormField
-                :label="$t('admin.ordersSection.trackingUrl')"
-                :description="$t('admin.ordersSection.trackingUrlHint')"
+            <div
+              v-if="row.original.shipped_at"
+              class="flex flex-col text-sm text-default space-y-1"
+            >
+              <div>
+                <span class="text-muted">{{ $t('admin.ordersSection.courier') }}:</span>
+                {{ row.original.courier || '—' }}
+              </div>
+              <div>
+                <span class="text-muted">{{ $t('admin.ordersSection.trackingNumber') }}:</span>
+                {{ row.original.tracking_number || '—' }}
+              </div>
+              <div
+                v-if="row.original.tracking_url"
+                class="pt-1"
               >
-                <UInput
-                  v-model="shipmentDraft(row.original).trackingUrl"
-                  type="url"
-                  placeholder="https://"
-                  class="w-full"
-                />
-              </UFormField>
-
-              <UCheckbox
-                v-model="shipmentDraft(row.original).notify"
-                :label="$t('admin.ordersSection.notifyBuyer')"
-              />
-
-              <div class="flex items-center gap-2">
                 <UButton
-                  size="sm"
-                  icon="i-lucide-truck"
-                  :label="row.original.shipped_at
-                    ? $t('admin.ordersSection.updateShipment')
-                    : $t('admin.ordersSection.recordShipment')"
-                  :loading="busy === row.original.id"
-                  @click="recordShipment(row.original)"
-                />
-                <UButton
-                  v-if="row.original.tracking_url"
-                  size="sm"
-                  variant="ghost"
-                  color="neutral"
+                  size="xs"
+                  variant="link"
+                  class="p-0"
                   icon="i-lucide-external-link"
                   :to="row.original.tracking_url"
                   target="_blank"
@@ -400,9 +455,109 @@ const columns = computed<TableColumn<Order>[]>(() => [
                 />
               </div>
             </div>
+            <p
+              v-else
+              class="text-sm text-muted italic"
+            >
+              {{ $t('admin.ordersSection.notPostedYet') }}
+            </p>
           </div>
         </div>
       </template>
     </UTable>
+
+    <!-- SPEC-064. One submit records the tracking AND tells the buyer, because
+         a seller who has to remember the second half eventually won't. -->
+    <UModal
+      v-model:open="shippingOpen"
+      :title="shippingOrder?.shipped_at
+        ? $t('admin.ordersSection.editShipment')
+        : $t('admin.ordersSection.recordShipment')"
+      :description="shippingOrder?.item_name || undefined"
+    >
+      <template #body>
+        <div
+          v-if="shippingOrder"
+          class="space-y-3"
+        >
+          <UFormField :label="$t('admin.ordersSection.courier')">
+            <UInputMenu
+              v-model="shipmentDraft(shippingOrder).courier"
+              :items="COURIERS"
+              create-item
+              :placeholder="$t('admin.ordersSection.courierPlaceholder')"
+              class="w-full"
+              @create="(v: string) => { if (shippingOrder) shipmentDraft(shippingOrder).courier = v }"
+            />
+          </UFormField>
+
+          <UFormField :label="$t('admin.ordersSection.trackingNumber')">
+            <UInput
+              v-model="shipmentDraft(shippingOrder).trackingNumber"
+              :placeholder="$t('admin.ordersSection.trackingNumberPlaceholder')"
+              class="w-full"
+              @keyup.enter="shippingOrder && recordShipment(shippingOrder)"
+            />
+          </UFormField>
+
+          <!-- The hint is a footnote, not an instruction: it explains what
+               happens if you skip the field. As a line of body text it pushed
+               the input down and read as heavily as the labels above it.
+               `labelWrapper` is already `justify-between`, so the hint slot
+               sits at the end of the label row on its own. -->
+          <UFormField :label="$t('admin.ordersSection.trackingUrl')">
+            <template #hint>
+              <UTooltip
+                :text="$t('admin.ordersSection.trackingUrlHint')"
+                :delay-duration="150"
+              >
+                <UButton
+                  data-testid="tracking-url-hint"
+                  variant="link"
+                  color="neutral"
+                  size="xs"
+                  square
+                  class="p-0"
+                  icon="i-lucide-info"
+                  :aria-label="$t('admin.ordersSection.trackingUrlHint')"
+                />
+              </UTooltip>
+            </template>
+            <UInput
+              v-model="shipmentDraft(shippingOrder).trackingUrl"
+              type="url"
+              placeholder="https://"
+              class="w-full"
+            />
+          </UFormField>
+
+          <UCheckbox
+            v-model="shipmentDraft(shippingOrder).notify"
+            :label="shippingOrder.shipped_at
+              ? $t('admin.ordersSection.notifyBuyerAgain')
+              : $t('admin.ordersSection.notifyBuyer')"
+          />
+        </div>
+      </template>
+
+      <template #footer>
+        <div class="flex items-center justify-end gap-2 w-full">
+          <UButton
+            variant="ghost"
+            color="neutral"
+            :label="$t('admin.ordersSection.cancel')"
+            @click="shippingOrder = null"
+          />
+          <UButton
+            icon="i-lucide-truck"
+            :label="shippingOrder?.shipped_at
+              ? $t('admin.ordersSection.updateShipment')
+              : $t('admin.ordersSection.recordShipment')"
+            :loading="busy === shippingOrder?.id"
+            @click="shippingOrder && recordShipment(shippingOrder)"
+          />
+        </div>
+      </template>
+    </UModal>
   </div>
 </template>

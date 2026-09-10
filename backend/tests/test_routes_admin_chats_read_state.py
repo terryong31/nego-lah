@@ -15,6 +15,7 @@ patch target is `connector.admin_supabase`, and `write_audit` is patched on
 `routes.admin.chats` (the module that resolves the name).
 """
 
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -115,6 +116,21 @@ async def test_seller_reply_after_the_watermark_stays_read(client, admin_user, f
     assert chat["last_activity"] == "2026-09-09T15:00:00Z"
 
 
+async def test_a_customer_message_from_the_future_does_not_re_arm_unread(client, admin_user, fake_supabase, patch_supabase, monkeypatch):
+    """SPEC-066. Before the fix `created_at` was the API host's local time in a
+    UTC column, so on a UTC+8 box every customer row is dated eight hours out
+    and beats any watermark the seller can write — the dot clears on the click
+    and is back on the next refresh. That row is not a message they have yet to
+    read; it is one they read this morning."""
+    skewed = (datetime.now(UTC) + timedelta(hours=8)).isoformat()
+    chat, _ = await _get_chats(
+        client, admin_user, fake_supabase, patch_supabase, monkeypatch,
+        settings=[{"user_id": "user-a", "admin_last_read_at": datetime.now(UTC).isoformat()}],
+        messages=[{"user_id": "user-a", "role": "human", "created_at": skewed}],
+    )
+    assert chat["unread"] is False
+
+
 async def test_unparseable_watermark_falls_back_to_last_role(client, admin_user, fake_supabase, patch_supabase, monkeypatch):
     chat, _ = await _get_chats(
         client, admin_user, fake_supabase, patch_supabase, monkeypatch,
@@ -147,6 +163,25 @@ async def test_mark_read_writes_a_watermark_and_audits(client, admin_user, fake_
     assert written["admin_last_read_at"] == body["admin_last_read_at"]
     assert audit.called
     assert audit.call_args[0][2] == "chat.read"
+
+
+async def test_mark_read_covers_messages_the_clock_cannot_reach(client, admin_user, fake_supabase, patch_supabase, monkeypatch):
+    """SPEC-066. The mark has to cover the newest customer message it claims to
+    have read — `now` is only this process's opinion of when that was."""
+    admin_user()
+    patch_supabase("connector", admin=fake_supabase)
+    monkeypatch.setattr(admin_chats, "write_audit", MagicMock())
+    skewed = (datetime.now(UTC) + timedelta(seconds=30)).isoformat()
+    monkeypatch.setattr(
+        conversation_memory, "newest_at",
+        MagicMock(side_effect=lambda user_id, role: skewed if role == "human" else None),
+    )
+
+    resp = await client.post("/admin/chats/user-a/read", json={"read": True})
+
+    assert resp.json()["admin_last_read_at"] == skewed
+    written = fake_supabase.table.return_value.upsert.call_args[0][0]
+    assert written["admin_last_read_at"] == skewed
 
 
 async def test_mark_unread_clears_the_watermark(client, admin_user, fake_supabase, patch_supabase, monkeypatch):

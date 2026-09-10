@@ -23,12 +23,44 @@ timestamp and would page inconsistently.
 """
 
 import json
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 from logger import logger
 
 # Sent to the agent as context, and the default page for the admin console.
 DEFAULT_HISTORY_LIMIT = 50
+
+# How far ahead of this process's clock a row may be dated and still be taken
+# for a real message. Two clocks that both think they are on UTC can disagree by
+# a second or two; nothing legitimate is a minute ahead.
+#
+# Past that horizon a row has not "just arrived", it is mis-stamped — every
+# message written before SPEC-066 carries the API host's local time in a UTC
+# column, so on a UTC+8 host it is filed eight hours in the future. Those rows
+# are history the buyer has already read, and counting them as unread is a chip
+# that cannot be cleared until the wall clock catches up. Unread state therefore
+# reads nothing beyond the horizon: not news, not a notification.
+MESSAGE_FUTURE_GRACE = timedelta(minutes=1)
+
+
+def _horizon() -> str:
+    """The newest `created_at` unread state will believe."""
+    return (datetime.now(UTC) + MESSAGE_FUTURE_GRACE).isoformat()
+
+
+def _as_utc(ts: str | None) -> datetime | None:
+    """Parse a stored timestamp, or None if it isn't one.
+
+    A value with no offset is read as UTC — that is how Postgres read it on the
+    way in, so it is the only interpretation that round-trips.
+    """
+    if not ts:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
 class ConversationMemory:
@@ -82,7 +114,12 @@ class ConversationMemory:
                 'role': role,
                 'content': message,
                 'source': source,
-                'created_at': datetime.now().isoformat(),
+                # Aware, always (SPEC-066). The column is `timestamptz`, and
+                # Postgres reads a naive literal as the *session's* zone — UTC
+                # on Supabase — so a bare `datetime.now()` on a UTC+8 host
+                # filed every message eight hours into the future, where no
+                # read watermark could get past it.
+                'created_at': datetime.now(UTC).isoformat(),
             }).execute()
         except Exception as e:
             logger.info(f"[ConversationMemory] Error saving message: {e}")
@@ -141,6 +178,82 @@ class ConversationMemory:
         except Exception as e:
             logger.info(f"[ConversationMemory] Error getting history page: {e}")
             return {"messages": [], "has_more": False, "next_offset": offset}
+
+    def newest_at(self, user_id: str, role: str) -> str | None:
+        """When this user's newest `role` message was written, or None.
+
+        SPEC-061 needs two of these: the buyer's own last message (proof they
+        were present) and, through `count_since`, everything the seller side
+        has said after it.
+
+        Rows dated past the horizon are skipped (SPEC-066) — a message from the
+        future is a mis-stamped one, and taking it for the newest thing said
+        would push the cutoff hours ahead of every message that follows it.
+        """
+        try:
+            result = (
+                self.supabase.table('messages')
+                .select('created_at')
+                .eq('user_id', user_id)
+                .eq('role', role)
+                .lte('created_at', _horizon())
+                .order('created_at', desc=True)
+                .limit(1)
+                .execute()
+            )
+            rows = result.data or []
+            return rows[0].get('created_at') if rows else None
+        except Exception as e:
+            logger.info(f"[ConversationMemory] Error reading newest {role} message: {e}")
+            return None
+
+    def read_watermark(self, user_id: str, role: str) -> str:
+        """An instant that marks every `role` message written so far as read.
+
+        Normally just now — but `now` is this process's opinion, and the row it
+        has to cover was dated by whoever wrote it. Two clocks a second apart
+        are enough to leave the newest message sitting just past a watermark
+        that was supposed to include it, and a chip that comes back after being
+        read is precisely the bug this is here to prevent. So the mark covers
+        the newest message it claims to have read, which is a fact about the
+        transcript rather than about either clock.
+
+        The reach is bounded by `newest_at`'s horizon: a mis-stamped row hours
+        ahead is not something this will follow, because it is not something
+        unread state believes in at all.
+
+        `role` is whatever that side of the conversation actually counts as
+        unread: 'ai' for the buyer's badge, 'human' for the console's dot.
+        """
+        now = datetime.now(UTC)
+        newest = _as_utc(self.newest_at(user_id, role))
+        return (newest if newest and newest > now else now).isoformat()
+
+    def count_since(self, user_id: str, role: str, after: str | None, cap: int) -> int:
+        """How many `role` messages this user has after `after`, at most `cap`.
+
+        `after=None` means "all of them" — a conversation with no watermark and
+        no message from the buyer. `select('id', count='exact')` asks Postgres
+        for the count and brings back at most `cap` ids, so a long-neglected
+        thread costs a count, not a transcript.
+
+        Bounded at both ends: rows past the horizon are not news (SPEC-066).
+        """
+        try:
+            query = (
+                self.supabase.table('messages')
+                .select('id', count='exact')
+                .eq('user_id', user_id)
+                .eq('role', role)
+                .lte('created_at', _horizon())
+            )
+            if after:
+                query = query.gt('created_at', after)
+            result = query.limit(cap).execute()
+            return min(int(result.count or 0), cap)
+        except Exception as e:
+            logger.info(f"[ConversationMemory] Error counting {role} messages: {e}")
+            return 0
 
     def get_all_histories(self) -> dict[str, list[dict]]:
         """Get all conversation histories grouped by user_id (admin console)."""

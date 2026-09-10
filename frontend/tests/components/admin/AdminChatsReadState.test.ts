@@ -120,16 +120,34 @@ describe('components/admin/AdminChats.vue — read state (SPEC-053)', () => {
     expect(readCalls()).toEqual([])
   })
 
-  it('toggles read state from the row control without opening the conversation', async () => {
+  /** The row's read action, reached through the menu that replaced the mail
+   *  icon (SPEC-063). `UDropdownMenu` portals its content, so the item is
+   *  driven through the `items` prop rather than a rendered click target, and
+   *  the menu is found by its trigger — the control strip's sort funnel is a
+   *  `UDropdownMenu` as well, and it comes first in the DOM. */
+  function readAction(wrapper: {
+    findAllComponents: (m: { name: string }) => { element: HTMLElement, props: (p: string) => unknown }[]
+  }) {
+    const menu = wrapper.findAllComponents({ name: 'UDropdownMenu' }).find(m =>
+      m.element.getAttribute?.('data-testid') === 'chat-actions-u1'
+      || !!m.element.querySelector?.('[data-testid="chat-actions-u1"]')
+    )
+    expect(menu, 'no action menu on the row').toBeTruthy()
+    const groups = menu!.props('items') as { label: string, onSelect?: () => void }[][]
+    const item = groups.flat().find(i => /read/i.test(i.label))
+    expect(item, 'no read action in the row menu').toBeTruthy()
+    return item!
+  }
+
+  it('toggles read state from the row menu without opening the conversation', async () => {
     callMock.mockImplementationOnce(() => Promise.resolve([makeChat({ unread: true })]))
 
     const wrapper = await mountSuspended(AdminChats)
     await flushPromises()
 
-    const toggle = wrapper.find('[data-testid="chat-read-toggle-u1"]')
-    expect(toggle.exists()).toBe(true)
+    expect(wrapper.find('[data-testid="chat-actions-u1"]').exists()).toBe(true)
 
-    await toggle.trigger('click')
+    readAction(wrapper).onSelect!()
     await flushPromises()
 
     expect(readCalls()).toEqual([
@@ -148,7 +166,7 @@ describe('components/admin/AdminChats.vue — read state (SPEC-053)', () => {
     const wrapper = await mountSuspended(AdminChats)
     await flushPromises()
 
-    await wrapper.find('[data-testid="chat-read-toggle-u1"]').trigger('click')
+    readAction(wrapper).onSelect!()
     await flushPromises()
 
     expect(readCalls()).toEqual([
@@ -164,7 +182,7 @@ describe('components/admin/AdminChats.vue — read state (SPEC-053)', () => {
 
     callMock.mockImplementationOnce(() => Promise.reject(new Error('nope')))
 
-    await wrapper.find('[data-testid="chat-read-toggle-u1"]').trigger('click')
+    readAction(wrapper).onSelect!()
     await flushPromises()
 
     expect(wrapper.findAllComponents({ name: 'UChip' }).length).toBe(1)

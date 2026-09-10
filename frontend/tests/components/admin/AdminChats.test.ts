@@ -69,7 +69,7 @@ describe('components/admin/AdminChats.vue', () => {
     // Default happy-path routing: list endpoint returns nothing until a test
     // overrides it; message + send endpoints succeed.
     callMock.mockImplementation((path: string) => {
-      if (path === '/chats') return Promise.resolve([])
+      if (path === '/chats' || path.startsWith('/chats?')) return Promise.resolve([])
       if (path.startsWith('/chats/') && path.includes('/message')) return Promise.resolve({ ok: true })
       if (path.startsWith('/chats/')) return Promise.resolve({ user_id: 'u1', messages: [] })
       return Promise.resolve(null)
@@ -123,51 +123,9 @@ describe('components/admin/AdminChats.vue', () => {
     expect(wrapper.text()).toContain('—')
   })
 
-  it('filters the list by unread / read / all', async () => {
-    callMock.mockImplementationOnce(() =>
-      Promise.resolve([
-        makeChat({ user_id: 'u1', display_name: 'Alice', unread: true }),
-        makeChat({ user_id: 'u2', display_name: 'Bob', unread: false })
-      ])
-    )
-
-    const wrapper = await mountSuspended(AdminChats)
-    await flushPromises()
-
-    // 'All' is selected by default.
-    expect(wrapper.text()).toContain('Alice')
-    expect(wrapper.text()).toContain('Bob')
-
-    const [allTab, unreadTab, readTab] = wrapper.findAll('button').filter(b =>
-      ['All', 'Unread', 'Read'].includes(b.text())
-    )
-
-    await unreadTab!.trigger('click')
-    expect(wrapper.text()).toContain('Alice')
-    expect(wrapper.text()).not.toContain('Bob')
-
-    await readTab!.trigger('click')
-    expect(wrapper.text()).not.toContain('Alice')
-    expect(wrapper.text()).toContain('Bob')
-
-    await allTab!.trigger('click')
-    expect(wrapper.text()).toContain('Alice')
-    expect(wrapper.text()).toContain('Bob')
-  })
-
-  it('shows a filter-specific empty message when the filter excludes every conversation', async () => {
-    callMock.mockImplementationOnce(() =>
-      Promise.resolve([makeChat({ user_id: 'u1', display_name: 'Alice', unread: false })])
-    )
-
-    const wrapper = await mountSuspended(AdminChats)
-    await flushPromises()
-
-    const unreadTab = wrapper.findAll('button').find(b => b.text() === 'Unread')
-    await unreadTab!.trigger('click')
-
-    expect(wrapper.text()).toContain('No conversations match.')
-  })
+  // SPEC-062 removed the All / Unread / Read segmented control: it duplicated
+  // the "Unread first" sort and the row's own chip, in the narrowest pane in
+  // the console. Its coverage now lives in AdminChatsListLayout.test.ts.
 
   it('shows the placeholder pane until a conversation is selected', async () => {
     callMock.mockImplementationOnce(() => Promise.resolve([makeChat()]))
@@ -321,7 +279,7 @@ describe('components/admin/AdminChats.vue', () => {
     expect(header.findAll('button')).toHaveLength(1)
   })
 
-  it('gives the AI badge and its toggle a matching size, with the toggle solid', async () => {
+  it('carries AI state on the toggle alone, sized md and solid', async () => {
     callMock.mockImplementationOnce(() => Promise.resolve([makeChat({ user_id: 'u1', display_name: 'Alice' })]))
 
     const wrapper = await mountSuspended(AdminChats)
@@ -332,14 +290,16 @@ describe('components/admin/AdminChats.vue', () => {
     await chatButton!.trigger('click')
     await flushPromises()
 
-    const badge = wrapper.findComponent({ name: 'UBadge' })
     const toggle = wrapper.findAllComponents({ name: 'UButton' })
       .find(b => ['Take over', 'Resume AI'].includes(b.text()))!
-
-    // Badge `md` and button `xs` share px-2 py-1 text-xs, so they line up.
-    expect(badge.props('size')).toBe('md')
-    expect(toggle.props('size')).toBe('xs')
+    expect(toggle.props('size')).toBe('md')
     expect(toggle.props('variant')).toBe('solid')
+
+    // No badge repeating what the button already says. The header used to mix a
+    // 2xs avatar, an md badge and an xs button: it lined up on paper and read
+    // as three unrelated rows of controls.
+    expect(wrapper.text()).not.toContain('AI Active')
+    expect(wrapper.text()).not.toContain('AI Paused')
   })
 
   it('send(): optimistically appends the outgoing message and clears the input', async () => {
@@ -740,7 +700,8 @@ describe('components/admin/AdminChats.vue', () => {
     await chatButton!.trigger('click')
     await flushPromises()
 
-    expect(wrapper.text()).toContain('AI Active')
+    // "Take over" is the AI-active state: it is only offered while the agent
+    // is the one answering.
     const takeOverBtn = wrapper.findAll('button').find(b => b.text() === 'Take over')!
     expect(takeOverBtn).toBeDefined()
 
@@ -752,10 +713,10 @@ describe('components/admin/AdminChats.vue', () => {
       method: 'PUT',
       body: { ai_enabled: false }
     })
-    expect(wrapper.text()).toContain('AI Paused')
+    expect(wrapper.findAll('button').some(b => b.text() === 'Resume AI')).toBe(true)
   })
 
-  it('re-syncs the AI badge from the backend on any system notice, not by matching its text (SPEC-046 #39)', async () => {
+  it('re-syncs AI state from the backend on any system notice, not by matching its text (SPEC-046 #39)', async () => {
     callMock.mockImplementationOnce(() => Promise.resolve([makeChat({ user_id: 'u1', display_name: 'Alice', ai_enabled: true })]))
     const wrapper = await mountSuspended(AdminChats)
     await flushPromises()
@@ -764,7 +725,7 @@ describe('components/admin/AdminChats.vue', () => {
     const chatButton = wrapper.findAll('button').find(b => b.text().includes('Alice'))
     await chatButton!.trigger('click')
     await flushPromises()
-    expect(wrapper.text()).toContain('AI Active')
+    expect(wrapper.findAll('button').some(b => b.text() === 'Take over')).toBe(true)
 
     // The agent's own transfer notice — wording the old substring matcher never recognised.
     callMock.mockImplementation((path: string) => {
@@ -778,10 +739,10 @@ describe('components/admin/AdminChats.vue', () => {
     await flushPromises()
 
     expect(callMock).toHaveBeenCalledWith('/users/u1/ai')
-    expect(wrapper.text()).toContain('AI Paused')
+    expect(wrapper.findAll('button').some(b => b.text() === 'Resume AI')).toBe(true)
   })
 
-  it('opening a paused conversation shows "AI Paused" and a HITL badge in the list (SPEC-046 #39)', async () => {
+  it('opening a paused conversation offers "Resume AI" and a HITL badge in the list (SPEC-046 #39)', async () => {
     callMock.mockImplementationOnce(() => Promise.resolve([
       makeChat({ user_id: 'u1', display_name: 'Alice', ai_enabled: false })
     ]))
@@ -795,7 +756,6 @@ describe('components/admin/AdminChats.vue', () => {
     await chatButton!.trigger('click')
     await flushPromises()
 
-    expect(wrapper.text()).toContain('AI Paused')
     expect(wrapper.findAll('button').some(b => b.text() === 'Resume AI')).toBe(true)
   })
 
@@ -831,8 +791,12 @@ describe('components/admin/AdminChats.vue', () => {
     const wrapper = await mountSuspended(AdminChats)
     await flushPromises()
 
-    const select = wrapper.findAllComponents({ name: 'USelect' })[0]!
-    await select.vm.$emit('update:modelValue', 'messages')
+    // The sort lives in the funnel menu (SPEC-062). `UDropdownMenu` portals its
+    // content, so the option is driven through the `items` prop.
+    const items = wrapper.findAllComponents({ name: 'UDropdownMenu' })
+      .map(m => m.props('items') as { label: string, onUpdateChecked?: (c: boolean) => void }[])
+      .find(group => Array.isArray(group) && group.some(i => i.label === 'Most messages'))!
+    items.find(i => i.label === 'Most messages')!.onUpdateChecked!(true)
     await flushPromises()
 
     const names = wrapper.findAll('button')

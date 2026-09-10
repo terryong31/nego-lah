@@ -81,9 +81,15 @@ function spyOnRouterPush(wrapper: { vm: { $router: { push: (...args: unknown[]) 
   return vi.spyOn(wrapper.vm.$router, 'push').mockImplementation(() => Promise.resolve())
 }
 
-async function fillAndSubmitEmail(wrapper: VueWrapper, email = 'new@example.com') {
+async function fillAndSubmitEmail(
+  wrapper: VueWrapper,
+  email = 'new@example.com',
+  currentPassword = 'oldpassword1'
+) {
   const emailForm = wrapper.findAll('form')[0]!
   await emailForm.find('input[type="email"]').setValue(email)
+  // SPEC-056 #3: changing the address costs the account password.
+  await emailForm.find('input[type="password"]').setValue(currentPassword)
   await emailForm.trigger('submit')
   await flushPromises()
 }
@@ -434,13 +440,22 @@ describe('pages/profile.vue', () => {
 
       expect(callMock).toHaveBeenCalledWith('/user/session-uid/email', {
         method: 'PUT',
-        body: { new_email: 'new@example.com' }
+        reauth: true,
+        body: { new_email: 'new@example.com', current_password: 'oldpassword1' }
       })
       expect(toastAddMock).toHaveBeenCalledWith({
         title: 'Email change requested',
-        description: 'Please check your inbox for verification links.',
+        description: 'Check your new inbox for the confirmation link — the address only changes once you click it.',
         color: 'success'
       })
+    })
+
+    it('does not submit without the current password (fails Zod validation, no API call)', async () => {
+      wrapper = await mountSuspended(ProfilePage)
+
+      await fillAndSubmitEmail(wrapper, 'new@example.com', '')
+
+      expect(callMock).not.toHaveBeenCalled()
     })
 
     it('does not submit an invalid email (fails Zod validation, no API call)', async () => {
@@ -458,15 +473,16 @@ describe('pages/profile.vue', () => {
       const vm = wrapper.vm as VmAny
       callMock.mockResolvedValueOnce({})
 
-      await vm.onEmailSubmit({ data: { email: 'new@example.com' } })
+      await vm.onEmailSubmit({ data: { email: 'new@example.com', currentPassword: 'oldpassword1' } })
 
       expect(callMock).toHaveBeenCalledWith('/user/session-uid/email', {
         method: 'PUT',
-        body: { new_email: 'new@example.com' }
+        reauth: true,
+        body: { new_email: 'new@example.com', current_password: 'oldpassword1' }
       })
       expect(toastAddMock).toHaveBeenCalledWith({
         title: 'Email change requested',
-        description: 'Please check your inbox for verification links.',
+        description: 'Check your new inbox for the confirmation link — the address only changes once you click it.',
         color: 'success'
       })
       expect(vm.emailLoading).toBe(false)
@@ -541,6 +557,7 @@ describe('pages/profile.vue', () => {
 
       expect(callMock).toHaveBeenCalledWith('/user/session-uid/password', {
         method: 'PUT',
+        reauth: true,
         body: { current_password: 'oldpassword1', new_password: 'newpassword1' }
       })
       expect(toastAddMock).toHaveBeenCalledWith({
@@ -606,6 +623,7 @@ describe('pages/profile.vue', () => {
 
       expect(callMock).toHaveBeenCalledWith('/user/session-uid/password', {
         method: 'PUT',
+        reauth: true,
         body: { current_password: 'oldpassword1', new_password: 'newpassword1' }
       })
       expect(toastAddMock).toHaveBeenCalledWith({
@@ -787,10 +805,15 @@ describe('pages/profile.vue', () => {
       vm.deleteModalOpen = true
       await wrapper.vm.$nextTick()
 
+      vm.deletePassword = 'oldpassword1'
       callMock.mockResolvedValueOnce({})
       await vm.handleDeleteAccount()
 
-      expect(callMock).toHaveBeenCalledWith('/user/session-uid', { method: 'DELETE' })
+      expect(callMock).toHaveBeenCalledWith('/user/session-uid', {
+        method: 'DELETE',
+        reauth: true,
+        body: { current_password: 'oldpassword1' }
+      })
       expect(signOutMock).toHaveBeenCalledTimes(1)
       expect(toastAddMock).toHaveBeenCalledWith({
         title: 'Account deleted',
@@ -806,6 +829,7 @@ describe('pages/profile.vue', () => {
       wrapper = await mountSuspended(ProfilePage)
       const vm = wrapper.vm as VmAny
       vm.deleteModalOpen = true
+      vm.deletePassword = 'oldpassword1'
 
       let resolveCall!: (v: unknown) => void
       callMock.mockReturnValueOnce(new Promise((resolve) => {
@@ -822,11 +846,12 @@ describe('pages/profile.vue', () => {
       expect(vm.deleteLoading).toBe(false)
     })
 
-    it('on failure: shows an error toast, does not sign out or redirect, but still closes the modal', async () => {
+    it('on failure: shows an error toast, does not sign out or redirect, and KEEPS the modal open to retry', async () => {
       wrapper = await mountSuspended(ProfilePage)
       const vm = wrapper.vm as VmAny
       const pushSpy = spyOnRouterPush(wrapper)
       vm.deleteModalOpen = true
+      vm.deletePassword = 'oldpassword1'
 
       callMock.mockRejectedValueOnce(new Error('cannot delete: active orders'))
       await vm.handleDeleteAccount()
@@ -838,15 +863,37 @@ describe('pages/profile.vue', () => {
       })
       expect(signOutMock).not.toHaveBeenCalled()
       expect(pushSpy).not.toHaveBeenCalled()
-      // finally always resets both, even on failure
-      expect(vm.deleteModalOpen).toBe(false)
+      // SPEC-056 #7: the likely failure is a mistyped password, and closing the
+      // dialog would make the user reopen the danger zone to fix a typo.
+      expect(vm.deleteModalOpen).toBe(true)
       expect(vm.deleteLoading).toBe(false)
+    })
+
+    it('surfaces the backend detail (a wrong password) rather than the transport message', async () => {
+      wrapper = await mountSuspended(ProfilePage)
+      const vm = wrapper.vm as VmAny
+      vm.deleteModalOpen = true
+      vm.deletePassword = 'wrongpassword'
+
+      callMock.mockRejectedValueOnce(
+        Object.assign(new Error('Request failed with 401'), {
+          data: { detail: 'Current password is incorrect' }
+        })
+      )
+      await vm.handleDeleteAccount()
+
+      expect(toastAddMock).toHaveBeenCalledWith({
+        title: 'Failed to delete account',
+        description: 'Current password is incorrect',
+        color: 'error'
+      })
     })
 
     it('falls back to a generic message when the thrown error is not an Error instance', async () => {
       wrapper = await mountSuspended(ProfilePage)
       const vm = wrapper.vm as VmAny
       vm.deleteModalOpen = true
+      vm.deletePassword = 'oldpassword1'
 
       callMock.mockRejectedValueOnce('boom')
       await vm.handleDeleteAccount()
@@ -856,6 +903,30 @@ describe('pages/profile.vue', () => {
         description: 'Something went wrong',
         color: 'error'
       })
+    })
+
+    it('will not send a deletion without a password', async () => {
+      wrapper = await mountSuspended(ProfilePage)
+      const vm = wrapper.vm as VmAny
+      vm.deleteModalOpen = true
+      vm.deletePassword = ''
+
+      await vm.handleDeleteAccount()
+
+      expect(callMock).not.toHaveBeenCalled()
+    })
+
+    it('clears the typed password when the dialog is dismissed', async () => {
+      wrapper = await mountSuspended(ProfilePage)
+      const vm = wrapper.vm as VmAny
+      vm.deleteModalOpen = true
+      vm.deletePassword = 'oldpassword1'
+      await flushPromises()
+
+      vm.deleteModalOpen = false
+      await flushPromises()
+
+      expect(vm.deletePassword).toBe('')
     })
   })
 })

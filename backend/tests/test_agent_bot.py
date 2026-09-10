@@ -188,7 +188,8 @@ def test_build_messages_reconstructs_history_then_appends_new_turn(fake_memory):
     assert isinstance(messages[0], HumanMessage) and messages[0].content == "hi"
     assert isinstance(messages[1], AIMessage) and messages[1].content == "hello!"
     assert isinstance(messages[2], HumanMessage) and messages[2].content == "how much?"
-    fake_memory.get_history.assert_called_once_with("user-1", limit=50)
+    from agent.config import AGENT_HISTORY_TURNS
+    fake_memory.get_history.assert_called_once_with("user-1", limit=AGENT_HISTORY_TURNS)
 
 
 def test_build_messages_without_item_id_does_not_look_up_item(fake_memory, monkeypatch):
@@ -201,6 +202,8 @@ def test_build_messages_without_item_id_does_not_look_up_item(fake_memory, monke
 
 
 def test_build_messages_with_item_id_found_injects_context_and_images(fake_memory, monkeypatch):
+    """A listing with no description has nothing but its photos to describe it,
+    so this is the case where they are still attached every turn (SPEC-059)."""
     import json
 
     images = {"0": "http://img/1.png", "1": "http://img/2.png", "2": "http://img/3.png"}
@@ -745,3 +748,111 @@ async def test_transfer_to_human_missing_user_context():
     set_context(user_id=None, item_id=None)
     result = await bot.transfer_to_human.ainvoke({"reason": "Test"})
     assert "user context missing" in result.lower()
+
+
+# ---------------------------------------------------------------------------
+# SPEC-059 — the item's photos stop riding along on every turn
+#
+# They used to be attached whenever an item_id was in context, identically on
+# turn 1 and turn 20. Gemini bills each image at roughly 258 tokens plus vision
+# prefill, and `items.description` was written FROM those same photos at listing
+# time — so the model was paying, every turn, to be shown a picture it already
+# had a description of.
+# ---------------------------------------------------------------------------
+
+DESCRIBED_ITEM = {
+    "name": "Casio VX-4",
+    "price": 180,
+    "condition": "Good",
+    "description": "Working 1980s pocket computer. Minor shelf wear on the case.",
+    "image_path": '{"0": "http://img/1.png", "1": "http://img/2.png"}',
+}
+
+
+def _describe(monkeypatch, item=None):
+    monkeypatch.setattr(bot, "get_item_details_for_context", lambda _id: item or DESCRIBED_ITEM)
+
+
+def _parts(messages):
+    content = messages[-1].content
+    return content if isinstance(content, list) else [{"type": "text", "text": content}]
+
+
+def _image_parts(messages):
+    return [p for p in _parts(messages) if p.get("type") == "image_url"]
+
+
+def _text(messages):
+    return "".join(p.get("text", "") for p in _parts(messages) if p.get("type") == "text")
+
+
+def test_an_ordinary_negotiation_turn_carries_no_images_at_all(fake_memory, monkeypatch):
+    _describe(monkeypatch)
+
+    messages = bot._build_messages("user-1", "can you do RM150?", item_id="item-1")
+
+    assert _image_parts(messages) == []
+
+
+def test_the_knowledge_card_replaces_what_the_images_were_there_to_say(fake_memory, monkeypatch):
+    _describe(monkeypatch)
+
+    text = _text(bot._build_messages("user-1", "can you do RM150?", item_id="item-1"))
+
+    assert "Casio VX-4" in text
+    assert "RM180" in text
+    assert "Good" in text
+    assert "Minor shelf wear" in text
+    assert "Buyer: can you do RM150?" in text
+
+
+def test_a_visual_question_brings_the_photos_back_for_that_turn(fake_memory, monkeypatch):
+    _describe(monkeypatch)
+
+    messages = bot._build_messages("user-1", "any scratches on the back?", item_id="item-1")
+
+    urls = [p["image_url"]["url"] for p in _image_parts(messages)]
+    assert urls == ["http://img/1.png", "http://img/2.png"]
+    # The card still goes along; the photos supplement it, they don't replace it.
+    assert "Casio VX-4" in _text(messages)
+
+
+def test_a_buyer_upload_is_attached_even_on_an_ordinary_turn(fake_memory, monkeypatch):
+    """Cost control must never silently drop a photo the buyer chose to send."""
+    _describe(monkeypatch)
+    files = [{"name": "mine.png", "type": "image/png", "data": "QUJD"}]
+
+    messages = bot._build_messages("user-1", "can you do RM150?", item_id="item-1", files=files)
+
+    urls = [p["image_url"]["url"] for p in _image_parts(messages)]
+    assert "data:image/png;base64,QUJD" in urls
+
+
+def test_a_buyer_upload_also_brings_the_listing_photos_for_comparison(fake_memory, monkeypatch):
+    """"Is mine the same as yours?" is unanswerable with only one of the two."""
+    _describe(monkeypatch)
+    files = [{"name": "mine.png", "type": "image/png", "data": "QUJD"}]
+
+    messages = bot._build_messages("user-1", "is this the same model?", item_id="item-1", files=files)
+
+    urls = [p["image_url"]["url"] for p in _image_parts(messages)]
+    assert "http://img/1.png" in urls
+    assert "data:image/png;base64,QUJD" in urls
+
+
+def test_a_listing_with_no_description_still_gets_its_photos_every_turn(fake_memory, monkeypatch):
+    """Nothing else describes it, so this behaves exactly as it did before."""
+    _describe(monkeypatch, {**DESCRIBED_ITEM, "description": None})
+
+    messages = bot._build_messages("user-1", "can you do RM150?", item_id="item-1")
+
+    assert len(_image_parts(messages)) == 2
+
+
+def test_the_history_window_is_bounded(fake_memory, monkeypatch):
+    from agent.config import AGENT_HISTORY_TURNS
+
+    bot._build_messages("user-1", "hi")
+
+    fake_memory.get_history.assert_called_once_with("user-1", limit=AGENT_HISTORY_TURNS)
+    assert AGENT_HISTORY_TURNS <= 50, "SPEC-059 tightened this; it must not drift back up"

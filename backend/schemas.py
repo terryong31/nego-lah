@@ -49,6 +49,14 @@ class PasswordUpdateSchema(BaseModel):
 
 class EmailUpdateSchema(BaseModel):
     new_email: str
+    # SPEC-056 #3: an access token alone must not be able to move the address
+    # the account is recovered through.
+    current_password: str
+
+
+class AccountDeleteSchema(BaseModel):
+    # SPEC-056 #7: deletion is irreversible, so it costs the password too.
+    current_password: str
 
 
 class LanguageUpdateSchema(BaseModel):
@@ -112,6 +120,20 @@ class OrderUpdate(BaseModel):
     phone: str | None = None
     recipient_name: str | None = None
     notes: str | None = None
+
+
+class ShipmentUpdate(BaseModel):
+    """Postage as the seller records it (SPEC-057).
+
+    `tracking_url` is optional because it is usually derivable from the courier;
+    `notify` exists so a correction to an already-announced shipment doesn't
+    email the buyer a second time.
+    """
+
+    courier: str
+    tracking_number: str
+    tracking_url: str | None = None
+    notify: bool = True
 
 
 class MarketValuationRequest(BaseModel):

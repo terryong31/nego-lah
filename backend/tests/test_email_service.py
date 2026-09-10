@@ -273,3 +273,117 @@ def test_email_template_renders_cdn_brand_logo():
     assert 'alt="Nego-lah"' in html
     assert 'width="24"' in html
 
+
+
+# ---------------------------------------------------------------------------
+# Shipment notices (SPEC-057)
+# ---------------------------------------------------------------------------
+
+def _resend_stub():
+    """The httpx.Client patch every sender test in this file uses."""
+    mock_client = MagicMock()
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_client.post.return_value = mock_response
+    return mock_client
+
+
+def _sent_payload(mock_client):
+    call_args = mock_client.post.call_args
+    return call_args.kwargs.get("json") or call_args[1].get("json")
+
+
+SHIPPED_ORDER = {
+    "id": "order-777",
+    "item_name": "Casio VX-4",
+    "courier": "J&T Express",
+    "tracking_number": "630123456789",
+    "tracking_url": "https://www.jtexpress.my/tracking?billcode=630123456789",
+}
+
+
+def test_send_shipment_notice_carries_the_courier_and_a_track_button():
+    with patch("httpx.Client") as mock_client_cls:
+        mock_client = _resend_stub()
+        mock_client_cls.return_value.__enter__.return_value = mock_client
+
+        assert email_service.send_shipment_notice("buyer@example.com", SHIPPED_ORDER) is True
+
+        payload = _sent_payload(mock_client)
+        assert payload["to"] == ["buyer@example.com"]
+        assert "Casio VX-4" in payload["subject"]
+        # Jinja autoescapes, so the ampersand in the carrier name arrives as an
+        # entity — which is exactly what should reach an HTML mail client.
+        assert "J&amp;T Express" in payload["html"]
+        assert "J&T Express" not in payload["html"]
+        assert "630123456789" in payload["html"]
+        assert "https://www.jtexpress.my/tracking?billcode=630123456789" in payload["html"]
+        assert "Track your parcel" in payload["html"]
+
+
+def test_send_shipment_notice_derives_a_missing_tracking_url():
+    with patch("httpx.Client") as mock_client_cls:
+        mock_client = _resend_stub()
+        mock_client_cls.return_value.__enter__.return_value = mock_client
+
+        email_service.send_shipment_notice(
+            "buyer@example.com", {**SHIPPED_ORDER, "tracking_url": None}
+        )
+
+        assert "630123456789" in _sent_payload(mock_client)["html"]
+
+
+def test_send_shipment_notice_falls_back_to_the_chat_when_there_is_no_link():
+    """An unknown courier still gets a usable email — just not a track button."""
+    with patch("httpx.Client") as mock_client_cls:
+        mock_client = _resend_stub()
+        mock_client_cls.return_value.__enter__.return_value = mock_client
+
+        email_service.send_shipment_notice(
+            "buyer@example.com",
+            {**SHIPPED_ORDER, "courier": "Some Local Bike Guy", "tracking_url": None},
+        )
+
+        html = _sent_payload(mock_client)["html"]
+        assert "Some Local Bike Guy" in html
+        assert "Track your parcel" not in html
+        assert "Open chat" in html
+
+
+def test_send_shipment_notice_words_a_delivery_as_a_delivery():
+    with patch("httpx.Client") as mock_client_cls:
+        mock_client = _resend_stub()
+        mock_client_cls.return_value.__enter__.return_value = mock_client
+
+        email_service.send_shipment_notice("buyer@example.com", SHIPPED_ORDER, delivered=True)
+
+        payload = _sent_payload(mock_client)
+        assert "delivered" in payload["subject"].lower()
+        assert "delivered" in payload["html"].lower()
+
+
+def test_send_shipment_notice_without_a_recipient_is_a_no_op():
+    with patch("httpx.Client") as mock_client_cls:
+        mock_client = _resend_stub()
+        mock_client_cls.return_value.__enter__.return_value = mock_client
+
+        assert email_service.send_shipment_notice("", SHIPPED_ORDER) is False
+        assert not mock_client.post.called
+
+
+def test_shipment_template_renders_without_a_courier_or_tracking_number():
+    """The seller may only know the status. The template must not break on it."""
+    html = email_service.render_email_template("shipment_notice.html", {
+        "subject": "On its way",
+        "item_name": "Casio VX-4",
+        "order_id": "order-777",
+        "courier": None,
+        "tracking_number": None,
+        "tracking_url": None,
+        "date_str": "September 10, 2026",
+        "chat_url": "https://negolah.my/chat",
+        "orders_url": "https://negolah.my/orders",
+        "delivered": False,
+    })
+    assert "Casio VX-4" in html
+    assert "Open chat" in html

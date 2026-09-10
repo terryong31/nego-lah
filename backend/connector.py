@@ -62,3 +62,17 @@ def _create_supabase_client(supabase_key: str, key_name: str) -> Client:
 
 user_supabase: Client = _create_supabase_client(USER_SUPABASE_KEY, "USER_SUPABASE_KEY")
 admin_supabase: Client = _create_supabase_client(ADMIN_SUPABASE_KEY, "ADMIN_SUPABASE_KEY")
+
+
+def new_user_client() -> Client:
+    """A fresh anon-key client with no session attached.
+
+    `user_supabase` is a module-level singleton, so `sign_in_with_password` on it
+    writes the resulting session into state shared by every concurrent request:
+    two people re-authenticating at once race, and whoever lands second owns the
+    client. That is survivable when the session is only a password *check* and
+    the work then happens through the admin API, but not when the request goes
+    on to act AS the user (SPEC-056 #3). Anything that re-authenticates gets its
+    own client and drops it when the request ends.
+    """
+    return _create_supabase_client(USER_SUPABASE_KEY, "USER_SUPABASE_KEY")

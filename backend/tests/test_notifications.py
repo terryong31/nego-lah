@@ -31,6 +31,13 @@ async def distributed(broker: NotificationBroker, redis_stub):
     """Run the block with `broker` believing it is Redis-backed."""
     parked = asyncio.create_task(asyncio.Event().wait())
     broker._listener = parked
+    # A distributed broker always holds a subscribed pub/sub -- that is what
+    # makes its own listener feed the local queues. Tests that install their
+    # own pub/sub keep it.
+    previous_pubsub = broker._pubsub
+    if broker._pubsub is None:
+        broker._pubsub = FakePubSub()
+        await broker._pubsub.subscribe(notifications.KEEPALIVE_CHANNEL)
     import cache
 
     original = cache.redis_client
@@ -43,6 +50,7 @@ async def distributed(broker: NotificationBroker, redis_stub):
         with contextlib.suppress(asyncio.CancelledError):
             await parked
         broker._listener = None
+        broker._pubsub = previous_pubsub
 
 
 class FakePubSub:
@@ -351,3 +359,131 @@ async def test_subscribing_registers_the_users_channel_when_distributed():
         assert pubsub.subscribed == {channel_for("buyer-1")}
         await broker.unsubscribe("buyer-1", second)
         assert pubsub.subscribed == set()
+
+
+# ---------------------------------------------------------------------------
+# SPEC-058: listener reconnect (hot-spin regression)
+# ---------------------------------------------------------------------------
+
+class SpinDetected(BaseException):
+    """Raised by the fake once the listener has clearly stopped throttling.
+
+    Deliberately a BaseException: the broker catches `Exception`, and this has
+    to escape that handler to end the test instead of feeding the very loop it
+    is diagnosing.
+    """
+
+
+class ExhaustedPubSub(FakePubSub):
+    """A pub/sub whose subscription is gone.
+
+    This is the shape redis-py leaves behind after a dropped connection:
+    `PubSub.listen()` is `while self.subscribed:`, so with no channels it
+    *returns* instead of raising. A `while True` that only reconnects in its
+    `except` branch therefore respins with nothing to await.
+
+    `listen()` yields to the event loop before returning. The real one does not,
+    which is why the unfixed broker wedges the loop outright -- a test written
+    against that hangs instead of failing, so the fake keeps the loop breathing
+    and counts instead.
+    """
+
+    SPIN_LIMIT = 200
+
+    def __init__(self):
+        super().__init__()
+        self.listen_calls = 0
+
+    async def listen(self):
+        self.listen_calls += 1
+        if self.listen_calls > self.SPIN_LIMIT:
+            raise SpinDetected(f"listen() re-entered {self.listen_calls} times without throttling")
+        await asyncio.sleep(0)
+        return
+        yield  # pragma: no cover - makes this an async generator
+
+
+async def _run_listener_briefly(broker, seconds=0.2):
+    task = asyncio.create_task(broker._listen())
+    await asyncio.sleep(seconds)
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError, SpinDetected):
+        await task
+
+
+@pytest.mark.asyncio
+async def test_listener_does_not_spin_when_listen_returns_without_raising(monkeypatch):
+    """The bug this pins: a normally-returning `listen()` skipped the `except`
+    branch, so the loop re-entered it with no sleep -- measured at ~3.6M
+    iterations/sec, pegging the event loop and starving the worker's requests.
+    SIGTERM could not even land, because the task never yielded."""
+    monkeypatch.setattr(notifications, "RECONNECT_DELAY_SECONDS", 0.05)
+    broker = NotificationBroker()
+    exhausted = ExhaustedPubSub()
+    broker._pubsub = exhausted
+    broker._redis = MagicMock(pubsub=MagicMock(return_value=exhausted))
+
+    await _run_listener_briefly(broker)
+
+    # Roughly one attempt per reconnect delay. Unthrottled, this runs away.
+    assert exhausted.listen_calls <= 10, (
+        f"listener re-entered listen() {exhausted.listen_calls} times in 200ms -- not awaiting"
+    )
+    assert exhausted.listen_calls >= 1, "listener never called listen() at all"
+
+
+@pytest.mark.asyncio
+async def test_listener_reconnects_after_listen_returns_without_raising(monkeypatch):
+    """Recovery must not depend on an exception being raised, or the broker
+    stays dead after Redis comes back -- which is what stranded it in the wild."""
+    monkeypatch.setattr(notifications, "RECONNECT_DELAY_SECONDS", 0.05)
+    broker = NotificationBroker()
+    await broker.subscribe("buyer-1")
+
+    stale = ExhaustedPubSub()
+    fresh = ExhaustedPubSub()
+    broker._pubsub = stale
+    broker._redis = MagicMock(pubsub=MagicMock(return_value=fresh))
+
+    await _run_listener_briefly(broker)
+
+    assert stale.closed is True, "the dead pub/sub was never torn down"
+    assert notifications.KEEPALIVE_CHANNEL in fresh.subscribed
+    assert channel_for("buyer-1") in fresh.subscribed
+
+
+@pytest.mark.asyncio
+async def test_listener_cancellation_stays_immediate(monkeypatch):
+    """`stop()` runs on the path uvicorn waits for, so the new reconnect path
+    must not swallow CancelledError."""
+    monkeypatch.setattr(notifications, "RECONNECT_DELAY_SECONDS", 30)
+    broker = NotificationBroker()
+    exhausted = ExhaustedPubSub()
+    broker._pubsub = exhausted
+    broker._redis = MagicMock(pubsub=MagicMock(return_value=exhausted))
+
+    task = asyncio.create_task(broker._listen())
+    await asyncio.sleep(0.05)  # let it reach the reconnect sleep
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, timeout=1.0)
+
+
+@pytest.mark.asyncio
+async def test_publish_delivers_locally_when_the_pubsub_is_not_subscribed():
+    """Redis being reachable is not enough: if this worker's pub/sub holds no
+    channels, nothing will ever feed the local queues, so publishing into Redis
+    discards the event. Observed live -- the buyer got neither the SSE event nor
+    the unread-digest email, because `has_subscribers()` still saw them online.
+    """
+    broker = NotificationBroker()
+    queue = await broker.subscribe("buyer-1")
+    redis_stub = MagicMock()
+
+    async with distributed(broker, redis_stub):
+        broker._pubsub = FakePubSub()  # connected, but zero channels
+        broker.publish("buyer-1", {"message": "must not vanish"})
+
+    redis_stub.publish.assert_not_called()
+    assert (await asyncio.wait_for(queue.get(), timeout=1.0)) == {"message": "must not vanish"}

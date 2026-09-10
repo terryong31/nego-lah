@@ -9,7 +9,7 @@ Mocking seam notes (see conftest.py docstring for the general rules):
   `monkeypatch.setattr(routes_payment, "create_checkout_session", ...)`)
   rather than on `connector` / `payment.pay`.
 - Every other payment sub-module (`payment.payment_state`, `payment.webhooks`,
-  `payment.payment_history`, `payment.refunds`, `payment.fulfillment`) is
+  `payment.payment_history`, `payment.fulfillment`) is
   imported LAZILY inside the route function body (`from payment.xxx import
   yyy`), so the import re-resolves at call time -- patching the function
   directly on the sub-module (e.g. `payment.payment_state.get_active_payments_for_user`)
@@ -27,7 +27,6 @@ import stripe as real_stripe
 import payment.fulfillment as fulfillment
 import payment.payment_history as payment_history
 import payment.payment_state as payment_state
-import payment.refunds as refunds
 import payment.webhooks as webhooks
 import routes.payment as routes_payment
 from conftest import make_supabase_result
@@ -477,62 +476,21 @@ async def test_get_transactions_requires_admin(client):
 
 
 # ---------------------------------------------------------------------------
-# POST /payment/refund/{item_id} (admin)
+# Refunds are NOT here any more (SPEC-056 #1)
+#
+# `POST /payment/refund/{item_id}` moved to `POST {ADMIN_PREFIX}/orders/refund/
+# {item_id}` so it inherits `verify_csrf_token` along with `verify_admin`. Its
+# behaviour is covered in tests/test_routes_admin_orders_items.py; what belongs
+# here is the assertion that the unprotected URL is really gone, because a
+# leftover registration would silently reopen the hole.
 # ---------------------------------------------------------------------------
 
-async def test_refund_item_success(client, admin_user, monkeypatch):
-    admin_user()
-    captured = {}
-
-    def fake_process_refund(item_id, reason):
-        captured["item_id"] = item_id
-        captured["reason"] = reason
-        return {"success": True, "refund_id": "re_1", "amount_refunded": 100}
-
-    monkeypatch.setattr(refunds, "process_refund", fake_process_refund)
-
-    response = await client.post(
-        "/payment/refund/item-1", params={"reason": "requested_by_customer"}
-    )
-
-    assert response.status_code == 200
-    assert response.json() == {"success": True, "refund_id": "re_1", "amount_refunded": 100}
-    assert captured == {"item_id": "item-1", "reason": "requested_by_customer"}
-
-
-async def test_refund_item_no_reason_defaults_to_none(client, admin_user, monkeypatch):
-    admin_user()
-    captured = {}
-
-    def fake_process_refund(item_id, reason):
-        captured["reason"] = reason
-        return {"success": True, "refund_id": "re_2", "amount_refunded": 20}
-
-    monkeypatch.setattr(refunds, "process_refund", fake_process_refund)
-
-    response = await client.post("/payment/refund/item-1")
-
-    assert response.status_code == 200
-    assert captured["reason"] is None
-
-
-async def test_refund_item_failure_returns_400(client, admin_user, monkeypatch):
-    admin_user()
-    monkeypatch.setattr(
-        refunds,
-        "process_refund",
-        lambda item_id, reason: {"success": False, "error": "Transaction not found for this item"},
-    )
-
-    response = await client.post("/payment/refund/item-1")
-
-    assert response.status_code == 400
-    assert response.json()["detail"] == "Transaction not found for this item"
-
-
-async def test_refund_item_requires_admin(client):
-    response = await client.post("/payment/refund/item-1")
-    assert response.status_code == 401
+async def test_payment_router_exposes_no_refund_route(app):
+    refund_routes = [
+        r for r in app.routes
+        if getattr(r, "path", "").startswith("/payment/refund")
+    ]
+    assert refund_routes == []
 
 
 # ---------------------------------------------------------------------------

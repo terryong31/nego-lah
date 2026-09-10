@@ -19,7 +19,7 @@ Additionally, `sentry-cli` must be integrated into the monorepo workflow to veri
 - [x] **Backend Production:** In production mode (`ENV` == `production` or `prod`), Sentry is strictly enforced. If `SENTRY_DSN` is missing or empty, application initialization raises a `RuntimeError`.
 - [x] **Frontend Development:** In development mode (`NODE_ENV` != `production`), `@sentry/nuxt` initialization is disabled (`enabled: false`), and `sentry.client.config.ts` / `sentry.server.config.ts` skip initialization.
 - [x] **Frontend Production:** In production mode, Sentry client initialization is active with sample rates and session replays enabled; missing DSN raises an error.
-- [x] **Sentry CLI Tooling:** Sentry CLI is configured via `.sentryclirc` and `mise.toml` tasks (`mise run sentry:info`, `mise run sentry:releases`) using `nego-lah` org and `nego-lah-frontend` / `nego-lah-backend` projects.
+- [x] **Sentry CLI Tooling:** Sentry CLI runs via `mise.toml` tasks (`mise run sentry:info`, `mise run sentry:releases`), which wrap `infisical run` so org/project/auth token come from Infisical. No Sentry identifiers are committed to this public repo.
 
 ### Cloudflare Turnstile Protection
 - [x] **Backend Development:** In development mode, `verify_turnstile` automatically returns `True` without requiring headers, checking keys, or calling Cloudflare siteverify.
@@ -51,7 +51,6 @@ Additionally, `sentry-cli` must be integrated into the monorepo workflow to veri
 
 # Implementation Files
 - `specs/SPEC-022-env-conditional-sentry-and-turnstile.md`
-- `.sentryclirc`
 - `mise.toml`
 - `backend/core/telemetry.py`
 - `backend/core/security.py`

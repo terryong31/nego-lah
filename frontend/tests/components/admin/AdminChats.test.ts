@@ -509,7 +509,7 @@ describe('components/admin/AdminChats.vue', () => {
     callMock.mockImplementationOnce(() =>
       Promise.resolve({
         user_id: 'u1',
-        messages: [{ role: 'ai', content: '[Pay now](https://pay.example.com/session/abc123)' }]
+        messages: [{ role: 'ai', content: '[Pay now](https://buy.stripe.com/session/abc123)' }]
       })
     )
     const chatButton = wrapper.findAll('button').find(b => b.text().includes('Alice'))
@@ -522,7 +522,31 @@ describe('components/admin/AdminChats.vue', () => {
     expect(wrapper.text()).toContain('Complete your purchase securely via Stripe')
     const payLink = wrapper.findAll('a').find(a => a.text() === 'Pay now')
     expect(payLink).toBeTruthy()
-    expect(payLink!.attributes('href')).toBe('https://pay.example.com/session/abc123')
+    expect(payLink!.attributes('href')).toBe('https://buy.stripe.com/session/abc123')
+  })
+
+  it('will not dress a non-Stripe link as a payment card, even in the console', async () => {
+    // SPEC-056 #4. The console renders the same transcript through the same
+    // parser, so a link a prompt-injected model emitted must look like text to
+    // the seller too — otherwise the operator is the one being phished.
+    callMock.mockImplementationOnce(() => Promise.resolve([makeChat({ user_id: 'u1', display_name: 'Alice' })]))
+
+    const wrapper = await mountSuspended(AdminChats)
+    await flushPromises()
+
+    callMock.mockImplementationOnce(() =>
+      Promise.resolve({
+        user_id: 'u1',
+        messages: [{ role: 'ai', content: '[Pay RM50 Now](https://malicious-phishing.test/pay)' }]
+      })
+    )
+    const chatButton = wrapper.findAll('button').find(b => b.text().includes('Alice'))
+    await chatButton!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('Deal agreed')
+    expect(wrapper.findAll('a').some(a => a.attributes('href')?.includes('malicious-phishing'))).toBe(false)
+    expect(wrapper.text()).toContain('[Pay RM50 Now](https://malicious-phishing.test/pay)')
   })
 
   it('shows the agreed amount as the payment card\'s headline when the label carries one', async () => {
@@ -534,7 +558,7 @@ describe('components/admin/AdminChats.vue', () => {
     callMock.mockImplementationOnce(() =>
       Promise.resolve({
         user_id: 'u1',
-        messages: [{ role: 'ai', content: '[Pay RM1000 Now](https://pay.example.com/session/abc123)' }]
+        messages: [{ role: 'ai', content: '[Pay RM1000 Now](https://buy.stripe.com/session/abc123)' }]
       })
     )
     const chatButton = wrapper.findAll('button').find(b => b.text().includes('Alice'))
@@ -828,7 +852,7 @@ describe('components/admin/AdminChats.vue', () => {
       Promise.resolve({
         user_id: 'u1',
         messages: [
-          { role: 'ai', content: '[Pay RM1000 Now](https://pay.example.com/session/abc123)' },
+          { role: 'ai', content: '[Pay RM1000 Now](https://buy.stripe.com/session/abc123)' },
           { role: 'system', content: 'Payment received! Order completed.' }
         ]
       })

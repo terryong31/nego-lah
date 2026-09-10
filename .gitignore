@@ -68,3 +68,8 @@ dump.rdb
 .infisical/
 
 .agent/
+
+# ===== Sentry =====
+# Public repo: org/project slugs and auth tokens stay out of git. Sentry CLI
+# reads SENTRY_ORG / SENTRY_PROJECT / SENTRY_AUTH_TOKEN from Infisical instead.
+.sentryclirc

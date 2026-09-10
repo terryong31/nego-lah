@@ -1,6 +1,18 @@
+import os
+
 # ============================================
 # EDIT THIS TO MATCH YOUR PERSONALITY
 # ============================================
+
+# SPEC-059 — how many past messages are replayed into every turn.
+#
+# Was a hard-coded 50. The whole transcript is re-sent on each turn AND on each
+# step of the ReAct loop within it, so this multiplies: 50 messages behind a
+# ~2.5k-token persona is most of what a long negotiation pays for. Twenty covers
+# a complete haggle (offer, counter, counter, close) with room to spare — and
+# `evaluate_offer` keeps the price floor in Redis rather than in the transcript,
+# so falling off the end of the window cannot lose the negotiation's state.
+AGENT_HISTORY_TURNS = int(os.getenv("AGENT_HISTORY_TURNS", "20"))
 
 # SPEC-055 — the platform has no cash-on-delivery flow: checkout is Stripe-only,
 # and stock is claimed by PAYMENT, not by agreement. Edit this block to change what

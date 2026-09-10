@@ -154,6 +154,18 @@ description = "Move self-uploaded avatars to custom_avatar_url so an OAuth sign-
 dir = "backend"
 run = "infisical run --env=prod --path=/Backend -- uv run python scripts/backfill_custom_avatar.py --apply"
 
+# SPEC-059: replays the golden negotiation scenarios against a real model and
+# reports pass rate per category next to tokens, latency and RM cost. Costs money
+# and takes minutes, so it is deliberately NOT part of `mise run test` — run it
+# when the persona, the tools or the model changes.
+#   mise run eval:agent
+#   mise run eval:agent -- --model gemini-3.8-flash-lite     # is cheaper good enough?
+#   mise run eval:agent -- --category confidentiality --repeat 3
+[tasks."eval:agent"]
+description = "SPEC-059: score the seller agent's quality, tokens, latency and cost"
+dir = "backend"
+run = "infisical run --env=dev --path=/Backend -- uv run python -m evals.runner"
+
 [tasks."hooks:install"]
 description = "Install lefthook git hooks (run once after cloning or after updating lefthook.yml)"
 run = "lefthook install"

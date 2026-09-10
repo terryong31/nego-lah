@@ -478,41 +478,39 @@ async def chat_stream(request: Request):
     )
 
 
+@router.post("/chat/notifications/ticket")
+@limiter.limit(NOTIFICATION_STREAM_LIMIT)
+async def notifications_ticket(request: Request, user_id: str = Depends(verify_user_token)):
+    """Mint a short-lived, single-use ticket for opening the notification stream.
+
+    SPEC-056 #6. `EventSource` cannot set headers, which is why the stream used
+    to accept `?token=<supabase access token>`. That put an hour-long credential
+    for the whole API into every access log, proxy log, APM breadcrumb and
+    browser history entry that touches the URL. This endpoint is a normal
+    header-authenticated POST; what goes in the URL afterwards is a 30-second
+    ticket good for exactly one stream and nothing else.
+    """
+    from cache import SSE_TICKET_TTL, mint_sse_ticket
+
+    return {"ticket": mint_sse_ticket(user_id), "expires_in": SSE_TICKET_TTL}
+
+
 @router.get("/chat/notifications/stream")
 @limiter.limit(NOTIFICATION_STREAM_LIMIT)
 async def notifications_stream(request: Request):
     """
     Real-time Server-Sent Events (SSE) notification stream.
     Emits instant notifications when the seller sends a message.
-    Accepts token via Authorization header or ?token= query parameter.
+
+    Authorised by a `?ticket=` minted at POST /chat/notifications/ticket. Access
+    tokens are deliberately NOT accepted here any more (SPEC-056 #6) — a URL is
+    a public place, and the ticket is designed to be worthless in one.
     """
-    token = None
-    auth_header = request.headers.get("Authorization")
-    if auth_header and auth_header.startswith("Bearer "):
-        token = auth_header.split(" ", 1)[1]
-    if not token:
-        token = request.query_params.get("token")
+    from cache import redeem_sse_ticket
 
-    if not token:
-        raise HTTPException(status_code=401, detail="Missing authorization token")
-
-    from cache import cache_token_user, get_cached_user_by_token
-    user_id = get_cached_user_by_token(token)
+    user_id = await asyncio.to_thread(redeem_sse_ticket, request.query_params.get("ticket", ""))
     if not user_id:
-        try:
-            # Supabase's client is synchronous: awaiting it in a thread keeps a
-            # cache miss from stalling every other request on this worker for
-            # the length of the round trip.
-            res = await asyncio.to_thread(admin_supabase.auth.get_user, token)
-            if res and res.user:
-                user_id = res.user.id
-                cache_token_user(token, user_id)
-            else:
-                raise HTTPException(status_code=401, detail="Invalid token")
-        except HTTPException:
-            raise
-        except Exception as e:
-            raise HTTPException(status_code=401, detail=f"Authentication error: {e}") from e
+        raise HTTPException(status_code=401, detail="Missing or expired stream ticket")
 
     from notifications import notification_broker
 

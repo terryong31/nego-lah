@@ -37,6 +37,13 @@ Welcome to the **Nego-Lah** codebase. This repository contains the full-stack ec
 5. **Secrets & Environment Variables:**
    - Never commit secrets or hardcoded API keys. All environment variables are injected via Infisical Cloud (`infisical run --env=dev -- ...`) or defined in typed configurations.
 
+6. **Security Anti-Patterns & Defensive Coding Standards:**
+   - Always adhere to [`docs/SECURITY_ANTI_PATTERNS.md`](docs/SECURITY_ANTI_PATTERNS.md).
+   - Ensure all mutating admin endpoints enforce `verify_csrf_token`.
+   - Never use optional scoping on database updates/deletions (`if user_id: query.eq()`) — always fail closed.
+   - Require password re-authentication on destructive or identity operations (email change, account deletion).
+   - Validate external URLs emitted by AI agents against allowlists before rendering them as trusted checkout elements.
+
 ---
 
 ## Essential Commands (`mise`)

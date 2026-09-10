@@ -83,18 +83,26 @@ async function onProfileSave() {
     avatarPreview.value = ''
     toast.add({ title: t('profile.profileUpdated'), description: t('profile.profileUpdatedDesc'), color: 'success' })
   } catch (err) {
-    const e = err as { data?: { detail?: string }, message?: string }
-    toast.add({ title: t('profile.updateProfileFailed'), description: e.data?.detail || e.message, color: 'error' })
+    toast.add({ title: t('profile.updateProfileFailed'), description: apiError(err), color: 'error' })
   } finally {
     profileLoading.value = false
   }
+}
+
+/** FastAPI puts the human-readable reason in `detail`; keep it, don't bury it. */
+function apiError(err: unknown): string {
+  const e = err as { data?: { detail?: string }, message?: string }
+  return e?.data?.detail || e?.message || t('profile.somethingWentWrong')
 }
 
 // Change Email
 const emailSchema = emailChangeSchema
 const emailLoading = ref(false)
 // UForm validates against `state`; without it the form never emits `submit`.
-const emailState = reactive<{ email: string | undefined }>({ email: undefined })
+const emailState = reactive<{ email: string | undefined, currentPassword: string | undefined }>({
+  email: undefined,
+  currentPassword: undefined
+})
 
 async function onEmailSubmit(payload: FormSubmitEvent<EmailChangeForm>) {
   const userId = await getUserId()
@@ -103,14 +111,17 @@ async function onEmailSubmit(payload: FormSubmitEvent<EmailChangeForm>) {
   try {
     await call(`/user/${userId}/email`, {
       method: 'PUT',
+      reauth: true,
       body: {
-        new_email: payload.data.email
+        new_email: payload.data.email,
+        current_password: payload.data.currentPassword
       }
     })
     emailState.email = undefined
+    emailState.currentPassword = undefined
     toast.add({ title: t('profile.emailChangeRequested'), description: t('profile.emailChangeRequestedDesc'), color: 'success' })
   } catch (err) {
-    toast.add({ title: t('profile.updateEmailFailed'), description: err instanceof Error ? err.message : t('profile.somethingWentWrong'), color: 'error' })
+    toast.add({ title: t('profile.updateEmailFailed'), description: apiError(err), color: 'error' })
   } finally {
     emailLoading.value = false
   }
@@ -133,6 +144,7 @@ async function onPasswordSubmit(payload: FormSubmitEvent<PasswordChangeForm>) {
   try {
     await call(`/user/${userId}/password`, {
       method: 'PUT',
+      reauth: true,
       body: {
         current_password: payload.data.currentPassword,
         new_password: payload.data.newPassword
@@ -143,7 +155,7 @@ async function onPasswordSubmit(payload: FormSubmitEvent<PasswordChangeForm>) {
     passwordState.confirmPassword = undefined
     toast.add({ title: t('profile.passwordUpdated'), description: t('profile.passwordUpdatedDesc'), color: 'success' })
   } catch (err) {
-    toast.add({ title: t('profile.updatePasswordFailed'), description: err instanceof Error ? err.message : t('profile.somethingWentWrong'), color: 'error' })
+    toast.add({ title: t('profile.updatePasswordFailed'), description: apiError(err), color: 'error' })
   } finally {
     passwordLoading.value = false
   }
@@ -152,21 +164,36 @@ async function onPasswordSubmit(payload: FormSubmitEvent<PasswordChangeForm>) {
 // Danger Zone - Account Deletion
 const deleteModalOpen = ref(false)
 const deleteLoading = ref(false)
+const deletePassword = ref('')
+
+// SPEC-056 #7: the backend refuses a deletion that is not re-authenticated, so
+// the button stays inert until there is a password to send.
+const canDelete = computed(() => deletePassword.value.length >= 8)
+
+watch(deleteModalOpen, (open) => {
+  if (!open) deletePassword.value = ''
+})
 
 async function handleDeleteAccount() {
   const userId = await getUserId()
-  if (!userId) return
+  if (!userId || !canDelete.value) return
   deleteLoading.value = true
   try {
-    await call(`/user/${userId}`, { method: 'DELETE' })
+    await call(`/user/${userId}`, {
+      method: 'DELETE',
+      reauth: true,
+      body: { current_password: deletePassword.value }
+    })
+    deleteModalOpen.value = false
     await supabase.auth.signOut()
     toast.add({ title: t('profile.accountDeleted'), description: t('profile.accountDeletedDesc'), color: 'success' })
     router.push('/')
   } catch (err) {
-    toast.add({ title: t('profile.deleteAccountFailed'), description: err instanceof Error ? err.message : t('profile.somethingWentWrong'), color: 'error' })
+    // The dialog stays open: a wrong password is the likely failure, and
+    // reopening the danger zone to retype it is a poor apology for a typo.
+    toast.add({ title: t('profile.deleteAccountFailed'), description: apiError(err), color: 'error' })
   } finally {
     deleteLoading.value = false
-    deleteModalOpen.value = false
   }
 }
 </script>
@@ -288,6 +315,20 @@ async function handleDeleteAccount() {
           />
         </UFormField>
 
+        <UFormField
+          :label="$t('profile.currentPassword')"
+          name="currentPassword"
+          :description="$t('profile.passwordRequiredDesc')"
+        >
+          <UInput
+            v-model="emailState.currentPassword"
+            type="password"
+            autocomplete="current-password"
+            :placeholder="$t('profile.currentPasswordPlaceholder')"
+            class="w-full"
+          />
+        </UFormField>
+
         <UButton
           type="submit"
           :loading="emailLoading"
@@ -402,6 +443,20 @@ async function handleDeleteAccount() {
         <p class="text-sm text-muted">
           {{ $t('profile.deleteConfirmDesc') }}
         </p>
+        <UFormField
+          :label="$t('profile.deleteConfirmPassword')"
+          name="deletePassword"
+          class="mt-4"
+        >
+          <UInput
+            v-model="deletePassword"
+            type="password"
+            autocomplete="current-password"
+            :placeholder="$t('profile.currentPasswordPlaceholder')"
+            class="w-full"
+            @keyup.enter="handleDeleteAccount"
+          />
+        </UFormField>
       </template>
       <template #footer>
         <div class="flex w-full justify-end gap-2">
@@ -415,6 +470,7 @@ async function handleDeleteAccount() {
             :label="$t('profile.deleteAccount')"
             color="error"
             :loading="deleteLoading"
+            :disabled="!canDelete"
             @click="handleDeleteAccount"
           />
         </div>

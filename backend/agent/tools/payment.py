@@ -258,21 +258,28 @@ def collect_shipping_info(order_id: str, recipient_name: str, phone: str, addres
     logger.info(f"📍 Address: {masked_address}")
     logger.info(f"{'='*50}")
 
+    # SPEC-056 #2 — fail CLOSED. SPEC-051 added the `buyer_id` filter but left it
+    # conditional (`if user_id:`), so an unidentified caller — a context var that
+    # never got set, a tool invoked outside `bot.chat()` — silently dropped the
+    # ownership predicate and could rewrite the recipient, phone and address of
+    # ANY order by id. Refuse before the query is built: there is no legitimate
+    # anonymous caller for this tool.
     user_id = get_user_id()
+    if not user_id:
+        logger.warning("🚫 collect_shipping_info refused: no authenticated user in context")
+        return (
+            "ERROR: Cannot save shipping info - the account is not identified. "
+            "Please make sure you are logged in and try again."
+        )
 
     try:
-        # Update order with shipping info, strictly scoped to the active buyer if authenticated
-        query = admin_supabase.table('orders').update({
+        # Update the order, strictly scoped to the buyer who owns it.
+        result = admin_supabase.table('orders').update({
             'recipient_name': recipient_name,
             'phone': phone,
             'address': address,
             'status': 'confirmed'
-        }).eq('id', order_id)
-
-        if user_id:
-            query = query.eq('buyer_id', user_id)
-
-        result = query.execute()
+        }).eq('id', order_id).eq('buyer_id', user_id).execute()
 
         if result.data:
             logger.info("✅ Shipping info saved successfully")

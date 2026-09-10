@@ -54,6 +54,13 @@ def _cancel(item_id="item-1"):
 
 
 def _collect(order_id="order-1", recipient_name="Jane Doe", phone="0123456789", address="123 Main St"):
+    """Every call goes through an authenticated buyer.
+
+    SPEC-056: the tool now refuses outright when there is no user in context, so
+    a helper that left it unset would only ever exercise the refusal. Tests that
+    want the anonymous path call the tool directly.
+    """
+    context.set_context(user_id="buyer-user-456", item_id=None)
     return collect_shipping_info.func(order_id, recipient_name, phone, address)
 
 
@@ -331,11 +338,31 @@ def test_cancel_delete_failure(monkeypatch):
 # collect_shipping_info
 # ---------------------------------------------------------------------------
 
+def _shipping_update_result(fake_supabase, data):
+    """update(...).eq('id', ...).eq('buyer_id', ...).execute() -> data."""
+    (
+        fake_supabase.table.return_value.update.return_value
+        .eq.return_value.eq.return_value.execute.return_value
+    ) = MagicMock(data=data)
+
+
+def test_collect_shipping_fails_closed_without_a_user_in_context(patch_supabase, fake_supabase):
+    """SPEC-056 #2. `if user_id:` made the ownership filter optional, so an
+    unidentified caller updated ANY order by id. The refusal must happen before
+    the query is built, not after it comes back empty."""
+    patch_supabase("connector", admin=fake_supabase)
+    context.set_context(user_id=None, item_id=None)
+
+    result = collect_shipping_info.func("victims-order", "Mallory", "0111111111", "1 Attacker Rd")
+
+    assert result.startswith("ERROR:")
+    assert "not identified" in result
+    fake_supabase.table.assert_not_called()
+
+
 def test_collect_shipping_success(patch_supabase, fake_supabase):
     patch_supabase("connector", admin=fake_supabase)
-    fake_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value = MagicMock(
-        data=[{"id": "order-1"}]
-    )
+    _shipping_update_result(fake_supabase, [{"id": "order-1"}])
 
     result = _collect(order_id="order-1")
 
@@ -356,7 +383,7 @@ def test_collect_shipping_success(patch_supabase, fake_supabase):
 
 def test_collect_shipping_order_not_found(patch_supabase, fake_supabase):
     patch_supabase("connector", admin=fake_supabase)
-    fake_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value = MagicMock(data=[])
+    _shipping_update_result(fake_supabase, [])
 
     result = _collect(order_id="missing-order")
 
@@ -365,8 +392,8 @@ def test_collect_shipping_order_not_found(patch_supabase, fake_supabase):
 
 def test_collect_shipping_exception(patch_supabase, fake_supabase):
     patch_supabase("connector", admin=fake_supabase)
-    fake_supabase.table.return_value.update.return_value.eq.return_value.execute.side_effect = Exception(
-        "db exploded"
+    fake_supabase.table.return_value.update.return_value.eq.return_value.eq.return_value.execute.side_effect = (
+        Exception("db exploded")
     )
 
     result = _collect(order_id="order-1")
@@ -410,9 +437,7 @@ def test_collect_shipping_access_denied_for_other_user_order(patch_supabase, fak
 def test_collect_shipping_masks_pii_in_logs(patch_supabase, fake_supabase, caplog):
     import logging
     patch_supabase("connector", admin=fake_supabase)
-    fake_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value = MagicMock(
-        data=[{"id": "order-1"}]
-    )
+    _shipping_update_result(fake_supabase, [{"id": "order-1"}])
     with caplog.at_level(logging.INFO):
         _collect(order_id="order-1", phone="0123456789", address="123 Jalan Ampang, KL")
 

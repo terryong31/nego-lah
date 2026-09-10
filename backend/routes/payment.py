@@ -161,19 +161,6 @@ def get_transactions(admin: dict = Depends(verify_admin)):
     }
 
 
-@router.post("/refund/{item_id}")
-def refund_item(item_id: str, reason: str = None, admin: dict = Depends(verify_admin)):
-    """Process a refund for an item. Admin only."""
-    from payment.refunds import process_refund
-
-    result = process_refund(item_id, reason)
-
-    if result["success"]:
-        return result
-    else:
-        raise HTTPException(status_code=400, detail=result["error"])
-
-
 @router.get("/orders/user/{user_id}")
 def get_user_orders(user_id: str, token_user_id: str = Depends(verify_user_token)):
     """

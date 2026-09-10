@@ -168,9 +168,12 @@ _DEV_ORIGINS = [
     "http://127.0.0.1:8000",
 ]
 
+# In production, only permit exact canonical domain origins via allow_origins.
+# Preview subdomains (*.nego-lah.pages.dev) are strictly confined to non-production.
 _ORIGIN_REGEX = (
-    r"^https://([a-zA-Z0-9_-]+\.)*nego-lah\.pages\.dev$|"
-    r"^https://([a-zA-Z0-9_-]+\.)*negolah\.my$"
+    None
+    if IS_PROD
+    else r"^https://([a-zA-Z0-9_-]+\.)*nego-lah\.pages\.dev$"
 )
 
 cors_origins_str = os.environ.get("CORS_ORIGINS")

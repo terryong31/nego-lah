@@ -89,11 +89,11 @@ def test_pending_info_order_includes_shipping_hint(fake_supabase, patch_supabase
     assert "ACTION REQUIRED" in result
     assert "shipping details" in result
     assert "Name, Address, and Phone Number" in result
-    # BUG: the hint's trailing "(Use Order ID: {order['id']} for updates)" is
-    # a plain string literal, not an f-string (missing the `f` prefix in
-    # source), so the order id is never actually interpolated -- the literal
-    # text "{order['id']}" is emitted verbatim instead of "ord-1".
-    assert "{order['id']} for updates" in result
+    # This line was a plain string literal missing its `f` prefix, so the model
+    # was handed the characters "{order['id']}" and would repeat them to the
+    # buyer as if they were an order number. Fixed with SPEC-057.
+    assert "(Use Order ID: ord-1 for updates)" in result
+    assert "{order[" not in result
 
 
 def test_confirmed_order_shows_processing_note(fake_supabase, patch_supabase):
@@ -245,3 +245,83 @@ def test_invoke_via_langchain_structured_tool_interface(fake_supabase, patch_sup
     result = check_user_orders.invoke({"query": "where is my stuff"})
 
     assert result == "Records show you haven't purchased any items from our store yet."
+
+
+# ---------------------------------------------------------------------------
+# Shipment tracking (SPEC-057)
+#
+# Deliberately folded into check_user_orders rather than given its own tool.
+# "Where's my stuff?" is the same question this tool already answers, and every
+# extra tool costs its schema in every prompt of every turn (SPEC-058).
+# ---------------------------------------------------------------------------
+
+SHIPPED_WITH_TRACKING = {
+    "id": "ord-ship",
+    "status": "shipped",
+    "item_name": "Casio VX-4",
+    "amount": 180,
+    "created_at": "2026-09-10T00:00:00",
+    "courier": "J&T Express",
+    "tracking_number": "630123456789",
+    "tracking_url": "https://www.jtexpress.my/tracking?billcode=630123456789",
+}
+
+
+def test_a_shipped_order_reports_its_courier_and_tracking_number(fake_supabase, patch_supabase):
+    context.set_context(user_id="user-1")
+    _chain(fake_supabase).execute.return_value = make_supabase_result([SHIPPED_WITH_TRACKING])
+    patch_supabase("agent.tools.orders", admin=fake_supabase)
+
+    result = _invoke()
+
+    assert "J&T Express" in result
+    assert "630123456789" in result
+    assert "https://www.jtexpress.my/tracking?billcode=630123456789" in result
+
+
+def test_a_shipped_order_without_tracking_still_reads_sensibly(fake_supabase, patch_supabase):
+    """Orders shipped before SPEC-057, or by a seller who only set the status."""
+    context.set_context(user_id="user-1")
+    order = {k: v for k, v in SHIPPED_WITH_TRACKING.items()
+             if k not in ("courier", "tracking_number", "tracking_url")}
+    _chain(fake_supabase).execute.return_value = make_supabase_result([order])
+    patch_supabase("agent.tools.orders", admin=fake_supabase)
+
+    result = _invoke()
+
+    assert "Shipped." in result
+    assert "Tracking" not in result
+    assert "None" not in result
+
+
+def test_a_delivered_order_is_reported_as_delivered(fake_supabase, patch_supabase):
+    context.set_context(user_id="user-1")
+    _chain(fake_supabase).execute.return_value = make_supabase_result(
+        [{**SHIPPED_WITH_TRACKING, "status": "delivered"}]
+    )
+    patch_supabase("agent.tools.orders", admin=fake_supabase)
+
+    result = _invoke()
+
+    assert "Status: DELIVERED" in result
+    assert "delivered" in result.lower()
+    assert "630123456789" in result
+
+
+def test_tracking_details_are_only_shown_for_the_orders_that_have_them(fake_supabase, patch_supabase):
+    """Two orders, one tracked: the untracked one must not borrow its number."""
+    context.set_context(user_id="user-1")
+    plain = {
+        "id": "ord-plain",
+        "status": "confirmed",
+        "item_name": "Desk Chair",
+        "amount": 300,
+        "created_at": "2026-09-01T00:00:00",
+    }
+    _chain(fake_supabase).execute.return_value = make_supabase_result([SHIPPED_WITH_TRACKING, plain])
+    patch_supabase("agent.tools.orders", admin=fake_supabase)
+
+    result = _invoke()
+
+    chair_block = result.split("Desk Chair")[1]
+    assert "630123456789" not in chair_block

@@ -22,7 +22,8 @@ RUN --mount=type=cache,target=/root/.bun/install/cache \
 COPY . .
 
 # Sentry source map upload (build-time only, see nuxt.config.ts `sentry` key).
-# org/project aren't secret; the auth token is passed as a BuildKit secret
+# org/project come from the build environment (never committed; public repo);
+# the auth token is passed as a BuildKit secret
 # (not a regular ARG/ENV) so it never ends up in an image layer or build cache.
 ARG SENTRY_ORG
 ARG SENTRY_PROJECT

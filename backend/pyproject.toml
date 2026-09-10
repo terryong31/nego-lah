@@ -63,6 +63,11 @@ omit = [
     ".venv/*",
     "alembic/*",
     "*/__pycache__/*",
+    # SPEC-059. `evals/runner.py` drives the agent against a REAL model — that is
+    # the point of it — so it cannot run in the suite, and counting it as
+    # uncovered would just lower the gate for everything else. Its data
+    # (`evals/scenarios.py`) is covered normally, in tests/test_evals_scenarios.py.
+    "evals/runner.py",
 ]
 
 [tool.coverage.report]
@@ -101,5 +106,5 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["S101", "S105", "S106"]   # asserts + literal test credentials are expected in tests
+"tests/*" = ["S101", "S105", "S106", "S107"]   # asserts + literal test credentials are expected in tests
 "scripts/*" = ["S603", "S607"]          # CLI scripts intentionally shell out / use argv

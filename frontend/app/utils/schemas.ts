@@ -46,11 +46,21 @@ export const profileDetailsSchema = z.object({
 
 export type ProfileDetailsForm = z.infer<typeof profileDetailsSchema>
 
+// SPEC-056 #3: changing the address the account is recovered through costs the
+// password, so a lifted access token can no longer take the account over.
 export const emailChangeSchema = z.object({
-  email: z.string().email()
+  email: z.string().email(),
+  currentPassword: z.string().min(8)
 })
 
 export type EmailChangeForm = z.infer<typeof emailChangeSchema>
+
+// SPEC-056 #7: same reasoning for the one action that cannot be undone.
+export const accountDeleteSchema = z.object({
+  currentPassword: z.string().min(8)
+})
+
+export type AccountDeleteForm = z.infer<typeof accountDeleteSchema>
 
 export const passwordChangeSchema = z.object({
   currentPassword: z.string().min(8),

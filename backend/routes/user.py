@@ -15,21 +15,35 @@ on their own account (token user id must match the path user id).
 """
 
 import asyncio
+import os
 import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 
 from auth_middleware import get_user_id_from_body_or_token, verify_user_token
-from cache import invalidate_token
-from connector import admin_supabase, user_supabase
+from cache import check_rate_limit, invalidate_token
+from connector import admin_supabase, new_user_client
 from core.images import MAX_AVATAR_EDGE, process_upload
 from core.uploads import MAX_AVATAR_IMAGE_BYTES
 from env import STORAGE_BUCKET
+from limiter import ACCOUNT_LIMIT, limiter
 from logger import logger
-from schemas import EmailUpdateSchema, LanguageUpdateSchema, PasswordUpdateSchema
+from schemas import (
+    AccountDeleteSchema,
+    EmailUpdateSchema,
+    LanguageUpdateSchema,
+    PasswordUpdateSchema,
+)
 
 SUPPORTED_LANGUAGES = {"en", "ms", "zh"}
+
+# SPEC-056 #7. Password guessing is an attack on ONE ACCOUNT mounted from
+# wherever the attacker likes, so throttling it per IP is the wrong axis — a
+# botnet sails through, and a conference behind one NAT address gets punished
+# for nobody's mistake. Count the failures against the account instead.
+REAUTH_MAX_ATTEMPTS = int(os.getenv("REAUTH_MAX_ATTEMPTS", "10"))
+REAUTH_WINDOW_SECONDS = int(os.getenv("REAUTH_WINDOW_SECONDS", "900"))
 
 router = APIRouter(prefix="/user", tags=["User"])
 
@@ -52,25 +66,47 @@ def _get_user_email(user_id: str) -> str:
     return result.user.email
 
 
+def _reauthenticate(user_id: str, current_password: str):
+    """Prove the person holding this access token also knows the password.
+
+    A bearer token is a *session*; it can be lifted by XSS or off an unlocked
+    device. That is fine for reading a profile and not fine for the two
+    operations that end an account's life — changing the address it is
+    recovered through, and deleting it (SPEC-056 #3/#7). Both now demand the
+    password as well, the way `change_password` always has.
+
+    Returns the signed-in client so the caller can act as the user; see
+    `new_user_client` for why it must not be the shared singleton.
+    """
+    if not check_rate_limit(
+        f"reauth:{user_id}", max_requests=REAUTH_MAX_ATTEMPTS, window=REAUTH_WINDOW_SECONDS
+    ):
+        raise HTTPException(
+            status_code=429,
+            detail="Too many password attempts. Please wait a few minutes and try again.",
+        )
+
+    email = _get_user_email(user_id)
+    session = new_user_client()
+    try:
+        session.auth.sign_in_with_password({"email": email, "password": current_password})
+    except Exception:
+        raise HTTPException(status_code=401, detail="Current password is incorrect") from None
+    return session
+
+
 @router.put("/{user_id}/password")
+@limiter.limit(ACCOUNT_LIMIT)
 def change_password(
     user_id: str,
     payload: PasswordUpdateSchema,
+    request: Request,
     token_user_id: str = Depends(verify_user_token)
 ):
     """Change the authenticated user's password (verifies the current password first)."""
     get_user_id_from_body_or_token(user_id, token_user_id)
 
-    email = _get_user_email(user_id)
-
-    # Verify the current password by attempting a sign-in with the anon client
-    try:
-        user_supabase.auth.sign_in_with_password({
-            "email": email,
-            "password": payload.current_password
-        })
-    except Exception:
-        raise HTTPException(status_code=401, detail="Current password is incorrect") from None
+    _reauthenticate(user_id, payload.current_password)
 
     try:
         admin_supabase.auth.admin.update_user_by_id(
@@ -84,29 +120,49 @@ def change_password(
 
 
 @router.put("/{user_id}/email")
+@limiter.limit(ACCOUNT_LIMIT)
 def change_email(
     user_id: str,
     payload: EmailUpdateSchema,
+    request: Request,
     token_user_id: str = Depends(verify_user_token)
 ):
-    """Change the authenticated user's email address."""
+    """Request a change of the authenticated user's email address.
+
+    SPEC-056 #3. This used to hand `{"email": ..., "email_confirm": True}` to the
+    admin API with no password check: the new address was marked verified on the
+    spot, and neither the old nor the new inbox heard about it. A stolen access
+    token was therefore a permanent account takeover — the attacker owns the
+    address that password resets go to, and the real owner has no notification
+    and no way back.
+
+    Now it costs the password, and the update runs on the user's OWN session, so
+    Supabase treats it as a change request and mails the confirmation link. The
+    address does not move until someone clicks it.
+    """
     get_user_id_from_body_or_token(user_id, token_user_id)
 
+    session = _reauthenticate(user_id, payload.current_password)
+
     try:
-        admin_supabase.auth.admin.update_user_by_id(
-            user_id, {"email": payload.new_email, "email_confirm": True}
-        )
+        session.auth.update_user({"email": payload.new_email})
     except Exception as e:
         logger.error(f"Error changing email for {user_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to change email") from e
 
-    return {"message": "Email changed successfully", "email": payload.new_email}
+    return {
+        "message": "Confirmation email sent",
+        "email": payload.new_email,
+        "confirmation_required": True,
+    }
 
 
 @router.put("/{user_id}/language")
+@limiter.limit(ACCOUNT_LIMIT)
 def update_language(
     user_id: str,
     payload: LanguageUpdateSchema,
+    request: Request,
     token_user_id: str = Depends(verify_user_token)
 ):
     """
@@ -140,8 +196,10 @@ def update_language(
 
 
 @router.put("/{user_id}/profile")
+@limiter.limit(ACCOUNT_LIMIT)
 async def update_profile(
     user_id: str,
+    request: Request,
     token_user_id: str = Depends(verify_user_token),
     display_name: Annotated[str | None, Form()] = None,
     avatar: Annotated[UploadFile | None, File()] = None,
@@ -225,8 +283,10 @@ async def update_profile(
 
 
 @router.delete("/{user_id}")
+@limiter.limit(ACCOUNT_LIMIT)
 def delete_account(
     user_id: str,
+    payload: AccountDeleteSchema,
     request: Request,
     token_user_id: str = Depends(verify_user_token)
 ):
@@ -236,8 +296,13 @@ def delete_account(
     Removes app-side data (profile, chat settings, conversations) and the
     Supabase auth user. Orders/transactions are intentionally retained as
     business records.
+
+    SPEC-056 #7: costs the password too. This is irreversible and takes the
+    transcript with it, so a lifted access token must not be enough on its own.
     """
     get_user_id_from_body_or_token(user_id, token_user_id)
+
+    _reauthenticate(user_id, payload.current_password)
 
     # Best-effort cleanup of app data (don't abort the delete if a table is empty)
     for table, column in [

@@ -32,7 +32,7 @@ Without unified distributed tracing, backend exceptions cannot be correlated to 
    - In `frontend/app/composables/useApi.ts`, any HTTP response with status `>= 500` automatically triggers `Sentry.captureMessage` / `Sentry.captureException` with request metadata, guaranteeing that backend failures trigger replay capture.
 
 4. **Sentry CLI Tooling:**
-   - Configured persistent Sentry CLI defaults pointing to organization `nego-lah` and project `nego-lah-frontend`.
+   - Sentry CLI org/project are supplied from the environment (Infisical), never checked into this public repo.
    - Validated live replays via `sentry-cli` and Sentry REST metrics API.
 
 ## Consequences

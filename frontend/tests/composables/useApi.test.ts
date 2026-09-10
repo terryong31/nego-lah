@@ -105,14 +105,44 @@ describe('composables/useApi', () => {
     expect(options.body).toEqual({ foo: 'bar' })
   })
 
+  it('does not forward the reauth flag to $fetch', async () => {
+    const { call } = useApi()
+    await call('/user/u1/email', { method: 'PUT', reauth: true, body: { a: 1 } })
+
+    const [, options] = fetchMock.mock.calls[0]
+    expect(options.method).toBe('PUT')
+    expect(options).not.toHaveProperty('reauth')
+  })
+
   describe('onResponseError', () => {
-    async function getErrorHandler() {
+    async function getErrorHandler(opts?: Record<string, unknown>) {
       const { call } = useApi()
-      await call('/orders')
+      await call('/orders', opts)
       const [, options] = fetchMock.mock.calls[0]
       expect(options.onResponseError).toBeTypeOf('function')
       return options.onResponseError as (ctx: { response: { status: number, _data?: unknown } }) => Promise<void>
     }
+
+    // SPEC-056 #3/#7. Re-authentication endpoints answer 401 for "that password
+    // is wrong", which says nothing about the bearer token that carried the
+    // request. Signing the user out on it would mean mistyping your password on
+    // the profile page logs you out of a session that was never in doubt.
+    it('keeps the session when a re-auth call reports a wrong password', async () => {
+      const onResponseError = await getErrorHandler({ reauth: true })
+
+      await onResponseError({ response: { status: 401, _data: { detail: 'Current password is incorrect' } } })
+
+      expect(signOutMock).not.toHaveBeenCalled()
+      expect(navigateToMock).not.toHaveBeenCalled()
+    })
+
+    it('still signs out a banned account even on a re-auth call', async () => {
+      const onResponseError = await getErrorHandler({ reauth: true })
+
+      await onResponseError({ response: { status: 403, _data: { detail: 'Account banned' } } })
+
+      expect(signOutMock).toHaveBeenCalledTimes(1)
+    })
 
     it('signs out and redirects to /login on a 401', async () => {
       const onResponseError = await getErrorHandler()

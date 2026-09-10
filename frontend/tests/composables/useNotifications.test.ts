@@ -7,6 +7,10 @@ import { useNotifications } from '../../app/composables/useNotifications'
 const userRef = ref<Record<string, unknown> | null>(null)
 const toastAddMock = vi.fn()
 
+// SPEC-056 #6: the stream is authorised by a short-lived ticket minted over a
+// header-authenticated POST, never by the access token in the URL.
+const fetchMock = vi.fn()
+
 mockNuxtImport('useSupabaseUser', () => () => userRef)
 mockNuxtImport('useToast', () => () => ({ add: toastAddMock }))
 mockNuxtImport('useSupabaseClient', () => () => ({
@@ -52,6 +56,13 @@ function installFakeEventSource() {
   ;(window as unknown as Record<string, unknown>).EventSource = FakeEventSource
 }
 
+// $fetch is a genuine global (ofetch/Nitro), not a Nuxt auto-import, so stub the
+// global directly — same approach as tests/composables/useApi.test.ts.
+function installFetchStub() {
+  fetchMock.mockReset().mockResolvedValue({ ticket: 'ticket-abc', expires_in: 30 })
+  ;(globalThis as unknown as Record<string, unknown>).$fetch = fetchMock
+}
+
 const Host = defineComponent({
   setup() {
     return useNotifications()
@@ -65,6 +76,7 @@ describe('composables/useNotifications', () => {
     toastAddMock.mockClear()
     streams.length = 0
     installFakeEventSource()
+    installFetchStub()
   })
 
   afterEach(() => {
@@ -107,6 +119,35 @@ describe('composables/useNotifications', () => {
       expect(toastAddMock).toHaveBeenCalledTimes(1)
 
       first.vm.disconnect()
+    })
+
+    it('mints a ticket over an authenticated POST and puts only that in the URL', async () => {
+      const wrapper = await mountSuspended(Host)
+      await wrapper.vm.connect()
+      await flushPromises()
+
+      const [url, options] = fetchMock.mock.calls[0]!
+      expect(url).toContain('/chat/notifications/ticket')
+      expect(options.method).toBe('POST')
+      expect(options.headers.Authorization).toBe('Bearer jwt-token')
+
+      expect(streams[0]!.url).toContain('ticket=ticket-abc')
+      // The access token is what a URL must never carry: query strings land in
+      // proxy logs, browser history and the next request's Referer.
+      expect(streams[0]!.url).not.toContain('jwt-token')
+      expect(streams[0]!.url).not.toContain('token=jwt')
+
+      wrapper.vm.disconnect()
+    })
+
+    it('opens no stream at all when the ticket cannot be minted', async () => {
+      fetchMock.mockRejectedValueOnce(new Error('401'))
+      const wrapper = await mountSuspended(Host)
+
+      await wrapper.vm.connect()
+      await flushPromises()
+
+      expect(streams).toHaveLength(0)
     })
 
     it('reopens after the stream is explicitly disconnected', async () => {

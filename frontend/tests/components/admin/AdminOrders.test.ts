@@ -23,6 +23,11 @@ interface Order {
   phone?: string
   notes?: string
   created_at: string
+  courier?: string | null
+  tracking_number?: string | null
+  tracking_url?: string | null
+  shipped_at?: string | null
+  delivered_at?: string | null
 }
 
 function makeOrder(overrides: Partial<Order> = {}): Order {
@@ -63,6 +68,8 @@ interface VmAny {
   remove: (o: Order) => Promise<void>
   formatDate: (d: string) => string
   hasShippingInfo: (o: Order) => string | undefined
+  shipmentDraft: (o: Order) => { courier: string, trackingNumber: string, trackingUrl: string, notify: boolean }
+  recordShipment: (o: Order) => Promise<void>
 }
 
 describe('components/admin/AdminOrders.vue', () => {
@@ -424,5 +431,188 @@ describe('components/admin/AdminOrders.vue', () => {
       expect(callMock).toHaveBeenCalledTimes(1)
       expect(toastAddMock).not.toHaveBeenCalled()
     })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Postage (SPEC-057)
+//
+// One submit records the tracking AND tells the buyer. The tests below are
+// mostly about the seller's feedback loop: a shipment that saved but whose
+// notification failed must NOT read as a clean success, or nobody chases it and
+// the buyer is left staring at "confirmed" while the parcel is in transit.
+// ---------------------------------------------------------------------------
+
+describe('recording postage', () => {
+  const shipped = (over: Partial<Order> = {}) => ({
+    id: 'o1',
+    courier: 'J&T Express',
+    tracking_number: '630123456789',
+    tracking_url: 'https://www.jtexpress.my/tracking?billcode=630123456789',
+    shipped_at: '2026-09-10T00:00:00Z',
+    ...over
+  })
+
+  // Routed by path rather than by a mockResolvedValueOnce queue: the initial
+  // `useAsyncData('admin-orders')` fetch is not guaranteed to consume exactly
+  // one queued value, and a single skipped fetch shifts every later response
+  // onto the wrong call.
+  let shipmentReply: unknown
+
+  function routeCalls(orders: Order[]) {
+    callMock.mockImplementation((path: string) => {
+      if (path === '/orders') return Promise.resolve(makeResponse(orders))
+      if (path.endsWith('/shipment')) {
+        return shipmentReply instanceof Error
+          ? Promise.reject(shipmentReply)
+          : Promise.resolve(shipmentReply)
+      }
+      return Promise.resolve({})
+    })
+  }
+
+  async function mountWith(...orders: Order[]) {
+    routeCalls(orders.length ? orders : [makeOrder()])
+    const wrapper = await mountSuspended(AdminOrders)
+    await flushPromises()
+    return wrapper
+  }
+
+  it('PUTs courier, tracking number and the notify flag', async () => {
+    const wrapper = await mountWith()
+    const vm = wrapper.vm as VmAny
+    const order = vm.orders[0]!
+
+    const draft = vm.shipmentDraft(order)
+    draft.courier = 'J&T Express'
+    draft.trackingNumber = '630123456789'
+
+    shipmentReply = { order: shipped(), notified: { email: true, chat: true } }
+    await vm.recordShipment(order)
+
+    expect(callMock).toHaveBeenLastCalledWith('/orders/o1/shipment', {
+      method: 'PUT',
+      body: {
+        courier: 'J&T Express',
+        tracking_number: '630123456789',
+        tracking_url: undefined,
+        notify: true
+      }
+    })
+  })
+
+  it('will not submit without both a courier and a tracking number', async () => {
+    const wrapper = await mountWith()
+    const vm = wrapper.vm as VmAny
+    const order = vm.orders[0]!
+    callMock.mockClear()
+    callMock.mockResolvedValue({})
+
+    vm.shipmentDraft(order).courier = 'J&T Express'
+    vm.shipmentDraft(order).trackingNumber = '   '
+    await vm.recordShipment(order)
+
+    expect(callMock).not.toHaveBeenCalled()
+    expect(toastAddMock).toHaveBeenCalledWith(
+      expect.objectContaining({ color: 'warning' })
+    )
+  })
+
+  it('reflects the shipment on the row without a refetch', async () => {
+    const wrapper = await mountWith()
+    const vm = wrapper.vm as VmAny
+    const order = vm.orders[0]!
+    vm.shipmentDraft(order).courier = 'J&T Express'
+    vm.shipmentDraft(order).trackingNumber = '630123456789'
+
+    shipmentReply = { order: shipped(), notified: { email: true, chat: true } }
+    await vm.recordShipment(order)
+
+    expect(order.status).toBe('shipped')
+    expect(order.tracking_number).toBe('630123456789')
+    expect(order.tracking_url).toContain('jtexpress')
+  })
+
+  it('warns rather than congratulates when the buyer could not be notified', async () => {
+    const wrapper = await mountWith()
+    const vm = wrapper.vm as VmAny
+    const order = vm.orders[0]!
+    vm.shipmentDraft(order).courier = 'J&T Express'
+    vm.shipmentDraft(order).trackingNumber = '630123456789'
+
+    shipmentReply = { order: shipped(), notified: { email: false, chat: false } }
+    await vm.recordShipment(order)
+
+    expect(toastAddMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        color: 'warning',
+        description: 'Shipment saved, but the buyer could not be notified.'
+      })
+    )
+  })
+
+  it('does not warn about a notification the seller opted out of', async () => {
+    const wrapper = await mountWith()
+    const vm = wrapper.vm as VmAny
+    const order = vm.orders[0]!
+    vm.shipmentDraft(order).courier = 'J&T Express'
+    vm.shipmentDraft(order).trackingNumber = '630123456789'
+    vm.shipmentDraft(order).notify = false
+
+    shipmentReply = { order: shipped(), notified: { email: false, chat: false } }
+    await vm.recordShipment(order)
+
+    expect(toastAddMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        color: 'success',
+        description: 'Saved without notifying the buyer.'
+      })
+    )
+  })
+
+  it('surfaces the backend reason when the write itself fails', async () => {
+    const wrapper = await mountWith()
+    const vm = wrapper.vm as VmAny
+    const order = vm.orders[0]!
+    vm.shipmentDraft(order).courier = 'J&T Express'
+    vm.shipmentDraft(order).trackingNumber = '630123456789'
+
+    // Snapshot rather than assert literals: `mountSuspended` reuses this
+    // file's component tree, so the row may carry values an earlier test set.
+    // The property under test is that a FAILED write changes nothing.
+    const before = JSON.stringify(order)
+    shipmentReply = Object.assign(new Error('failed'), { data: { detail: 'Order not found' } })
+    await vm.recordShipment(order)
+
+    expect(toastAddMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ color: 'error', description: 'Order not found' })
+    )
+    expect(JSON.stringify(order)).toBe(before)
+  })
+
+  it('seeds the draft from an already-shipped order', async () => {
+    const wrapper = await mountWith(makeOrder(shipped({ status: 'shipped' }) as Partial<Order>))
+    const vm = wrapper.vm as VmAny
+
+    const draft = vm.shipmentDraft(vm.orders[0]!)
+    expect(draft.courier).toBe('J&T Express')
+    expect(draft.trackingNumber).toBe('630123456789')
+  })
+
+  it('keeps a separate draft per order', async () => {
+    // Drafts are keyed by order id so that expanding two rows and typing in
+    // both cannot let one overwrite the other on submit. Exercised against the
+    // orders directly: `mountSuspended` reuses this file's component tree, so
+    // `vm.orders` is not a reliable way to get two fresh rows.
+    const wrapper = await mountWith()
+    const vm = wrapper.vm as VmAny
+    const first = makeOrder({ id: 'draft-a' })
+    const second = makeOrder({ id: 'draft-b', item_name: 'Other' })
+
+    vm.shipmentDraft(first).trackingNumber = 'AAA'
+    vm.shipmentDraft(second).trackingNumber = 'BBB'
+
+    expect(vm.shipmentDraft(first).trackingNumber).toBe('AAA')
+    expect(vm.shipmentDraft(second).trackingNumber).toBe('BBB')
   })
 })

@@ -4,12 +4,36 @@ from connector import admin_supabase
 from logger import logger
 
 
+def _tracking_lines(order: dict) -> str:
+    """Courier and tracking details for an order that has shipped (SPEC-057).
+
+    Returns "" when there is nothing to say — orders shipped before tracking
+    existed, or by a seller who only moved the status. Saying nothing is right:
+    the model will happily read out "Courier: None" if handed one.
+    """
+    from services.shipping_notice import shipment_summary
+
+    facts = shipment_summary(order)
+    lines = []
+    if facts["courier"]:
+        lines.append(f"  Courier: {facts['courier']}")
+    if facts["tracking_number"]:
+        lines.append(f"  Tracking number: {facts['tracking_number']}")
+    if facts["tracking_url"]:
+        lines.append(f"  Track at: {facts['tracking_url']}")
+    return ("\n" + "\n".join(lines)) if lines else ""
+
+
 @tool
 def check_user_orders(query: str = "") -> str:
     """
-    Check the specific items the current user has purchased/ordered.
-    Use this when the user asks "what did I buy?", "where is my stuff?", "did my order go through?", or discusses past purchases.
-    Also use this to see if a user has a 'pending_info' order that needs shipping details.
+    Check the specific items the current user has purchased/ordered, including
+    delivery status and courier tracking for anything that has shipped.
+
+    Use this when the user asks "what did I buy?", "where is my stuff?", "has it
+    shipped?", "what's my tracking number?", "did my order go through?", or
+    discusses past purchases. Also use this to see if a user has a 'pending_info'
+    order that needs shipping details.
 
     Args:
         query: Optional specific question or filter.
@@ -40,11 +64,16 @@ def check_user_orders(query: str = "") -> str:
             line = f"- [Date: {date_str}] {item_name} (RM {amount}) | Status: {status.upper()} | Order ID: {order['id']}"
 
             if status == 'pending_info':
-                line += "\n  ⚠️ ACTION REQUIRED: We need your shipping details for this order! Please provide: Name, Address, and Phone Number. (Use Order ID: {order['id']} for updates)"
+                line += (
+                    "\n  ⚠️ ACTION REQUIRED: We need your shipping details for this order! "
+                    "Please provide: Name, Address, and Phone Number. "
+                    f"(Use Order ID: {order['id']} for updates)"
+                )
             elif status == 'confirmed':
                 line += "\n  ✅ Info received. We are processing it."
-            elif status == 'shipped':
-                line += "\n  🚚 Shipped."
+            elif status in ('shipped', 'delivered'):
+                line += "\n  📦 Delivered." if status == 'delivered' else "\n  🚚 Shipped."
+                line += _tracking_lines(order)
 
             result_lines.append(line)
 

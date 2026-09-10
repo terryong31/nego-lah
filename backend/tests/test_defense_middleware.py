@@ -196,3 +196,82 @@ def test_admin_items_upload_gets_larger_default_limit():
         content=b"x" * 100,
     )
     assert res.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Streaming body cap (SPEC-056 #5)
+#
+# The size guard only ever read `Content-Length`. Two requests walk straight
+# past a header check: one that omits the header (`Transfer-Encoding: chunked`),
+# and one that lies in it. Either way the endpoint's own `await request.body()`
+# then buffers the whole thing into RAM — on a 1.2 GB Lightsail box that is the
+# entire attack. So the bytes coming off the wire are counted as they arrive,
+# and the request dies at the ceiling instead of at the header.
+# ---------------------------------------------------------------------------
+
+def _chunks(total_bytes: int, chunk: int = 64 * 1024):
+    """A body httpx will send with Transfer-Encoding: chunked (no Content-Length)."""
+    sent = 0
+    while sent < total_bytes:
+        n = min(chunk, total_bytes - sent)
+        sent += n
+        yield b"x" * n
+
+
+def test_chunked_body_over_the_limit_is_rejected(defense_test_app):
+    client = TestClient(defense_test_app)
+
+    res = client.post("/items", content=_chunks(2 * 1024 * 1024))  # 2 MB > 1 MB
+
+    assert res.status_code == 413
+    assert "Payload too large" in res.json()["detail"]
+
+
+def test_chunked_body_under_the_limit_still_arrives_intact(defense_test_app):
+    """The cap must not corrupt or truncate a legitimate streamed upload."""
+    client = TestClient(defense_test_app)
+
+    res = client.post("/items", content=_chunks(300 * 1024))
+
+    assert res.status_code == 200
+    assert res.json()["received"] == 300 * 1024
+
+
+def test_a_lying_content_length_does_not_buy_extra_bytes(defense_test_app):
+    """Declaring 10 bytes and sending 2 MB has to fail on what was actually sent."""
+    client = TestClient(defense_test_app)
+
+    res = client.post(
+        "/items",
+        headers={"Content-Length": "10"},
+        content=_chunks(2 * 1024 * 1024),
+    )
+
+    assert res.status_code == 413
+
+
+def test_the_endpoint_never_runs_for_an_oversized_chunked_body(defense_test_app):
+    """Rejecting after the handler has already buffered the payload would defeat
+    the point — the memory is spent by then."""
+    seen = []
+
+    @defense_test_app.post("/watched")
+    async def watched(request: Request):
+        seen.append(len(await request.body()))
+        return {"ok": True}
+
+    client = TestClient(defense_test_app)
+    res = client.post("/watched", content=_chunks(2 * 1024 * 1024))
+
+    assert res.status_code == 413
+    assert seen == []
+
+
+def test_upload_paths_get_their_larger_ceiling_when_chunked_too(defense_test_app):
+    client = TestClient(defense_test_app)
+
+    ok = client.post("/admin/analyze-image", content=_chunks(int(1.5 * 1024 * 1024)))
+    assert ok.status_code == 200
+
+    too_big = client.post("/admin/analyze-image", content=_chunks(3 * 1024 * 1024))
+    assert too_big.status_code == 413

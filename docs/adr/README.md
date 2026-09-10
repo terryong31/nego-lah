@@ -24,3 +24,6 @@ changes an earlier one, add a new ADR and mark the old one's status.
 | [0015](0015-cors-origin-and-agent-tool-authorization-hardening.md) | CORS Origin and Agent Tool Authorization Hardening | Accepted |
 | [0016](0016-buffered-notification-digests.md) | Buffered Notification Digests over Per-Message Email | Accepted |
 | [0017](0017-server-side-image-normalization.md) | Server-Side Image Normalization (HEIF Ingest and Auto-Compression) | Accepted |
+| [0018](0018-pre-launch-security-remediation.md) | Pre-Launch Security Remediation — Trust Boundaries an Audit Found Open | Accepted |
+| [0019](0019-seller-reported-shipment-tracking.md) | Seller-Reported Shipment Tracking | Accepted |
+| [0020](0020-item-knowledge-card-over-per-turn-vision.md) | An Item Knowledge Card Instead of Re-Sending the Photos Every Turn | Accepted |

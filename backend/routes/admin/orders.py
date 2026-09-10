@@ -1,13 +1,58 @@
-"""Admin order lifecycle: listing, status transitions, edits, deletion, and the
-Stripe cleanup job that expires abandoned payment links."""
+"""Admin order lifecycle: listing, status transitions, postage, edits, deletion,
+and the Stripe cleanup job that expires abandoned payment links."""
+
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 
 from admin_session import verify_admin, write_audit
 from logger import logger
-from schemas import OrderStatusUpdate, OrderUpdate
+from schemas import OrderStatusUpdate, OrderUpdate, ShipmentUpdate
 
 router = APIRouter()
+
+VALID_ORDER_STATUSES = [
+    'pending_info', 'confirmed', 'shipped', 'delivered', 'cancelled', 'refunded'
+]
+
+
+def _notify_buyer_of_shipment(order: dict, delivered: bool = False) -> dict:
+    """Tell the buyer their parcel moved — by email, and in the chat (SPEC-057).
+
+    Called AFTER the order row is written, and every step is individually
+    best-effort. The ordering is the point: an order that shipped but whose
+    email bounced is a recoverable annoyance, whereas an email announcing a
+    shipment that was never recorded is a lie the seller cannot retract.
+    """
+    from payment.buyer import account_email
+    from services.shipping_notice import shipment_chat_message
+
+    result = {"email": False, "chat": False}
+    buyer_id = order.get("buyer_id")
+
+    try:
+        from services.email_service import send_shipment_notice
+        result["email"] = bool(send_shipment_notice(account_email(buyer_id), order, delivered=delivered))
+    except Exception as e:
+        logger.error(f"Shipment email failed for order {order.get('id')}: {e}")
+
+    try:
+        from payment.fulfillment import broadcast_to_chat
+
+        # source="ai" so it lands in the buyer's chat as the seller's own voice
+        # AND rings the notification bell — broadcast_to_chat deliberately skips
+        # the SSE hop for "human"/"system" messages.
+        broadcast_to_chat(
+            buyer_id,
+            shipment_chat_message(order, delivered=delivered),
+            role="assistant",
+            source="ai",
+        )
+        result["chat"] = True
+    except Exception as e:
+        logger.error(f"Shipment chat broadcast failed for order {order.get('id')}: {e}")
+
+    return result
 
 
 @router.post("/cleanup-stripe")
@@ -93,21 +138,85 @@ def get_order(order_id: str):
 
 @router.put("/orders/{order_id}/status")
 def update_order_status(order_id: str, request: OrderStatusUpdate, admin: dict = Depends(verify_admin)):
-    """Update order status."""
+    """Update order status. Reaching 'delivered' also tells the buyer (SPEC-057)."""
     from connector import admin_supabase
 
-    valid_statuses = ['pending_info', 'confirmed', 'shipped', 'delivered', 'cancelled', 'refunded']
-    if request.status not in valid_statuses:
-        raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {valid_statuses}")
+    if request.status not in VALID_ORDER_STATUSES:
+        raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {VALID_ORDER_STATUSES}")
 
-    result = admin_supabase.table('orders').update({
-        'status': request.status
-    }).eq('id', order_id).execute()
+    existing = admin_supabase.table('orders').select('*').eq('id', order_id).execute()
+    current = existing.data[0] if existing.data else None
 
-    if result.data:
-        write_audit(admin.get("user_id"), admin.get("email"), f"order.status:{request.status}", order_id, admin.get("ip"))
-        return {"message": f"Order status updated to {request.status}"}
-    raise HTTPException(status_code=404, detail="Order not found")
+    update_data = {'status': request.status}
+
+    # Only a *transition* into delivered is an event worth an email. Re-saving a
+    # row that is already delivered — which the console does whenever the seller
+    # re-picks the same value — must not send a second one.
+    newly_delivered = request.status == 'delivered' and (current or {}).get('status') != 'delivered'
+    if newly_delivered:
+        update_data['delivered_at'] = datetime.now(UTC).isoformat()
+
+    result = admin_supabase.table('orders').update(update_data).eq('id', order_id).execute()
+
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    write_audit(admin.get("user_id"), admin.get("email"), f"order.status:{request.status}", order_id, admin.get("ip"))
+
+    if newly_delivered:
+        _notify_buyer_of_shipment({**(current or {}), **result.data[0]}, delivered=True)
+
+    return {"message": f"Order status updated to {request.status}"}
+
+
+@router.put("/orders/{order_id}/shipment")
+def record_shipment(order_id: str, request: ShipmentUpdate, admin: dict = Depends(verify_admin)):
+    """Record postage for a paid order and tell the buyer about it.
+
+    SPEC-057. Before this the lifecycle simply stopped: `status` could be set to
+    'shipped' but there was nowhere to put what it shipped WITH, so the seller
+    pasted tracking numbers into the chat by hand and the agent could only
+    repeat the word "shipped" when asked.
+
+    One call does all four things — record, stamp, email, post to the chat —
+    because a seller who has to remember the other three will eventually not.
+    """
+    from connector import admin_supabase
+    from domains.catalog.shipping import normalise_courier, resolve_tracking_url
+
+    courier = normalise_courier(request.courier)
+    tracking_number = (request.tracking_number or "").strip()
+    if not courier or not tracking_number:
+        raise HTTPException(status_code=400, detail="Courier and tracking number are both required")
+
+    existing = admin_supabase.table('orders').select('*').eq('id', order_id).execute()
+    if not existing.data:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    update_data = {
+        'courier': courier,
+        'tracking_number': tracking_number,
+        # An explicit URL wins: the seller may be using a carrier the registry
+        # doesn't know, or a consignment link that isn't the generic search page.
+        'tracking_url': (request.tracking_url or "").strip() or resolve_tracking_url(courier, tracking_number),
+        'shipped_at': datetime.now(UTC).isoformat(),
+        'status': 'shipped',
+    }
+
+    result = admin_supabase.table('orders').update(update_data).eq('id', order_id).execute()
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    order = {**existing.data[0], **update_data, **(result.data[0] or {})}
+    write_audit(admin.get("user_id"), admin.get("email"), "order.shipment", order_id, admin.get("ip"))
+
+    notified = (
+        _notify_buyer_of_shipment(order)
+        if request.notify
+        else {"email": False, "chat": False}
+    )
+
+    return {"message": "Shipment recorded", "order": order, "notified": notified}
 
 
 @router.put("/orders/{order_id}")
@@ -122,9 +231,8 @@ def update_order(order_id: str, request: OrderUpdate, admin: dict = Depends(veri
     if request.amount is not None:
         update_data['amount'] = request.amount
     if request.status is not None:
-        valid_statuses = ['pending_info', 'confirmed', 'shipped', 'delivered', 'cancelled', 'refunded']
-        if request.status not in valid_statuses:
-            raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {valid_statuses}")
+        if request.status not in VALID_ORDER_STATUSES:
+            raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {VALID_ORDER_STATUSES}")
         update_data['status'] = request.status
 
     # Handle address - support both frontend 'address' and backend 'shipping_address'
@@ -154,6 +262,28 @@ def update_order(order_id: str, request: OrderUpdate, admin: dict = Depends(veri
         write_audit(admin.get("user_id"), admin.get("email"), "order.update", order_id, admin.get("ip"))
         return {"message": "Order updated successfully", "order": result.data[0]}
     raise HTTPException(status_code=404, detail="Order not found")
+
+
+@router.post("/orders/refund/{item_id}")
+def refund_item(item_id: str, reason: str = None, admin: dict = Depends(verify_admin)):
+    """Refund a paid item, releasing it back to the catalogue.
+
+    SPEC-056 #1. This used to be `POST /payment/refund/{item_id}` on the public
+    payment router with `Depends(verify_admin)` and nothing more. Admin auth is
+    a cookie the browser attaches by itself, which is exactly the shape CSRF
+    exploits — every other mutating admin action is gated by `verify_csrf_token`
+    via the `protected` router in `routes/admin/__init__.py`, and the one that
+    moves money was the exception. Living here, it inherits that gate.
+    """
+    from payment.refunds import process_refund
+
+    result = process_refund(item_id, reason)
+
+    if not result["success"]:
+        raise HTTPException(status_code=400, detail=result["error"])
+
+    write_audit(admin.get("user_id"), admin.get("email"), "order.refund", item_id, admin.get("ip"))
+    return result
 
 
 @router.delete("/orders/{order_id}")

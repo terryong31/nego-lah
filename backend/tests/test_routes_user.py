@@ -9,6 +9,8 @@ per conftest.py's guidance. `Depends(verify_user_token)` is bypassed with the
 
 from unittest.mock import MagicMock
 
+import pytest
+
 from conftest import PNG_BYTES
 from core.uploads import MAX_AVATAR_IMAGE_BYTES
 
@@ -40,12 +42,36 @@ def _user_by_id_result(email="user@example.com"):
     return result
 
 
-async def test_change_password_success(client, auth_user, patch_supabase):
+@pytest.fixture
+def session_client(monkeypatch):
+    """Stand in for the per-request anon client `routes.user` builds to re-auth.
+
+    SPEC-056 #3/#7: password verification (and, for an email change, the update
+    that follows it) runs on a client created for that one request, never on the
+    shared `user_supabase` singleton. Returns the mock so a test can make the
+    sign-in fail or assert what was called on it.
+    """
+    client = MagicMock()
+
+    def _apply():
+        monkeypatch.setattr("routes.user.new_user_client", lambda: client)
+        return client
+
+    return _apply
+
+
+async def _delete_account(client, user_id="user-1", password="oldpass123", **kwargs):
+    """DELETE carries a body here — the re-auth password (SPEC-056 #7)."""
+    body = {} if password is None else {"current_password": password}
+    return await client.request("DELETE", f"/user/{user_id}", json=body, **kwargs)
+
+
+async def test_change_password_success(client, auth_user, patch_supabase, session_client):
     auth_user("user-1")
     fake_admin = MagicMock()
-    fake_user = MagicMock()
     fake_admin.auth.admin.get_user_by_id.return_value = _user_by_id_result("user@example.com")
-    patch_supabase("routes.user", admin=fake_admin, user=fake_user)
+    patch_supabase("routes.user", admin=fake_admin, user=MagicMock())
+    session = session_client()
 
     resp = await client.put(
         "/user/user-1/password",
@@ -54,7 +80,7 @@ async def test_change_password_success(client, auth_user, patch_supabase):
 
     assert resp.status_code == 200
     assert resp.json() == {"message": "Password changed successfully"}
-    fake_user.auth.sign_in_with_password.assert_called_once_with(
+    session.auth.sign_in_with_password.assert_called_once_with(
         {"email": "user@example.com", "password": "oldpass123"}
     )
     fake_admin.auth.admin.update_user_by_id.assert_called_once_with(
@@ -88,13 +114,12 @@ async def test_change_password_user_not_found(client, auth_user, patch_supabase)
     assert resp.json()["detail"] == "User not found"
 
 
-async def test_change_password_wrong_current_password(client, auth_user, patch_supabase):
+async def test_change_password_wrong_current_password(client, auth_user, patch_supabase, session_client):
     auth_user("user-1")
     fake_admin = MagicMock()
-    fake_user = MagicMock()
     fake_admin.auth.admin.get_user_by_id.return_value = _user_by_id_result("user@example.com")
-    fake_user.auth.sign_in_with_password.side_effect = Exception("invalid credentials")
-    patch_supabase("routes.user", admin=fake_admin, user=fake_user)
+    patch_supabase("routes.user", admin=fake_admin, user=MagicMock())
+    session_client().auth.sign_in_with_password.side_effect = Exception("invalid credentials")
 
     resp = await client.put(
         "/user/user-1/password",
@@ -106,13 +131,13 @@ async def test_change_password_wrong_current_password(client, auth_user, patch_s
     fake_admin.auth.admin.update_user_by_id.assert_not_called()
 
 
-async def test_change_password_update_fails(client, auth_user, patch_supabase):
+async def test_change_password_update_fails(client, auth_user, patch_supabase, session_client):
     auth_user("user-1")
     fake_admin = MagicMock()
-    fake_user = MagicMock()
     fake_admin.auth.admin.get_user_by_id.return_value = _user_by_id_result("user@example.com")
     fake_admin.auth.admin.update_user_by_id.side_effect = Exception("db down")
-    patch_supabase("routes.user", admin=fake_admin, user=fake_user)
+    patch_supabase("routes.user", admin=fake_admin, user=MagicMock())
+    session_client()
 
     resp = await client.put(
         "/user/user-1/password",
@@ -139,34 +164,97 @@ async def test_change_password_validation_error(client, auth_user, patch_supabas
 # PUT /user/{id}/email
 # ---------------------------------------------------------------------------
 
-async def test_change_email_success(client, auth_user, patch_supabase):
+async def test_change_email_requires_the_current_password(client, auth_user, patch_supabase):
+    """SPEC-056 #3. Identity is the one field a stolen access token must not be
+    able to rewrite on its own — rewriting it locks the real owner out for good."""
+    auth_user("user-1")
+    patch_supabase("routes.user", admin=MagicMock(), user=MagicMock())
+
+    resp = await client.put("/user/user-1/email", json={"new_email": "attacker@evil.test"})
+
+    assert resp.status_code == 422
+
+
+async def test_change_email_rejects_a_wrong_current_password(client, auth_user, patch_supabase, session_client):
     auth_user("user-1")
     fake_admin = MagicMock()
+    fake_admin.auth.admin.get_user_by_id.return_value = _user_by_id_result("user@example.com")
     patch_supabase("routes.user", admin=fake_admin, user=MagicMock())
+    session = session_client()
+    session.auth.sign_in_with_password.side_effect = Exception("invalid credentials")
 
-    resp = await client.put("/user/user-1/email", json={"new_email": "new@example.com"})
+    resp = await client.put(
+        "/user/user-1/email",
+        json={"new_email": "attacker@evil.test", "current_password": "guess"},
+    )
+
+    assert resp.status_code == 401
+    assert "incorrect" in resp.json()["detail"].lower()
+    session.auth.update_user.assert_not_called()
+    fake_admin.auth.admin.update_user_by_id.assert_not_called()
+
+
+async def test_change_email_asks_supabase_to_confirm_instead_of_flipping_it(
+    client, auth_user, patch_supabase, session_client
+):
+    """`email_confirm: True` on the admin API marks the new address verified with
+    no mail sent to either party. The change must instead run on the user's own
+    session, which is what makes Supabase send the confirmation link."""
+    auth_user("user-1")
+    fake_admin = MagicMock()
+    fake_admin.auth.admin.get_user_by_id.return_value = _user_by_id_result("user@example.com")
+    patch_supabase("routes.user", admin=fake_admin, user=MagicMock())
+    session = session_client()
+
+    resp = await client.put(
+        "/user/user-1/email",
+        json={"new_email": "new@example.com", "current_password": "oldpass123"},
+    )
 
     assert resp.status_code == 200
-    assert resp.json() == {"message": "Email changed successfully", "email": "new@example.com"}
-    fake_admin.auth.admin.update_user_by_id.assert_called_once_with(
-        "user-1", {"email": "new@example.com", "email_confirm": True}
+    body = resp.json()
+    assert body["email"] == "new@example.com"
+    assert body["confirmation_required"] is True
+    session.auth.sign_in_with_password.assert_called_once_with(
+        {"email": "user@example.com", "password": "oldpass123"}
     )
+    session.auth.update_user.assert_called_once_with({"email": "new@example.com"})
+    fake_admin.auth.admin.update_user_by_id.assert_not_called()
+
+
+def test_the_module_holds_no_shared_anon_client():
+    """`user_supabase` is a module-level singleton, so signing in on it writes the
+    session into state shared by every concurrent request — an operation that
+    then *acts as* that user could act as somebody else instead. routes/user.py
+    re-authenticates on a per-request client and must not keep the singleton
+    around for someone to reach for by accident."""
+    import routes.user
+
+    assert not hasattr(routes.user, "user_supabase")
 
 
 async def test_change_email_id_mismatch(client, auth_user, patch_supabase):
     auth_user("user-1")
     patch_supabase("routes.user", admin=MagicMock(), user=MagicMock())
-    resp = await client.put("/user/other-user/email", json={"new_email": "new@example.com"})
+    resp = await client.put(
+        "/user/other-user/email",
+        json={"new_email": "new@example.com", "current_password": "oldpass123"},
+    )
     assert resp.status_code == 403
 
 
-async def test_change_email_update_fails(client, auth_user, patch_supabase):
+async def test_change_email_update_fails(client, auth_user, patch_supabase, session_client):
     auth_user("user-1")
     fake_admin = MagicMock()
-    fake_admin.auth.admin.update_user_by_id.side_effect = Exception("boom")
+    fake_admin.auth.admin.get_user_by_id.return_value = _user_by_id_result("user@example.com")
     patch_supabase("routes.user", admin=fake_admin, user=MagicMock())
+    session = session_client()
+    session.auth.update_user.side_effect = Exception("boom")
 
-    resp = await client.put("/user/user-1/email", json={"new_email": "new@example.com"})
+    resp = await client.put(
+        "/user/user-1/email",
+        json={"new_email": "new@example.com", "current_password": "oldpass123"},
+    )
 
     assert resp.status_code == 500
     assert resp.json()["detail"] == "Failed to change email"
@@ -426,14 +514,13 @@ async def test_update_profile_no_fields_changed(client, auth_user, patch_supabas
 # DELETE /user/{id}
 # ---------------------------------------------------------------------------
 
-async def test_delete_account_success(client, auth_user, patch_supabase):
+async def test_delete_account_success(client, auth_user, patch_supabase, session_client):
     auth_user("user-1")
     fake_admin = MagicMock()
     patch_supabase("routes.user", admin=fake_admin, user=MagicMock())
+    session_client()
 
-    resp = await client.delete(
-        "/user/user-1", headers={"Authorization": "Bearer sometoken123"}
-    )
+    resp = await _delete_account(client, headers={"Authorization": "Bearer sometoken123"})
 
     assert resp.status_code == 200
     assert resp.json() == {"message": "Account deleted successfully"}
@@ -446,33 +533,33 @@ async def test_delete_account_success(client, auth_user, patch_supabase):
     assert cleaned_tables == ["chat_settings", "conversations", "messages", "user_profiles"]
 
 
-async def test_delete_account_invalidates_token(client, auth_user, patch_supabase, monkeypatch):
+async def test_delete_account_invalidates_token(client, auth_user, patch_supabase, monkeypatch, session_client):
     auth_user("user-1")
     patch_supabase("routes.user", admin=MagicMock(), user=MagicMock())
+    session_client()
     fake_invalidate = MagicMock()
     monkeypatch.setattr("routes.user.invalidate_token", fake_invalidate)
 
-    resp = await client.delete(
-        "/user/user-1", headers={"Authorization": "Bearer abc.def.ghi"}
-    )
+    resp = await _delete_account(client, headers={"Authorization": "Bearer abc.def.ghi"})
 
     assert resp.status_code == 200
     fake_invalidate.assert_called_once_with("abc.def.ghi")
 
 
-async def test_delete_account_no_auth_header_skips_invalidate(client, auth_user, patch_supabase, monkeypatch):
+async def test_delete_account_no_auth_header_skips_invalidate(client, auth_user, patch_supabase, monkeypatch, session_client):
     auth_user("user-1")
     patch_supabase("routes.user", admin=MagicMock(), user=MagicMock())
+    session_client()
     fake_invalidate = MagicMock()
     monkeypatch.setattr("routes.user.invalidate_token", fake_invalidate)
 
-    resp = await client.delete("/user/user-1")
+    resp = await _delete_account(client)
 
     assert resp.status_code == 200
     fake_invalidate.assert_not_called()
 
 
-async def test_delete_account_cleanup_failures_are_non_fatal(client, auth_user, patch_supabase):
+async def test_delete_account_cleanup_failures_are_non_fatal(client, auth_user, patch_supabase, session_client):
     """Cleanup errors on app-side tables should be swallowed; the account is still deleted."""
     auth_user("user-1")
     fake_admin = MagicMock()
@@ -480,28 +567,84 @@ async def test_delete_account_cleanup_failures_are_non_fatal(client, auth_user, 
         Exception("table missing")
     )
     patch_supabase("routes.user", admin=fake_admin, user=MagicMock())
+    session_client()
 
-    resp = await client.delete("/user/user-1")
+    resp = await _delete_account(client)
 
     assert resp.status_code == 200
     assert resp.json() == {"message": "Account deleted successfully"}
     fake_admin.auth.admin.delete_user.assert_called_once_with("user-1")
 
 
-async def test_delete_account_auth_delete_fails(client, auth_user, patch_supabase):
+async def test_delete_account_auth_delete_fails(client, auth_user, patch_supabase, session_client):
     auth_user("user-1")
     fake_admin = MagicMock()
     fake_admin.auth.admin.delete_user.side_effect = Exception("boom")
     patch_supabase("routes.user", admin=fake_admin, user=MagicMock())
+    session_client()
 
-    resp = await client.delete("/user/user-1")
+    resp = await _delete_account(client)
 
     assert resp.status_code == 500
     assert resp.json()["detail"] == "Failed to delete account"
 
 
-async def test_delete_account_id_mismatch(client, auth_user, patch_supabase):
+async def test_delete_account_id_mismatch(client, auth_user, patch_supabase, session_client):
     auth_user("user-1")
     patch_supabase("routes.user", admin=MagicMock(), user=MagicMock())
-    resp = await client.delete("/user/other-user")
+    session_client()
+    resp = await _delete_account(client, user_id="other-user")
     assert resp.status_code == 403
+
+
+async def test_delete_account_requires_the_current_password(client, auth_user, patch_supabase, session_client):
+    """SPEC-056 #7. Deletion is irreversible and wipes the transcript, so an
+    access token alone must not be enough to trigger it."""
+    auth_user("user-1")
+    fake_admin = MagicMock()
+    patch_supabase("routes.user", admin=fake_admin, user=MagicMock())
+    session_client()
+
+    resp = await _delete_account(client, password=None)
+
+    assert resp.status_code == 422
+    fake_admin.auth.admin.delete_user.assert_not_called()
+
+
+async def test_delete_account_rejects_a_wrong_password(client, auth_user, patch_supabase, session_client):
+    auth_user("user-1")
+    fake_admin = MagicMock()
+    fake_admin.auth.admin.get_user_by_id.return_value = _user_by_id_result("user@example.com")
+    patch_supabase("routes.user", admin=fake_admin, user=MagicMock())
+    session_client().auth.sign_in_with_password.side_effect = Exception("invalid credentials")
+
+    resp = await _delete_account(client, password="guess")
+
+    assert resp.status_code == 401
+    fake_admin.auth.admin.delete_user.assert_not_called()
+    fake_admin.table.assert_not_called(), "no cleanup may run before re-auth succeeds"
+
+
+async def test_repeated_wrong_passwords_lock_the_account_not_the_address(
+    client, auth_user, patch_supabase, session_client
+):
+    """SPEC-056 #7. The counter is keyed on the account under attack, so it holds
+    however many addresses the guessing comes from — and a roomful of people
+    behind one NAT address never trips it for each other."""
+    auth_user("user-1")
+    fake_admin = MagicMock()
+    fake_admin.auth.admin.get_user_by_id.return_value = _user_by_id_result("user@example.com")
+    patch_supabase("routes.user", admin=fake_admin, user=MagicMock())
+    session_client().auth.sign_in_with_password.side_effect = Exception("invalid credentials")
+
+    from routes.user import REAUTH_MAX_ATTEMPTS
+
+    for _ in range(REAUTH_MAX_ATTEMPTS):
+        assert (await _delete_account(client, password="guess")).status_code == 401
+
+    blocked = await _delete_account(client, password="guess")
+    assert blocked.status_code == 429
+
+    # A different account is unaffected — the limit is not a global or per-IP one.
+    auth_user("user-2")
+    assert (await _delete_account(client, user_id="user-2", password="guess")).status_code == 401

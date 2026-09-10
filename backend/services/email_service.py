@@ -130,6 +130,37 @@ def send_purchase_receipt(buyer_email: str, order: dict) -> bool:
     return _send_email_via_resend(buyer_email, subject, html)
 
 
+def send_shipment_notice(buyer_email: str, order: dict, delivered: bool = False) -> bool:
+    """Tell the buyer their order has shipped (or arrived).
+
+    SPEC-057. The facts come from `shipping_notice.shipment_summary` rather than
+    being pulled off the order here, so this email, the chat bubble and the
+    agent's answer cannot end up describing different shipments.
+    """
+    from services.shipping_notice import shipment_summary
+
+    if not buyer_email:
+        logger.warning("No buyer email on this order; skipping shipment notice.")
+        return False
+
+    facts = shipment_summary(order)
+    item_name = facts["item_name"]
+    subject = (
+        f"Delivered — {item_name}" if delivered else f"On its way — {item_name}"
+    )
+
+    context = {
+        "subject": subject,
+        "date_str": datetime.now(UTC).strftime("%B %d, %Y"),
+        "chat_url": f"{FRONTEND_URL}/chat",
+        "orders_url": f"{FRONTEND_URL}/orders",
+        "delivered": delivered,
+        **facts,
+    }
+    html = render_email_template("shipment_notice.html", context)
+    return _send_email_via_resend(buyer_email, subject, html)
+
+
 def send_seller_sale_alert(seller_email: str, order: dict) -> bool:
     """Send an email alert to the seller notifying them that an item was bought."""
     item_name = order.get("item_name") or "Item"

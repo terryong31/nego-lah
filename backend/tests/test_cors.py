@@ -53,6 +53,43 @@ def test_cors_rejects_unauthorized_pages_dev_domain():
     assert response.headers.get("access-control-allow-origin") is None
 
 
+def test_cors_production_mode_rejects_pages_dev(monkeypatch):
+    import importlib
+
+    import main
+
+    monkeypatch.setenv("ENV", "production")
+    monkeypatch.setenv("SENTRY_DSN", "https://mock@sentry.io/123")
+    monkeypatch.delenv("CORS_ORIGINS", raising=False)
+    try:
+        reloaded = importlib.reload(main)
+        prod_client = TestClient(reloaded.app)
+
+        # In production, canonical domain is allowed
+        allowed = prod_client.options(
+            "/items",
+            headers={
+                "Origin": "https://negolah.my",
+                "Access-Control-Request-Method": "GET",
+            },
+        )
+        assert allowed.status_code == 200
+        assert allowed.headers.get("access-control-allow-origin") == "https://negolah.my"
+
+        # In production, pages.dev domains are strictly rejected
+        blocked = prod_client.options(
+            "/items",
+            headers={
+                "Origin": "https://nego-lah.pages.dev",
+                "Access-Control-Request-Method": "GET",
+            },
+        )
+        assert blocked.headers.get("access-control-allow-origin") is None
+    finally:
+        monkeypatch.undo()
+        importlib.reload(main)
+
+
 def test_defense_middleware_413_still_carries_cors_headers():
     """
     Regression: RequestDefenseMiddleware short-circuits oversized uploads with

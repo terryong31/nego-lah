@@ -2,20 +2,18 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 import asyncpg
-from supabase import Client, create_client
 
-from core.config import ADMIN_SUPABASE_KEY, DATABASE_URL, SUPABASE_URL, USER_SUPABASE_KEY
+from core.config import DATABASE_URL
 from core.telemetry import logger
 
-# --- Supabase REST Data API & Auth Clients (Legacy / Auth compatibility) ---
-if not SUPABASE_URL or not (ADMIN_SUPABASE_KEY or USER_SUPABASE_KEY):
-    raise ValueError("Missing Supabase configuration. Ensure SUPABASE_URL and ADMIN_SUPABASE_KEY are set.")
-
-_admin_key = ADMIN_SUPABASE_KEY or USER_SUPABASE_KEY
-_user_key = USER_SUPABASE_KEY or ADMIN_SUPABASE_KEY
-
-admin_supabase: Client = create_client(SUPABASE_URL, _admin_key)
-user_supabase: Client = create_client(SUPABASE_URL, _user_key)
+# This module owns the asyncpg pool and nothing else (SPEC-056 #8).
+#
+# It also used to construct a second pair of PostgREST clients here, duplicating
+# `connector.py`, keyed `USER_SUPABASE_KEY or ADMIN_SUPABASE_KEY`. That fallback
+# is the one SPEC-051 deleted from `env.py`: with the anon key unset, every
+# "user" client silently becomes a service-role client and RLS stops applying.
+# Nothing imported these — which is exactly why nobody noticed. `connector.py`
+# is the single source of Supabase clients; go there.
 
 
 # --- PostgreSQL Connection Pool (Direct Supabase Pooler) ---

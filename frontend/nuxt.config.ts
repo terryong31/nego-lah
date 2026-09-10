@@ -324,14 +324,15 @@ export default defineNuxtConfig({
   // auto-injection mode to instrument Nitro.
   //
   // org/project/authToken are read from SENTRY_ORG / SENTRY_PROJECT /
-  // SENTRY_AUTH_TOKEN, set only at Docker build time (see frontend/Dockerfile
-  // and .github/workflows/deploy.yml) — never present in the runtime container.
-  // Source map upload is skipped automatically whenever authToken is unset
-  // (e.g. local dev builds), so nothing breaks without it.
+  // SENTRY_AUTH_TOKEN, set only at build time (Infisical in CI, see
+  // .github/workflows/deploy.yml) — never present in the runtime container.
+  // No hardcoded fallbacks: this repo is public, so the org and project slugs
+  // live only in Infisical. Source map upload is skipped automatically whenever
+  // authToken is unset (e.g. local dev builds), so nothing breaks without it.
   sentry: {
     enabled: process.env.NODE_ENV === 'production',
-    org: process.env.SENTRY_ORG || process.env.NUXT_PUBLIC_SENTRY_ORG || 'nego-lah',
-    project: process.env.SENTRY_PROJECT || process.env.NUXT_PUBLIC_SENTRY_PROJECT || 'nego-lah-frontend',
+    org: process.env.SENTRY_ORG || process.env.NUXT_PUBLIC_SENTRY_ORG,
+    project: process.env.SENTRY_PROJECT || process.env.NUXT_PUBLIC_SENTRY_PROJECT,
     authToken: process.env.SENTRY_AUTH_TOKEN,
     release: {
       name: process.env.SENTRY_RELEASE || 'latest'

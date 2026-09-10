@@ -319,3 +319,17 @@ async def test_optional_user_lookup_does_not_block_the_event_loop(patch_supabase
 
     assert user_id == "browser-1"
     assert counter["ticks"] > 5
+
+
+@pytest.mark.asyncio
+async def test_optional_user_lookup_ignores_a_token_in_the_query_string(patch_supabase, fake_supabase):
+    """SPEC-056 #6. A credential in a URL ends up in every log that touches it,
+    so the only place a bearer token is read from is the header."""
+    from auth_middleware import get_optional_user_id
+
+    patch_supabase("auth_middleware", admin=fake_supabase)
+    fake_supabase.auth.get_user = slow_get_user("browser-1")
+
+    request = SimpleNamespace(headers={}, query_params={"token": "a-real-access-token"})
+
+    assert await get_optional_user_id(request) is None

@@ -1,5 +1,6 @@
 import fnmatch
 import json
+import secrets
 import time
 
 import redis
@@ -43,6 +44,15 @@ class _InMemoryRedis:
     def get(self, key: str) -> str | None:
         self._purge(key)
         return self._store.get(key)
+
+    def getdel(self, key: str) -> str | None:
+        """Redis GETDEL: read and remove in one step.
+
+        Mirrored here because single-use tokens depend on the atomicity — a
+        get-then-delete pair lets two concurrent redemptions both win.
+        """
+        self._purge(key)
+        return self._store.pop(key, None)
 
     def delete(self, key: str):
         self._store.pop(key, None)
@@ -322,6 +332,42 @@ def invalidate_item_cache(item_id: str = None):
 # ============================================
 # RATE LIMITING
 # ============================================
+
+# ---------------------------------------------------------------------------
+# Short-lived SSE tickets (SPEC-056 #6)
+# ---------------------------------------------------------------------------
+
+# `EventSource` cannot send an `Authorization` header, so the notification
+# stream used to take the Supabase access token as `?token=`. Query strings are
+# the least private part of a request — reverse-proxy and CDN access logs,
+# browser history, APM breadcrumbs, the `Referer` of the next asset the page
+# loads — and that token is good for the rest of the hour on every API the
+# account can reach.
+#
+# A ticket is worth exactly one stream for thirty seconds and says nothing about
+# the session that minted it, so its appearance in a log is a non-event. The
+# access token stays where it belongs: in the header on the POST that mints it.
+SSE_TICKET_PREFIX = "sse:ticket:"
+SSE_TICKET_TTL = 30  # seconds — long enough to open a connection, not to be found in a log
+
+
+def mint_sse_ticket(user_id: str) -> str:
+    """Issue a single-use ticket authorising one notification stream."""
+    ticket = secrets.token_urlsafe(32)
+    redis_client.setex(f"{SSE_TICKET_PREFIX}{ticket}", SSE_TICKET_TTL, user_id)
+    return ticket
+
+
+def redeem_sse_ticket(ticket: str) -> str | None:
+    """Spend a ticket, returning the user it authorises (or None).
+
+    GETDEL, not GET-then-DELETE: the read and the invalidation have to be one
+    operation, or two connections racing on a leaked ticket both get in.
+    """
+    if not ticket:
+        return None
+    return redis_client.getdel(f"{SSE_TICKET_PREFIX}{ticket}")
+
 
 def check_rate_limit(key: str, max_requests: int = 10, window: int = 60) -> bool:
     """

@@ -75,8 +75,26 @@ export function useNotifications() {
       return
     }
 
+    // SPEC-056 #6. `EventSource` cannot set headers, which is why this used to
+    // append the Supabase access token to the URL — where it was copied into the
+    // reverse proxy's access log, Cloudflare's, the browser's history and the
+    // Referer of whatever the page loaded next, all for a credential good for
+    // the next hour of API calls. So the token stays in a header on this POST,
+    // and the URL carries a ticket that is worth one stream for thirty seconds.
+    let ticket: string
     try {
-      const streamUrl = `${config.public.apiBaseUrl}/chat/notifications/stream?token=${encodeURIComponent(token)}`
+      const minted = await $fetch<{ ticket: string }>(
+        `${config.public.apiBaseUrl}/chat/notifications/ticket`,
+        { method: 'POST', headers: { Authorization: `Bearer ${token}` } }
+      )
+      ticket = minted.ticket
+    } catch (err) {
+      console.error('Could not mint a notification stream ticket:', err)
+      return
+    }
+
+    try {
+      const streamUrl = `${config.public.apiBaseUrl}/chat/notifications/stream?ticket=${encodeURIComponent(ticket)}`
       eventSource = new EventSource(streamUrl)
 
       eventSource.addEventListener('message', (event) => {

@@ -10,71 +10,38 @@ from routes.chat import notifications_stream
 
 @pytest.mark.asyncio
 async def test_notifications_stream_requires_auth(client):
+    """Ticket handling itself lives in tests/test_sse_ticket_auth.py (SPEC-056 #6)."""
     res = await client.get("/chat/notifications/stream")
     assert res.status_code == 401
 
 
 @pytest.mark.asyncio
-async def test_notifications_stream_connects_with_token(monkeypatch):
-    # Mock token validation
-    monkeypatch.setattr("cache.get_cached_user_by_token", lambda t: "user-sse-1" if t == "valid-token" else None)
-
-    mock_request = MagicMock()
-    mock_request.headers = {}
-    mock_request.query_params = {"token": "valid-token"}
-    mock_request.is_disconnected = AsyncMock(return_value=False)
-
-    response = await notifications_stream(mock_request)
-    assert response.status_code == 200
-    assert response.media_type == "text/event-stream"
-
-    # Read chunks from iterator; the subscription is registered as the body
-    # starts, so that it is always torn down with it.
-    gen = response.body_iterator
-    chunk1 = await gen.__anext__()
-    assert chunk1 == ": connected\n\n"
-    assert notification_broker.has_subscribers("user-sse-1") is True
-
-    # Publish message to this user
-    notification_broker.publish("user-sse-1", {"type": "new_message", "message": "Hi!"})
-
-    chunk2 = await gen.__anext__()
-    assert "event: message" in chunk2
-    assert "new_message" in chunk2
-
-    # Close generator and ensure cleanup
-    await gen.aclose()
-    assert notification_broker.has_subscribers("user-sse-1") is False
-
-
-@pytest.mark.asyncio
 async def test_stream_handshake_does_not_block_the_event_loop(monkeypatch):
-    """A token cache miss calls Supabase, whose client is synchronous.
+    """Redeeming a ticket is a Redis round trip, and redis-py is synchronous.
 
     Run on the event loop it would freeze every other request on this worker for
     the length of that round trip — the real ceiling on concurrent users. This
-    asserts the loop keeps ticking while the lookup is in flight.
+    asserts the loop keeps ticking while the redemption is in flight. (SPEC-056
+    #6 replaced a Supabase `get_user` call here with the ticket lookup; the
+    property being defended is the same one, so the test moved with it.)
     """
     import time
 
-    monkeypatch.setattr("cache.get_cached_user_by_token", lambda _t: None)
-    monkeypatch.setattr("cache.cache_token_user", lambda *_a, **_k: None)
+    from cache import mint_sse_ticket
 
-    def slow_lookup(_token):
+    ticket = mint_sse_ticket("user-sse-slow")
+
+    def slow_redeem(_ticket):
         time.sleep(0.2)
-        user = MagicMock()
-        user.user.id = "user-sse-slow"
-        return user
+        return "user-sse-slow"
 
-    # `routes.chat` binds `admin_supabase` at import time, so patch it there
-    # (conftest.py's mocking-seam rule) rather than on `connector`.
-    fake_supabase = MagicMock()
-    fake_supabase.auth.get_user = slow_lookup
-    monkeypatch.setattr("routes.chat.admin_supabase", fake_supabase)
+    # `routes.chat` imports `redeem_sse_ticket` lazily inside the handler, so
+    # patching the source module takes effect at call time.
+    monkeypatch.setattr("cache.redeem_sse_ticket", slow_redeem)
 
     mock_request = MagicMock()
     mock_request.headers = {}
-    mock_request.query_params = {"token": "cold-token"}
+    mock_request.query_params = {"ticket": ticket}
     mock_request.is_disconnected = AsyncMock(return_value=False)
 
     ticks = 0

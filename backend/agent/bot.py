@@ -10,8 +10,9 @@ from langgraph.prebuilt import create_react_agent
 
 from logger import logger
 
-from .config import SELLER_PERSONA
+from .config import AGENT_HISTORY_TURNS, SELLER_PERSONA
 from .context import current_item_id, get_item_id, get_user_id, set_context
+from .knowledge import item_knowledge_card, turn_needs_vision
 from .llm_factory import get_chat_model, hybrid_llm_session
 from .memory import ConversationMemory
 
@@ -292,7 +293,7 @@ def _build_messages(user_id: str, message: str, item_id: str = None, files: list
     images plus any user-uploaded files as multimodal content parts.
     """
     # Get conversation history
-    history_data = conversation_memory.get_history(user_id, limit=50)
+    history_data = conversation_memory.get_history(user_id, limit=AGENT_HISTORY_TURNS)
     messages = []
 
     # Reconstruct history
@@ -309,22 +310,33 @@ def _build_messages(user_id: str, message: str, item_id: str = None, files: list
     if item_id:
         item_details = get_item_details_for_context(item_id)
         if item_details:
+            # SPEC-059: the knowledge card carries what the photos were being
+            # re-sent to say. `items.description` was itself written from those
+            # photos by image_analyzer at listing time, so on an ordinary turn
+            # the card is the same information at a fraction of the tokens.
+            card = item_knowledge_card(item_details)
+            # The hinge is the DESCRIPTION, not the card: name and price say
+            # nothing about what the thing looks like.
+            has_description = bool((item_details.get('description') or '').strip())
             context = f"""SYSTEM: Context Item ID: {item_id}
-Item Name: "{item_details.get('name', 'Unknown')}"
-Listed Price: RM{item_details.get('price', 'N/A')}
+{card}
 
 Buyer: {message}"""
             input_message = context
 
-            # Extract item images
-            try:
-                if item_details.get('image_path'):
-                    import json
-                    images_map = json.loads(item_details['image_path'])
-                    # Get first 2 images to give context without overloading
-                    item_images = list(images_map.values())[:2]
-            except Exception as e:
-                logger.info(f"Failed to parse item images: {e}")
+            # The photos come back only when this particular turn needs to look:
+            # a visual question, a buyer upload, or a listing with no description
+            # (where the photos are the only description there is).
+            if turn_needs_vision(message, files=files, has_description=has_description):
+                try:
+                    if item_details.get('image_path'):
+                        import json
+                        images_map = json.loads(item_details['image_path'])
+                        # Two is enough to answer "what does it look like"; more
+                        # is mostly duplicate angles at full price each.
+                        item_images = list(images_map.values())[:2]
+                except Exception as e:
+                    logger.info(f"Failed to parse item images: {e}")
         else:
             input_message = f"Buyer: {message}"
 

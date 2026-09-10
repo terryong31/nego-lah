@@ -1,5 +1,14 @@
 import { loginRedirect } from '~/utils/auth'
 
+/**
+ * `reauth: true` marks a call whose 401 means "the password you just typed is
+ * wrong" rather than "your session is dead" — the account endpoints that demand
+ * `current_password` (SPEC-056 #3/#7). Without it, mistyping your password on
+ * the profile page would sign you out of a session that was never in question.
+ * A banned 403 still signs out either way.
+ */
+type CallOptions = Parameters<typeof $fetch>[1] & { reauth?: boolean }
+
 export const useApi = () => {
   const supabase = useSupabaseClient()
   const config = useRuntimeConfig()
@@ -8,12 +17,13 @@ export const useApi = () => {
   // bounce carries whatever page the caller is actually sitting on.
   const route = useRoute()
 
-  const call = async <T>(path: string, opts?: Parameters<typeof $fetch>[1]) => {
+  const call = async <T>(path: string, opts?: CallOptions) => {
+    const { reauth, ...fetchOpts } = opts ?? {}
     const { data: { session } } = await supabase.auth.getSession()
     const { token: turnstileToken } = useTurnstileToken()
 
     return $fetch<T>(`${config.public.apiBaseUrl}${path}`, {
-      ...opts,
+      ...fetchOpts,
       headers: {
         ...(session ? { Authorization: `Bearer ${session.access_token}` } : {}),
         ...(turnstileToken.value ? { 'X-Turnstile-Token': turnstileToken.value } : {}),
@@ -41,7 +51,7 @@ export const useApi = () => {
         // stuck on a dead app — carrying the current page so signing back in
         // returns them to it (a lapsed session mid-negotiation on /chat is the
         // case that matters).
-        if (response.status === 401 || isBanned) {
+        if ((response.status === 401 && !reauth) || isBanned) {
           if (isBanned) {
             toast.add({ title: 'Account suspended', description: 'Your account has been banned.', color: 'error' })
           }

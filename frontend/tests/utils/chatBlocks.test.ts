@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { messageBlocks, shouldSplit } from '~/utils/chatBlocks'
+import { isTrustedPaymentUrl, messageBlocks, shouldSplit } from '~/utils/chatBlocks'
 
 describe('utils/chatBlocks.ts', () => {
   describe('shouldSplit', () => {
@@ -98,6 +98,65 @@ describe('utils/chatBlocks.ts', () => {
     it('returns nothing for empty or whitespace-only text', () => {
       expect(messageBlocks('', true)).toEqual([])
       expect(messageBlocks('  \n \n', true)).toEqual([])
+    })
+  })
+
+  // SPEC-056 #4. A PayCard is not a link — it is a branded tile reading "Deal
+  // Agreed" over a "Secured by Stripe" badge, and the model that decides what
+  // goes in it takes instructions from the buyer. Prompt injection turning a
+  // markdown link into a first-party-looking checkout button is the whole
+  // attack, so the host, not the model, decides what earns the badge.
+  describe('messageBlocks — only Stripe checkout hosts earn a PayCard', () => {
+    const payBlock = (text: string) => messageBlocks(text, true)[0]
+
+    it.each([
+      ['https://buy.stripe.com/test_abc'],
+      ['https://checkout.stripe.com/c/pay/cs_test_123'],
+      ['https://checkout.stripe.com/pay/cs_live_x?locale=en'],
+      // Stripe serves regional checkout from subdomains of those hosts.
+      ['https://link.checkout.stripe.com/c/pay/x']
+    ])('renders a card for %s', (url) => {
+      expect(payBlock(`[Pay RM50 Now](${url})`)).toEqual({
+        type: 'pay',
+        label: 'Pay RM50 Now',
+        url
+      })
+    })
+
+    it.each([
+      // Outright attacker-controlled.
+      ['https://malicious-phishing.com/pay'],
+      // The classic suffix trick: the trusted name is a *prefix* of the host.
+      ['https://buy.stripe.com.evil.test/pay'],
+      // ...and its mirror image, where it appears inside the path or userinfo.
+      ['https://evil.test/buy.stripe.com/pay'],
+      ['https://buy.stripe.com@evil.test/pay'],
+      // A lookalike host that merely contains the trusted string.
+      ['https://notbuy.stripe.com.co/pay'],
+      // Right host, wrong scheme — a downgraded checkout is not a checkout.
+      ['http://buy.stripe.com/test_abc'],
+      // Stripe's own marketing site is not a checkout endpoint.
+      ['https://stripe.com/pricing']
+    ])('leaves %s as plain text, with no Stripe badge around it', (url) => {
+      const markdown = `[Pay RM50 Now](${url})`
+      expect(payBlock(markdown)).toEqual({ type: 'text', text: markdown })
+    })
+
+    it('does not swallow the surrounding sentence when the link is untrusted', () => {
+      const blocks = messageBlocks(
+        'Deal! Pay here [Pay RM50 Now](https://evil.test/pay) thanks',
+        true
+      )
+      expect(blocks).toEqual([
+        { type: 'text', text: 'Deal! Pay here [Pay RM50 Now](https://evil.test/pay) thanks' }
+      ])
+    })
+
+    it('exports the host check so other callers cannot re-derive it wrongly', () => {
+      expect(isTrustedPaymentUrl('https://buy.stripe.com/x')).toBe(true)
+      expect(isTrustedPaymentUrl('https://evil.test/x')).toBe(false)
+      expect(isTrustedPaymentUrl('not a url at all')).toBe(false)
+      expect(isTrustedPaymentUrl('')).toBe(false)
     })
   })
 

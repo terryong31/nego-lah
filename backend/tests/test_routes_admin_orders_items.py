@@ -46,6 +46,7 @@ import agent.tools.listing_pipeline as listing_pipeline_module
 import agent.tools.market_price as market_price_module
 import items as items_module
 import payment.payment_state as payment_state_module
+import payment.refunds as payment_refunds_module
 from conftest import JPEG_BYTES, PNG_BYTES, make_supabase_result
 
 # ---------------------------------------------------------------------------
@@ -1029,3 +1030,126 @@ async def test_admin_orders_requires_admin_session_401(client):
     response = await client.get("/admin/orders")
 
     assert response.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# POST /admin/orders/refund/{item_id}  (SPEC-056 #1)
+#
+# Refunds used to live on `routes/payment.py` as POST /payment/refund/{item_id}
+# with `Depends(verify_admin)` and nothing else. Every other mutating admin
+# action goes through `routes/admin/__init__.py`'s `protected` router, which
+# carries `verify_csrf_token` as well — so the single most financially
+# consequential admin action was the one endpoint outside the CSRF invariant.
+#
+# `verify_csrf_token` short-circuits when there is no session cookie (verify_admin
+# would reject that request anyway), so these tests plant a real `admin_sid`
+# cookie and the matching Redis token to reach the comparison.
+# ---------------------------------------------------------------------------
+
+def _admin_session_with_csrf(client, sid="sid-refund", token="csrf-token-refund"):
+    from cache import redis_client
+    from env import ADMIN_SESSION_TTL
+    redis_client.setex(f"csrf:{sid}", ADMIN_SESSION_TTL, token)
+    client.cookies.set("admin_sid", sid)
+    return token
+
+
+async def test_refund_rejects_a_request_without_the_csrf_header(
+    client, admin_user, admin_supabase, monkeypatch
+):
+    admin_user()
+    _admin_session_with_csrf(client)
+    called = []
+    monkeypatch.setattr(
+        payment_refunds_module, "process_refund",
+        lambda item_id, reason: called.append(item_id) or {"success": True},
+    )
+
+    response = await client.post("/admin/orders/refund/item-1")
+
+    assert response.status_code == 403
+    assert called == [], "the refund must not run when CSRF verification fails"
+
+
+async def test_refund_rejects_a_forged_csrf_header(client, admin_user, admin_supabase, monkeypatch):
+    admin_user()
+    _admin_session_with_csrf(client)
+    monkeypatch.setattr(
+        payment_refunds_module, "process_refund",
+        lambda item_id, reason: {"success": True},
+    )
+
+    response = await client.post(
+        "/admin/orders/refund/item-1", headers={"X-CSRF-Token": "guessed-wrong"}
+    )
+
+    assert response.status_code == 403
+
+
+async def test_refund_succeeds_with_a_valid_csrf_token(client, admin_user, admin_supabase, monkeypatch):
+    admin_user()
+    token = _admin_session_with_csrf(client)
+    seen = {}
+
+    def fake_process_refund(item_id, reason):
+        seen["item_id"], seen["reason"] = item_id, reason
+        return {"success": True, "refund_id": "re_1", "amount_refunded": 100}
+
+    monkeypatch.setattr(payment_refunds_module, "process_refund", fake_process_refund)
+
+    response = await client.post(
+        "/admin/orders/refund/item-1",
+        params={"reason": "requested_by_customer"},
+        headers={"X-CSRF-Token": token},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["refund_id"] == "re_1"
+    assert seen == {"item_id": "item-1", "reason": "requested_by_customer"}
+
+
+async def test_refund_failure_returns_400(client, admin_user, admin_supabase, monkeypatch):
+    admin_user()
+    token = _admin_session_with_csrf(client)
+    monkeypatch.setattr(
+        payment_refunds_module, "process_refund",
+        lambda item_id, reason: {"success": False, "error": "No transaction found"},
+    )
+
+    response = await client.post(
+        "/admin/orders/refund/item-1", headers={"X-CSRF-Token": token}
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "No transaction found"
+
+
+async def test_refund_writes_an_audit_entry(client, admin_user, admin_supabase, monkeypatch):
+    admin_user()
+    token = _admin_session_with_csrf(client)
+    monkeypatch.setattr(
+        payment_refunds_module, "process_refund",
+        lambda item_id, reason: {"success": True, "refund_id": "re_9"},
+    )
+    audited = []
+    monkeypatch.setattr(
+        "routes.admin.orders.write_audit",
+        lambda *args, **kwargs: audited.append(args),
+    )
+
+    await client.post("/admin/orders/refund/item-1", headers={"X-CSRF-Token": token})
+
+    assert audited and audited[0][2] == "order.refund"
+
+
+async def test_the_old_unprotected_refund_route_is_gone(client, admin_user, monkeypatch):
+    """The whole point of the move: /payment/refund/* must no longer exist."""
+    admin_user()
+    monkeypatch.setattr(
+        payment_refunds_module, "process_refund",
+        lambda item_id, reason: {"success": True},
+    )
+
+    response = await client.post("/payment/refund/item-1")
+
+    assert response.status_code == 404

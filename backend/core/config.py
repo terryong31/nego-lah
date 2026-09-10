@@ -8,7 +8,10 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 ADMIN_SUPABASE_KEY = os.getenv("ADMIN_SUPABASE_KEY")
-USER_SUPABASE_KEY = os.getenv("USER_SUPABASE_KEY") or os.getenv("SUPABASE_KEY") or ADMIN_SUPABASE_KEY
+# No fallback to ADMIN_SUPABASE_KEY (SPEC-051, re-applied here by SPEC-056 #8):
+# an unset anon key must fail closed, never silently promote client-facing reads
+# to service-role privileges that bypass RLS.
+USER_SUPABASE_KEY = os.getenv("USER_SUPABASE_KEY") or os.getenv("SUPABASE_KEY")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 REDIS_URL = os.getenv("REDIS_URL")

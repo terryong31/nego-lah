@@ -66,6 +66,18 @@ class NotificationBroker:
         """True when events are travelling through Redis rather than staying in-process."""
         return self._listener is not None and not self._listener.done()
 
+    @property
+    def _receiving(self) -> bool:
+        """True when this worker's listener will actually get the message back.
+
+        `distributed` only says a listener task exists. A task that is alive but
+        holds no subscription receives nothing, so publishing through Redis
+        would drop the event -- and `has_subscribers()` would still report the
+        user online from the local queue set, suppressing the digest email too.
+        Derived rather than tracked, so it cannot drift from the connection.
+        """
+        return self.distributed and bool(getattr(self._pubsub, "subscribed", False))
+
     async def start(self) -> bool:
         """Open the pub/sub connection for this worker. Returns True if distributed."""
         if self.distributed:
@@ -193,7 +205,7 @@ class NotificationBroker:
         listener receives the message back and delivers it locally, so every
         stream is fed exactly once.
         """
-        if self.distributed:
+        if self._receiving:
             try:
                 from cache import redis_client
 
@@ -247,10 +259,19 @@ class NotificationBroker:
                 raise
             except Exception as e:
                 logger.warning(f"🔁 Notification pub/sub dropped ({e}); reconnecting")
+            else:
+                # `listen()` is `while self.subscribed:` -- with no channels left
+                # it RETURNS rather than raising, so this is a disconnect that
+                # never throws. Falling straight back into `while True` would
+                # re-enter it with nothing to await: a hot spin that pegs the
+                # event loop, blocks even SIGTERM, and never reconnects.
+                logger.warning("🔁 Notification pub/sub ended with no active subscription; reconnecting")
+
+            # Reached from both paths, so neither can respin without awaiting.
+            await asyncio.sleep(RECONNECT_DELAY_SECONDS)
+            if not await self._resubscribe():
+                # Redis is still down; back off and try again on the next pass.
                 await asyncio.sleep(RECONNECT_DELAY_SECONDS)
-                if not await self._resubscribe():
-                    # Redis is still down; back off and try again on the next pass.
-                    await asyncio.sleep(RECONNECT_DELAY_SECONDS)
 
     async def _resubscribe(self) -> bool:
         """Rebuild the pub/sub connection and re-subscribe every active channel."""

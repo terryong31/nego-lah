@@ -9,6 +9,7 @@ import pytest
 from pydantic import ValidationError
 
 from schemas import (
+    AccountDeleteSchema,
     Admin2FARequest,
     AdminLoginRequest,
     AdminMessageRequest,
@@ -120,8 +121,22 @@ def test_password_update_schema_missing_field_raises():
 
 
 def test_email_update_schema():
-    s = EmailUpdateSchema(new_email="new@example.com")
+    s = EmailUpdateSchema(new_email="new@example.com", current_password="oldpass123")
     assert s.new_email == "new@example.com"
+    assert s.current_password == "oldpass123"
+
+
+def test_email_update_schema_requires_the_current_password():
+    """SPEC-056 #3: an email change that does not re-authenticate is an account
+    takeover waiting for one stolen token, so the field is not optional."""
+    with pytest.raises(ValidationError):
+        EmailUpdateSchema(new_email="new@example.com")
+
+
+def test_account_delete_schema_requires_the_current_password():
+    with pytest.raises(ValidationError):
+        AccountDeleteSchema()
+    assert AccountDeleteSchema(current_password="oldpass123").current_password == "oldpass123"
 
 
 # ============================================

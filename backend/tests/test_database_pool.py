@@ -72,3 +72,42 @@ async def test_check_db_health_failure():
     with patch("core.database._pool", None):
         healthy = await check_db_health()
         assert healthy is False
+
+
+# ---------------------------------------------------------------------------
+# Privilege hygiene (SPEC-056 #8)
+# ---------------------------------------------------------------------------
+
+def test_the_pool_module_builds_no_supabase_clients():
+    """`core/database.py` owns the asyncpg pool and nothing else.
+
+    It used to also construct a second pair of PostgREST clients at import —
+    duplicating `connector.py` — with `USER_SUPABASE_KEY or ADMIN_SUPABASE_KEY`.
+    That is the silent service-role fallback SPEC-051 deliberately removed from
+    `env.py`: omit the anon key and every "user" read quietly runs with
+    privileges that bypass RLS. Two module-level sources of the same clients
+    means the one nobody is looking at is the one that rots.
+    """
+    import core.database
+
+    assert not hasattr(core.database, "admin_supabase")
+    assert not hasattr(core.database, "user_supabase")
+
+
+def test_the_anon_key_never_falls_back_to_the_service_role_key(monkeypatch):
+    """Same rule, one layer down: an unset anon key must stay unset."""
+    import importlib
+
+    monkeypatch.setenv("ADMIN_SUPABASE_KEY", "service-role-key")
+    monkeypatch.delenv("USER_SUPABASE_KEY", raising=False)
+    monkeypatch.delenv("SUPABASE_KEY", raising=False)
+
+    import core.config
+    config = importlib.reload(core.config)
+    try:
+        assert config.USER_SUPABASE_KEY != "service-role-key"
+        assert not config.USER_SUPABASE_KEY
+    finally:
+        # Restore the module for anything importing it later in the session.
+        monkeypatch.undo()
+        importlib.reload(core.config)

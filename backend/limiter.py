@@ -34,3 +34,14 @@ limiter = Limiter(
 CATALOG_LIMIT = os.getenv("CATALOG_RATE_LIMIT", "6000/minute")
 NOTIFICATION_STREAM_LIMIT = os.getenv("NOTIFICATION_STREAM_RATE_LIMIT", "2000/minute")
 CHECKOUT_LIMIT = os.getenv("CHECKOUT_RATE_LIMIT", "600/minute")
+
+# SPEC-056 #7. `/user/*` mutations had no per-IP ceiling at all. Sized to the
+# same rule as the rest of this file — one address may be a whole room, and the
+# language switcher on that page writes here on every toggle — so this is the
+# coarse "one scripted laptop" backstop, nothing finer.
+#
+# The actual brute-force defence for the password those endpoints now demand is
+# NOT here: it is `cache.check_rate_limit` keyed on the account being attacked,
+# in `routes/user._reauthenticate`. Guessing a password is an attack on one
+# account from anywhere, so the counter belongs on the account, not the address.
+ACCOUNT_LIMIT = os.getenv("ACCOUNT_RATE_LIMIT", "1000/minute")

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, h, ref, resolveComponent } from 'vue'
+import { computed, h, reactive, ref, resolveComponent } from 'vue'
 import type { TableColumn } from '@nuxt/ui'
 
 const UButton = resolveComponent('UButton')
@@ -20,6 +20,13 @@ interface Order {
   phone?: string
   notes?: string
   created_at: string
+  // SPEC-057 postage. All nullable: orders placed before it, and orders not yet
+  // shipped, simply have none of these.
+  courier?: string | null
+  tracking_number?: string | null
+  tracking_url?: string | null
+  shipped_at?: string | null
+  delivered_at?: string | null
 }
 interface OrdersResponse {
   orders: Order[]
@@ -46,6 +53,91 @@ const busy = ref<string | null>(null)
 
 // Native Nuxt UI Expanded row tracking
 const expanded = ref({})
+
+// --- SPEC-057: postage ----------------------------------------------------
+// Kept per order id rather than in a single "current" object, so expanding two
+// rows and typing in both doesn't let one overwrite the other on submit.
+interface ShipmentDraft {
+  courier: string
+  trackingNumber: string
+  trackingUrl: string
+  notify: boolean
+}
+const shipmentDrafts = reactive<Record<string, ShipmentDraft>>({})
+
+// Mirrors domains/catalog/shipping.COURIER_CHOICES. The field stays free-text —
+// the backend recognises these names plus the obvious misspellings, and records
+// anything else as typed.
+const COURIERS = [
+  'J&T Express',
+  'Pos Laju',
+  'Ninja Van',
+  'City-Link Express',
+  'DHL eCommerce',
+  'Flash Express',
+  'GDEX',
+  'Shopee Express'
+]
+
+function shipmentDraft(o: Order): ShipmentDraft {
+  return (shipmentDrafts[o.id] ||= {
+    courier: o.courier || '',
+    trackingNumber: o.tracking_number || '',
+    trackingUrl: o.tracking_url || '',
+    notify: true
+  })
+}
+
+async function recordShipment(o: Order) {
+  const draft = shipmentDraft(o)
+  if (!draft.courier.trim() || !draft.trackingNumber.trim()) {
+    toast.add({ title: t('admin.ordersSection.shipmentRequired'), color: 'warning' })
+    return
+  }
+
+  busy.value = o.id
+  try {
+    const res = await call<{
+      order: Order
+      notified: { email: boolean, chat: boolean }
+    }>(`/orders/${o.id}/shipment`, {
+      method: 'PUT',
+      body: {
+        courier: draft.courier.trim(),
+        tracking_number: draft.trackingNumber.trim(),
+        tracking_url: draft.trackingUrl.trim() || undefined,
+        notify: draft.notify
+      }
+    })
+
+    Object.assign(o, {
+      status: 'shipped',
+      courier: res.order.courier,
+      tracking_number: res.order.tracking_number,
+      tracking_url: res.order.tracking_url,
+      shipped_at: res.order.shipped_at
+    })
+    draft.courier = res.order.courier || draft.courier
+    draft.trackingUrl = res.order.tracking_url || ''
+
+    // Say what actually happened. "Recorded" when the buyer was told, and a
+    // distinct warning when the write landed but the notification didn't —
+    // otherwise the seller assumes the buyer knows, and nobody chases it.
+    const notified = res.notified?.email || res.notified?.chat
+    if (!draft.notify) {
+      toast.add({ title: t('admin.ordersSection.shipmentRecorded'), description: t('admin.ordersSection.shipmentRecordedQuiet'), color: 'success' })
+    } else if (notified) {
+      toast.add({ title: t('admin.ordersSection.shipmentRecorded'), description: t('admin.ordersSection.shipmentRecordedNotified'), color: 'success' })
+    } else {
+      toast.add({ title: t('admin.ordersSection.shipmentRecorded'), description: t('admin.ordersSection.shipmentPartial'), color: 'warning' })
+    }
+  } catch (err) {
+    const e = err as { data?: { detail?: string }, message?: string }
+    toast.add({ title: t('admin.ordersSection.shipmentFailed'), description: e.data?.detail || e.message, color: 'error' })
+  } finally {
+    busy.value = null
+  }
+}
 
 function statusColor(s: string) {
   if (s === 'delivered') return 'success' as const
@@ -208,24 +300,107 @@ const columns = computed<TableColumn<Order>[]>(() => [
       </template>
 
       <template #expanded="{ row }">
-        <div>
-          <p class="text-sm font-semibold text-highlighted mb-2">
-            Shipping Details
-          </p>
-          <div class="flex flex-col text-sm text-default space-y-1">
-            <div><span class="text-muted">{{ $t('admin.ordersSection.recipient') }}:</span> {{ row.original.recipient_name || '—' }}</div>
-            <div><span class="text-muted">{{ $t('admin.ordersSection.address') }}:</span> <span class="whitespace-pre-line">{{ row.original.address || '—' }}</span></div>
-            <div><span class="text-muted">{{ $t('admin.ordersSection.phone') }}:</span> {{ row.original.phone || '—' }}</div>
-            <div v-if="row.original.notes">
-              <span class="text-muted">{{ $t('admin.ordersSection.notes') }}:</span> {{ row.original.notes }}
+        <div class="grid gap-6 sm:grid-cols-2">
+          <div>
+            <p class="text-sm font-semibold text-highlighted mb-2">
+              {{ $t('admin.ordersSection.shippingTitle') }}
+            </p>
+            <div class="flex flex-col text-sm text-default space-y-1">
+              <div><span class="text-muted">{{ $t('admin.ordersSection.recipient') }}:</span> {{ row.original.recipient_name || '—' }}</div>
+              <div><span class="text-muted">{{ $t('admin.ordersSection.address') }}:</span> <span class="whitespace-pre-line">{{ row.original.address || '—' }}</span></div>
+              <div><span class="text-muted">{{ $t('admin.ordersSection.phone') }}:</span> {{ row.original.phone || '—' }}</div>
+              <div v-if="row.original.notes">
+                <span class="text-muted">{{ $t('admin.ordersSection.notes') }}:</span> {{ row.original.notes }}
+              </div>
+            </div>
+            <p
+              v-if="!hasShippingInfo(row.original)"
+              class="text-sm text-muted italic mt-2"
+            >
+              {{ $t('admin.ordersSection.noShippingInfo') }}
+            </p>
+          </div>
+
+          <!-- SPEC-057: postage. One submit records the tracking AND tells the
+               buyer, because a seller who has to remember to do the second half
+               separately eventually won't. -->
+          <div>
+            <div class="flex items-center justify-between mb-2 gap-2">
+              <p class="text-sm font-semibold text-highlighted">
+                {{ $t('admin.ordersSection.postageTitle') }}
+              </p>
+              <span
+                v-if="row.original.shipped_at"
+                class="text-xs text-muted"
+              >
+                {{ row.original.delivered_at
+                  ? `${$t('admin.ordersSection.deliveredOn')} ${formatDate(row.original.delivered_at)}`
+                  : `${$t('admin.ordersSection.shippedOn')} ${formatDate(row.original.shipped_at)}` }}
+              </span>
+            </div>
+
+            <div class="space-y-3">
+              <UFormField :label="$t('admin.ordersSection.courier')">
+                <UInputMenu
+                  v-model="shipmentDraft(row.original).courier"
+                  :items="COURIERS"
+                  create-item
+                  :placeholder="$t('admin.ordersSection.courierPlaceholder')"
+                  class="w-full"
+                  @create="(v: string) => { shipmentDraft(row.original).courier = v }"
+                />
+              </UFormField>
+
+              <UFormField :label="$t('admin.ordersSection.trackingNumber')">
+                <UInput
+                  v-model="shipmentDraft(row.original).trackingNumber"
+                  :placeholder="$t('admin.ordersSection.trackingNumberPlaceholder')"
+                  class="w-full"
+                  @keyup.enter="recordShipment(row.original)"
+                />
+              </UFormField>
+
+              <UFormField
+                :label="$t('admin.ordersSection.trackingUrl')"
+                :description="$t('admin.ordersSection.trackingUrlHint')"
+              >
+                <UInput
+                  v-model="shipmentDraft(row.original).trackingUrl"
+                  type="url"
+                  placeholder="https://"
+                  class="w-full"
+                />
+              </UFormField>
+
+              <UCheckbox
+                v-model="shipmentDraft(row.original).notify"
+                :label="$t('admin.ordersSection.notifyBuyer')"
+              />
+
+              <div class="flex items-center gap-2">
+                <UButton
+                  size="sm"
+                  icon="i-lucide-truck"
+                  :label="row.original.shipped_at
+                    ? $t('admin.ordersSection.updateShipment')
+                    : $t('admin.ordersSection.recordShipment')"
+                  :loading="busy === row.original.id"
+                  @click="recordShipment(row.original)"
+                />
+                <UButton
+                  v-if="row.original.tracking_url"
+                  size="sm"
+                  variant="ghost"
+                  color="neutral"
+                  icon="i-lucide-external-link"
+                  :to="row.original.tracking_url"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  :label="$t('admin.ordersSection.trackParcel')"
+                />
+              </div>
             </div>
           </div>
-          <p
-            v-if="!hasShippingInfo(row.original)"
-            class="text-sm text-muted italic mt-2"
-          >
-            No shipping info collected yet.
-          </p>
         </div>
       </template>
     </UTable>

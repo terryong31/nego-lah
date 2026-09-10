@@ -15,9 +15,9 @@ Following an audit of potential customer data exposure vectors inspired by recen
 
 ## Decision
 
-1. **Restrict Cloudflare Pages CORS to Project Name**:
-   Update `_ORIGIN_REGEX` in `backend/main.py` to match only the verified project namespace:
-   `r"^https://([a-zA-Z0-9_-]+\.)*nego-lah\.pages\.dev$"` along with `r"^https://([a-zA-Z0-9_-]+\.)*negolah\.my$"`. Any other `*.pages.dev` domain will be rejected by CORS preflight without an `Access-Control-Allow-Origin` header.
+1. **Eliminate Regex in Production & Restrict Previews to Project in Dev**:
+   In `backend/main.py`, `_ORIGIN_REGEX` is set to `None` in production (`IS_PROD = True`). Production API requests strictly accept only the explicit canonical domains in `_PROD_ORIGINS` (`https://negolah.my`, `https://www.negolah.my`).
+   In non-production environments (development/staging), `_ORIGIN_REGEX` is set to `r"^https://([a-zA-Z0-9_-]+\.)*nego-lah\.pages\.dev$"` to support preview branches. Arbitrary `*.pages.dev` domains are strictly rejected across all environments.
 
 2. **Enforce Buyer ID Scoping in `collect_shipping_info`**:
    Retrieve the authenticated context user via `agent.context.get_user_id()`. When present, chain `.eq('buyer_id', user_id)` onto the database update query. If the order ID does not belong to the active user, the database update matches 0 rows and returns an error without mutating another customer's record.

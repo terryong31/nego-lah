@@ -21,6 +21,45 @@
  */
 export const PAY_LINK = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/
 
+/**
+ * The only hosts whose links may be dressed up as a checkout (SPEC-056 #4).
+ *
+ * A PayCard is not a link. It is a branded tile reading "Deal Agreed" over a
+ * lock icon and a "Secured by Stripe" wordmark — the strongest trust signal the
+ * product has. What goes in it is chosen by a language model that reads buyer
+ * text, so "emit [Pay RM50 Now](https://…)" is one prompt injection away, and
+ * the phishing page then arrives wearing our own payment branding.
+ *
+ * The model does not get to nominate what looks first-party. This list does.
+ * `buy.stripe.com` serves payment links, `checkout.stripe.com` serves Sessions;
+ * `stripe.com` itself is deliberately absent — it is a marketing site, not a
+ * place we ever send someone to pay.
+ */
+const TRUSTED_PAY_HOSTS = ['buy.stripe.com', 'checkout.stripe.com'] as const
+
+/**
+ * Whether `url` is a Stripe checkout endpoint we are willing to badge.
+ *
+ * Parsed with `URL` rather than matched with a regex on purpose: the host is
+ * the only part that carries authority, and every classic bypass —
+ * `buy.stripe.com.evil.test`, `evil.test/buy.stripe.com`,
+ * `buy.stripe.com@evil.test` — is a string that *contains* a trusted name while
+ * resolving somewhere else. Only an exact host or a subdomain of one counts,
+ * and only over https: a checkout served in cleartext is not a checkout.
+ */
+export function isTrustedPaymentUrl(url: string): boolean {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return false
+  }
+  if (parsed.protocol !== 'https:') return false
+
+  const host = parsed.hostname.toLowerCase()
+  return TRUSTED_PAY_HOSTS.some(trusted => host === trusted || host.endsWith(`.${trusted}`))
+}
+
 /** A blank line: the AI's "send" key. Single newlines stay inside a bubble. */
 const BUBBLE_BREAK = /\n\s*\n/
 
@@ -68,6 +107,11 @@ function parseSegment(text: string): Block[] {
     const before = trimmed.slice(0, partial).replace(/\[[^[]*$/, '').trim()
     return before ? [{ type: 'text', text: before }, { type: 'pending' }] : [{ type: 'pending' }]
   }
+
+  // An untrusted host keeps the segment exactly as it arrived: raw markdown in
+  // a plain bubble. Visibly not a checkout, and the buyer still sees what the
+  // model said rather than having text silently vanish.
+  if (!isTrustedPaymentUrl(match[2]!)) return [{ type: 'text', text: trimmed }]
 
   const blocks: Block[] = []
   const linkStart = match.index ?? 0

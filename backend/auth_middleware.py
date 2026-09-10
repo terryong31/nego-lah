@@ -119,13 +119,18 @@ def get_user_id_from_body_or_token(body_user_id: str | None, token_user_id: str)
 
 
 async def get_optional_user_id(request: Request) -> str | None:
-    """Extract user_id from Authorization header or ?token= if present; return None if unauthenticated."""
+    """Extract user_id from the Authorization header; return None if unauthenticated.
+
+    SPEC-056 #6: `?token=` used to be accepted here as well. A URL is written
+    into access logs, proxy logs, browser history and the `Referer` of the next
+    request the page makes, so an hour-long API credential does not belong in
+    one. Nothing sends it that way, and the SSE stream — the one caller that
+    genuinely could not use a header — now uses a short-lived ticket instead.
+    """
     auth_header = request.headers.get("Authorization") if hasattr(request, "headers") else None
-    token = None
-    if auth_header and auth_header.startswith("Bearer "):
-        token = auth_header.split(" ", 1)[1]
-    if not token and hasattr(request, "query_params"):
-        token = request.query_params.get("token")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        return None
+    token = auth_header.split(" ", 1)[1]
     if not token:
         return None
 

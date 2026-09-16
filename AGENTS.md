@@ -1,69 +1,93 @@
-# Agent Guide - Nego-Lah Monorepo
+# Agent Guide — Nego-Lah Monorepo
 
-Welcome to the **Nego-Lah** codebase. This repository contains the full-stack ecosystem for an autonomous second-hand marketplace with AI-powered price negotiations.
+This repository implements an autonomous second-hand marketplace with real-time AI-driven price negotiation.
 
-## Monorepo Architecture Overview
-
-- **`/frontend`**: Nuxt 4 Single Page Application (`ssr: false`) with Nuxt UI and TailwindCSS v4, hosted on **Cloudflare Pages**.
-- **`/backend`**: Modular Monolith built with FastAPI, Redis, and LangGraph/LangChain, hosted on an **AWS Lightsail** VPS instance.
-- **`/specs`**: Spec-Driven Development (SDD) following the **LeanSpec** framework (<2k tokens per spec).
-- **Tooling**:
-  - **mise**: Polyglot version manager & task orchestrator (`mise.toml`).
-  - **uv**: Ultra-fast deterministic Python packaging (`pyproject.toml` + `uv.lock`).
-  - **bun**: Fast JavaScript runtime and package manager for the frontend.
-  - **infisical**: Multi-environment secrets manager (`dev`, `prod`) connected to Infisical Cloud.
+Follow the rules below to keep the codebase consistent, maintainable, and safe to change.
 
 ---
 
-## Core Rules of Engagement for AI Agents
+## 1. Spec-First Development (LeanSpec)
 
-1. **Spec-Driven Development (LeanSpec) First:**
-   - Before implementing any new feature, substantial bugfix, or architectural change, you **MUST** create or update a spec file in `/specs/SPEC-XXX-<name>.md` following the LeanSpec YAML frontmatter format.
-   - Keep specs concise (<2,000 tokens) focusing on Context, Acceptance Criteria, API Contracts, and Test Scenarios.
-   - Update docs by adding adr into docs/adr to document architectural decisions.
+Documentation must stay lean. Long-form specs waste context and increase the chance of agents drifting from what's actually required.
 
-2. **Strict Test-Driven Development (TDD):**
-   - **Red:** Write automated tests asserting the spec's acceptance criteria first. Verify they fail.
-   - **Green:** Write the minimal implementation code to satisfy the tests. Verify they pass.
-   - **Refactor:** Clean up code, enforce domain boundaries and typing, without breaking tests.
+1. **LeanSpec (under 2,000 tokens) only:**
+   - Before writing a feature or fixing a non-trivial bug, create or update a spec file in `/docs/specs/SPEC-XXX-<name>.md`.
+   - Follow the YAML frontmatter format (`id:`, `title:`, `status:`, `tags:`).
+   - Keep it concise. Include only:
+     - **Context & Objectives** — the problem being solved
+     - **Acceptance Criteria** — checklist of required behavior
+     - **Technical Design & Contracts** — routes, schemas, invariants
+     - **TDD Scenarios** — what unit/integration tests will assert
+     - **Implementation Files** — files expected to change
+2. **Record architectural decisions as ADRs:**
+   - Any architectural pivot or major design pattern gets an ADR in `/docs/adr/`.
+3. **No spec, no code:**
+   - Do not start implementation without a corresponding spec in `/docs/specs/`.
 
-3. **Domain Boundary Discipline (Modular Monolith):**
-   - In `/backend`, business logic is strictly partitioned into `domains/` (`catalog`, `negotiation`, `billing`, `identity`, `webhooks`).
-   - Domains **must never** directly query or import internal tables/files of another domain. Cross-domain communication is performed solely via exported Domain Service classes.
+---
 
-4. **Preserve Cloudflare Pages SPA Architecture:**
-   - The frontend is an SPA (`ssr: false`). Do not introduce Node/Nitro edge-only dependencies or SSR cookie dependencies. All auth is handled client-side via `@nuxtjs/supabase`.
+## 2. Test-Driven Development
 
-5. **Secrets & Environment Variables:**
-   - Never commit secrets or hardcoded API keys. All environment variables are injected via Infisical Cloud (`infisical run --env=dev -- ...`) or defined in typed configurations.
+Follow the Red-Green-Refactor cycle:
+1. **Red:** Write tests asserting the spec's acceptance criteria first. Run them and confirm they fail.
+2. **Green:** Write the minimal implementation needed to pass. Run the tests and confirm they pass.
+3. **Refactor:** Clean up the implementation and enforce domain boundaries without breaking tests.
+4. **Coverage gate:** Backend coverage is enforced at **≥88%**. Builds fail below this threshold — write tests accordingly.
 
-6. **Security Anti-Patterns & Defensive Coding Standards:**
-   - Always adhere to [`docs/SECURITY_ANTI_PATTERNS.md`](docs/SECURITY_ANTI_PATTERNS.md).
-   - Ensure all mutating admin endpoints enforce `verify_csrf_token`.
-   - Never use optional scoping on database updates/deletions (`if user_id: query.eq()`) — always fail closed.
-   - Require password re-authentication on destructive or identity operations (email change, account deletion).
-   - Validate external URLs emitted by AI agents against allowlists before rendering them as trusted checkout elements.
+---
+
+## 3. Domain Boundary Discipline (Modular Monolith)
+
+The backend is a modular monolith partitioned into bounded domains under `backend/domains/` (`catalog`, `negotiation`, `billing`, `identity`, `webhooks`):
+- **No cross-domain table access:** A domain must never import models or query another domain's private tables directly.
+- **Use domain services:** Cross-domain communication goes through exported service classes (e.g. `CatalogService`, `BillingService`).
+- **Resource constraints:** The backend runs on an AWS Lightsail instance with 2 GB RAM. Avoid heavy subprocesses or task queues like Celery — use lifespan-scoped background loops only.
+
+---
+
+## 4. Frontend Architecture (Cloudflare Pages SPA, No SSR)
+
+- The frontend is a pure single-page application (`ssr: false`).
+- Do not use Node/Nitro edge-only dependencies, server routes (`server/api`), or SSR-based cookie handling.
+- Authentication is handled client-side via `@nuxtjs/supabase`.
+- UI is built with **Nuxt UI** and **Tailwind CSS v4**. Prefer utility classes over custom CSS.
+
+---
+
+## 5. Secrets & Environment Variables
+
+- Never commit secrets, service-role keys, or API tokens.
+- Secrets are managed centrally and injected via Infisical Cloud (`infisical run --env=dev -- ...`).
+- For local development without Infisical, use `.env.example` as a template.
+
+---
+
+## 6. Security Requirements
+
+Follow [`docs/security/ANTI_PATTERNS.md`](docs/security/ANTI_PATTERNS.md):
+- **CSRF on admin operations:** Every mutating endpoint under `/admin` must enforce `verify_csrf_token`.
+- **Fail-closed queries:** Never apply optional scoping (e.g. `if user_id: query.eq()`). If `user_id` is missing, reject the request.
+- **Protect floor price:** Never expose `min_price` to the client API or in agent prompts. PostgreSQL column privileges enforce this at the database layer.
+- **Allowlist external URLs:** Validate external links before rendering them in chat.
 
 ---
 
 ## Essential Commands (`mise`)
 
-Run these commands from the repository root:
+Run these from the repo root:
 
 ```bash
-# Start complete local development environment (Redis + FastAPI :8000 + Nuxt :3000)
+# Start everything locally (Redis + FastAPI :8000 + Nuxt :3000)
 mise run dev
 
-# Run all test suites (Backend pytest + Frontend vitest)
+# Run all test suites (Pytest + Vitest)
 mise run test
 
-# Run individual service tests
+# Run individual test suites
 mise run test:backend
 mise run test:frontend
 
-# Lint and check code quality
+# Run linter and typechecks
 mise run lint
-
-# Typecheck frontend
 mise run typecheck
 ```

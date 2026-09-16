@@ -1,3 +1,4 @@
+import { resolveUserId } from '~/utils/auth'
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export type SupportedLocale = 'en' | 'ms' | 'zh'
 
@@ -71,13 +72,15 @@ export function useLanguage() {
   }
 
   async function syncLanguageToServer(lang: SupportedLocale) {
-    if (!user.value?.id) return
+    const userId = resolveUserId(user.value)
+    if (!userId) return
     try {
-      await call(`/user/${user.value.id}/language`, {
+      await call(`/user/${userId}/language`, {
         method: 'PUT',
         body: { language: lang }
       })
-      if (user.value.user_metadata) {
+      // `resolveUserId` does not narrow `user.value`, so guard it explicitly.
+      if (user.value?.user_metadata) {
         user.value.user_metadata.preferred_language = lang
       }
     } catch (err) {
@@ -91,7 +94,7 @@ export function useLanguage() {
     if (typeof localStorage !== 'undefined') {
       localStorage.setItem('nego-lah-locale', newLang)
     }
-    if (persistServer && user.value?.id) {
+    if (persistServer && resolveUserId(user.value)) {
       await syncLanguageToServer(newLang)
     }
   }

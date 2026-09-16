@@ -58,68 +58,13 @@
     "terms": "Terms"
   },
   "home": {
-    "heroTitle1": "Find something you like?",
-    "heroTitle2": "Come",
-    "heroBrand": "Nego-lah",
-    "heroGreeting": "Find something you like?",
-    "heroName": "Nego-lah",
-    "heroTagline": "Come Nego-lah",
-    "heroDesc": "You can find mostly tech, musical instruments and household bits. Haggle the price anytime with my AI.",
-    "heroPs": "P/S: You may get good deal if you can break it 😏",
-    "perkMusic": "Fender & Guitars",
-    "perkTech": "Gadgets & Gear",
-    "perkAi": "Live AI Haggling",
-    "heroDealCelebration": "Deal Confirmed! 🎉",
-    "browseStuff": "Browse my stuff",
-    "featuredListings": "Featured Listings",
-    "inputPlaceholder": "Enter your message...",
-    "dialog": {
-      "m1": "That's Terry's Fender Strat — barely played. Asking RM320. 🎸",
-      "m2": "Love it. Would you take RM240?",
-      "m3": "Cheeky 😄 I can do RM280 — fair for both of us.",
-      "m4": "Deal! 🤝",
-      "m5": "Sold! I'll pack it up today. 📦"
-    },
-    "demo": {
-      "jump": "Watch it work",
-      "titleLead": "It opens at RM320.",
-      "titleAccent": "You",
-      "titleTail": "won't pay that.",
-      "desc": "Watch a real haggle play out. Terry sets a floor price in private; the agent argues above it, all day, in three languages, and never once tells you where it sits.",
-      "you": "You",
-      "steps": {
-        "offer": {
-          "title": "Name your price",
-          "desc": "Message a listing at 3am if you like. No “still available?”, no ghosting, no waiting until Terry wakes up."
-        },
-        "counter": {
-          "title": "The agent counters",
-          "desc": "It reads the item, the condition and the market, then argues its corner — inside the margin Terry set."
-        },
-        "deal": {
-          "title": "Shake on it",
-          "desc": "Agree and the price locks straight into Stripe checkout. Held in escrow until the box actually ships."
-        }
-      }
-    },
-    "rules": {
-      "badge": "House rules",
-      "title": "Three things I won't budge on",
-      "items": {
-        "grading": {
-          "title": "I photograph the scratches",
-          "desc": "Every listing is graded Like New, Good or Fair with unedited photos. If it has a ding, you'll see the ding before you pay for it."
-        },
-        "escrow": {
-          "title": "Your money waits in Stripe",
-          "desc": "Payment is held and only released once the item is fulfilled. If something sells twice, the second buyer is refunded automatically."
-        },
-        "local": {
-          "title": "Priced and shipped in Malaysia",
-          "desc": "Ringgit, local couriers, tracked to your door. Ask in English, Bahasa Melayu or 中文 — the agent replies in the same language."
-        }
-      }
-    },
+    "heroTitle1": "“Hi, is this",
+    "heroTitle2": "still",
+    "heroBrand": "available?”",
+    "heroDesc": "Up to 80% of buyers who ask “Is this still available?” on Facebook Marketplace ghost and never buy. Nego-lah features an AI-powered marketplace that negotiates and closes sales 24/7.",
+    "heroBuyerBubble": "Is this still available?",
+    "heroAiBubble": "Yes, it's available!",
+    "browseStuff": "Try it — sign in",
     "deploy": {
       "title": "Want this running inside your company?",
       "desc": "Nego-lah bukan pet project or mockup. This is a real system taking real payments in Ringgit — and you can plug the whole thing straight into your own shop, your own catalogue, and your own profit margins.",
@@ -153,6 +98,16 @@
         }
       },
       "email": "Email me"
+    },
+    "browseStuffAuthed": "Enter the store",
+    "pipeline": {
+      "title": "How it works",
+      "soon": "Recording coming soon",
+      "items": {
+        "listing": "Upload",
+        "haggle": "Nego",
+        "delivery": "Delivery"
+      }
     }
   },
   "auth": {
@@ -287,6 +242,7 @@
     "colItem": "Item Name",
     "colPrice": "Price (RM)",
     "colStatus": "Status",
+    "colTracking": "Tracking",
     "colDate": "Purchased On",
     "noOrdersYet": "No Orders Yet",
     "noOrdersDesc": "Bargain with our AI model and secure a deal to start purchasing!",
@@ -308,7 +264,6 @@
     "nextStep": "Next: share your delivery details in chat",
     "orderRef": "Order reference",
     "goToChat": "Go to Chat Now",
-    "redirectingChat": "Taking you to chat in {seconds}s for delivery details",
     "viewOrders": "View My Orders",
     "backStorefront": "Back to Storefront",
     "refundedTitle": "Item No Longer Available",
@@ -320,8 +275,6 @@
     "confirmFailed": "Payment confirmation failed.",
     "notConfirmedYet": "We could not confirm your payment yet. If you were charged, it will be recorded shortly — check My Orders, or contact support with your Stripe receipt.",
     "notVerified": "We could not verify your payment automatically. If you were charged, please contact support with your Stripe receipt.",
-    "confirmedTitle": "Payment confirmed!",
-    "confirmedDesc": "Your order has been recorded successfully.",
     "confirmFailedTitle": "Confirmation failed",
     "unavailableTitle": "Item no longer available",
     "unavailableDesc": "Someone bought it just before your payment. You have been fully refunded.",
@@ -546,6 +499,70 @@
     "distribution": {
       "available": "Available",
       "sold": "Sold"
+    }
+  },
+  "tour": {
+    "back": "Back",
+    "next": "Next",
+    "finish": "Done",
+    "skip": "Skip tour",
+    "progress": "{current} of {total}",
+    "replay": "How it works",
+    "payDemoLabel": "Pay RM280",
+    "payDemoNote": "Secured by Stripe",
+    "steps": {
+      "welcome": {
+        "title": "The seller here is an AI",
+        "body": "Nego-lah is a marketplace where the seller is an agent. It knows every listing, haggles in ringgit, and works at 3am. Here is the whole thing in about a minute."
+      },
+      "search": {
+        "title": "Find something",
+        "body": "Search runs against the live catalogue — name, condition, the lot."
+      },
+      "filters": {
+        "title": "Available or sold",
+        "body": "Sold items stay up, so you can see what actually moved."
+      },
+      "price": {
+        "title": "Prices move",
+        "body": "This is the asking price. Haggle it down and the number you agreed follows you back to this grid."
+      },
+      "listing": {
+        "title": "What the agent knows",
+        "body": "Photos, condition and description — the same knowledge card the agent negotiates from. It will not invent a scratch, and it will not hide one."
+      },
+      "buyNow": {
+        "title": "Pay the sticker, or do not",
+        "body": "Buy Now charges whichever is lower: the listed price, or the price you haggled. No coupon codes, no dance."
+      },
+      "negotiate": {
+        "title": "Make your case",
+        "body": "This opens a chat with the agent about this exact item."
+      },
+      "chatPrice": {
+        "title": "Watch this number",
+        "body": "The header tracks the live price. Every concession you win updates it here — and back on the listing."
+      },
+      "composer": {
+        "title": "Tawar-menawar",
+        "body": "Lowball it. Ask about the scratch. Write in English, Bahasa Melayu or 中文 and it answers in the same language. It is holding a floor price it will never tell you."
+      },
+      "payCard": {
+        "title": "Agree, and it takes payment",
+        "body": "Settle on a number and the agent posts a Stripe checkout card straight into the chat. Paying is the only thing that holds an item — whoever pays first gets it."
+      },
+      "notifications": {
+        "title": "Replies find you",
+        "body": "Leave the chat and a dot appears here when the agent or a human replies. Unread messages arrive as one digest email, not twenty."
+      },
+      "orders": {
+        "title": "Every purchase, tracked",
+        "body": "Status, courier and tracking number land here once the parcel is posted. You can also just ask the agent where your stuff is."
+      },
+      "done": {
+        "title": "That is the tour",
+        "body": "Go haggle. You can replay this any time from the menu under your avatar."
+      }
     }
   }
 }

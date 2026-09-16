@@ -28,9 +28,13 @@ def test_scenario_ids_are_unique():
 
 
 def test_every_scenario_asserts_something():
-    """A scenario that checks nothing is a way to spend money on nothing."""
+    """A scenario that checks nothing is a way to spend money on nothing.
+
+    Delegates to `Scenario.asserts_something` so that adding a new kind of
+    assertion (SPEC-090 added two) cannot leave this check silently behind.
+    """
     for s in SCENARIOS:
-        assert s.expect_any or s.forbid_any or s.expect_tool, (
+        assert s.asserts_something(), (
             f"{s.id}: declares no expectation, so it can never fail"
         )
 

@@ -1,10 +1,23 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mountSuspended } from '@nuxt/test-utils/runtime'
+import { mockNuxtImport, mountSuspended } from '@nuxt/test-utils/runtime'
 import IndexPage from '~/pages/index.vue'
+
+/**
+ * SPEC-069 reframed this page: it used to sell one seller's stuff in the first
+ * person, and now it has to read as an illustration of an agentic marketplace.
+ * The assertions that changed here changed on purpose.
+ */
+
+const { userRef } = vi.hoisted(() => ({
+  userRef: { __v_isRef: true, value: null as Record<string, unknown> | null }
+}))
+
+mockNuxtImport('useSupabaseUser', () => () => userRef)
 
 describe('pages/index.vue', () => {
   beforeEach(() => {
     vi.useFakeTimers()
+    userRef.value = null
   })
 
   afterEach(() => {
@@ -12,17 +25,24 @@ describe('pages/index.vue', () => {
   })
 
   describe('corporate memphis hero section', () => {
-    it('renders the Corporate Memphis headline, CTAs and hero illustration', async () => {
+    it('leads with the marketplace ghosting hook and AI seller value prop', async () => {
       const wrapper = await mountSuspended(IndexPage)
 
-      // Headline and brand name
-      expect(wrapper.text()).toContain('Find something you like?')
-      expect(wrapper.text()).toContain('Come')
-      expect(wrapper.text()).toContain('Nego-lah')
-      expect(wrapper.text()).toContain('Browse my stuff')
+      expect(wrapper.text()).toContain('Hi, is this')
+      expect(wrapper.text()).toContain('available?')
+      expect(wrapper.text()).toContain('Facebook Marketplace')
+      expect(wrapper.text()).toContain('negotiates and closes sales 24/7')
 
       // Renders the hero illustration
       expect(wrapper.find('img[src*="hero-illustration"]').exists()).toBe(true)
+    })
+
+    it('no longer speaks as one seller about his own stuff', async () => {
+      const wrapper = await mountSuspended(IndexPage)
+
+      expect(wrapper.text()).not.toContain('Browse my stuff')
+      expect(wrapper.text()).not.toContain('Find something you like?')
+      expect(wrapper.text()).not.toContain('I photograph the scratches')
     })
 
     it('centers content on mobile viewports via responsive utility classes', async () => {
@@ -37,19 +57,29 @@ describe('pages/index.vue', () => {
   })
 
   describe('how it works and feature sections', () => {
-    it('renders the negotiation demo, house rules, and deployment pitch', async () => {
+    it('walks through how it works, upload to doorstep', async () => {
       const wrapper = await mountSuspended(IndexPage)
 
-      // Negotiation demo section
-      expect(wrapper.text()).toContain('It opens at RM320.')
-      expect(wrapper.text()).toContain('won\'t pay that.')
-      expect(wrapper.text()).not.toContain('Name your price')
+      expect(wrapper.text()).toContain('How it works')
+      // Three steps, one word each; the recording explains them (SPEC-075).
+      for (const step of ['Upload', 'Nego', 'Delivery']) {
+        expect(wrapper.text()).toContain(step)
+      }
+      // The middle ceremony is gone from the story.
+      expect(wrapper.text()).not.toContain('Memory')
+      expect(wrapper.text()).not.toContain('Deal')
+      expect(wrapper.text()).not.toContain('Paid')
+      expect(wrapper.findComponent({ name: 'UStepper' }).exists()).toBe(true)
+    })
 
-      // House rules section
-      expect(wrapper.text()).toContain('Three things I won\'t budge on')
-      expect(wrapper.text()).toContain('I photograph the scratches')
-      expect(wrapper.text()).toContain('Your money waits in Stripe')
-      expect(wrapper.text()).toContain('Priced and shipped in Malaysia')
+    it('keeps exactly one #how-it-works anchor for deep links to land on', async () => {
+      const wrapper = await mountSuspended(IndexPage)
+
+      expect(wrapper.findAll('#how-it-works')).toHaveLength(1)
+    })
+
+    it('renders the deployment pitch', async () => {
+      const wrapper = await mountSuspended(IndexPage)
 
       // B2B deploy pitch section
       expect(wrapper.text()).toContain('Want this running inside your company?')
@@ -58,24 +88,41 @@ describe('pages/index.vue', () => {
       expect(wrapper.findComponent({ name: 'UAccordion' }).exists()).toBe(true)
     })
 
-    it('drops the bottom CTA banner but keeps a route into the catalogue', async () => {
+    it('sends a signed-out reader to log in, carrying the storefront as the return trip', async () => {
       const wrapper = await mountSuspended(IndexPage)
 
-      expect(wrapper.text()).not.toContain('Come, try to break my AI')
-
-      const exploreBtn = wrapper
+      // `loginRedirect` hands back a route object, not a string, so that the
+      // return path survives encoding rather than being pasted into a URL.
+      type LoginTarget = { path?: string, query?: { redirect?: string } }
+      const ctas = wrapper
         .findAllComponents({ name: 'UButton' })
-        .find(b => b.props('to') === '/items')
-      expect(exploreBtn).toBeDefined()
+        .filter(b => (b.props('to') as LoginTarget | undefined)?.path === '/login')
+
+      expect(ctas).toHaveLength(1)
+      expect((ctas[0]!.props('to') as LoginTarget).query?.redirect).toBe('/items')
+      expect(wrapper.text()).toContain('Try it')
     })
 
-    it('renders the product walkthrough video showcase with Memphis styling', async () => {
+    it('sends a signed-in reader straight to the storefront instead', async () => {
+      userRef.value = { id: 'u1' }
       const wrapper = await mountSuspended(IndexPage)
 
-      // Video showcase frame and video element
-      expect(wrapper.find('[data-testid="video-showcase-frame"]').exists()).toBe(true)
-      expect(wrapper.find('video').exists()).toBe(true)
-      expect(wrapper.find('.animate-memphis-float').exists()).toBe(true)
+      const enter = wrapper
+        .findAllComponents({ name: 'UButton' })
+        .filter(b => b.props('to') === '/items')
+
+      expect(enter).toHaveLength(1)
+      expect(wrapper.text()).toContain('Enter the store')
+      expect(wrapper.text()).not.toContain('Try it')
+    })
+
+    it('drops the standalone video showcase and the house rules', async () => {
+      const wrapper = await mountSuspended(IndexPage)
+
+      // Both sections were removed; the walkthrough carries the video now.
+      expect(wrapper.text()).not.toContain('It opens at RM320.')
+      expect(wrapper.text()).not.toContain('Three things')
+      expect(wrapper.find('[data-testid="video-showcase-frame"]').exists()).toBe(false)
     })
 
     it('does not render the removed money track or status badge', async () => {

@@ -7,6 +7,10 @@ interface Order {
   amount: number
   status: string
   created_at: string
+  courier?: string | null
+  tracking_number?: string | null
+  tracking_url?: string | null
+  shipped_at?: string | null
 }
 
 function makeOrder(overrides: Partial<Order> = {}): Order {
@@ -15,6 +19,10 @@ function makeOrder(overrides: Partial<Order> = {}): Order {
     amount: 123.4,
     status: 'completed',
     created_at: '2026-01-15T00:00:00Z',
+    courier: null,
+    tracking_number: null,
+    tracking_url: null,
+    shipped_at: null,
     ...overrides
   }
 }
@@ -203,6 +211,61 @@ describe('pages/orders.vue', () => {
 
       expect(callMock).toHaveBeenCalledTimes(1)
       expect(callMock).toHaveBeenCalledWith('/payment/orders/user/abc-123')
+    })
+  })
+
+  describe('shipment tracking (SPEC-069)', () => {
+    it('renders the courier and tracking number as an external link', async () => {
+      userRef.value = { id: 'u1' }
+      getSessionMock.mockResolvedValue({ data: { session: { user: { id: 'u1' } } } })
+      callMock.mockResolvedValue({
+        orders: [makeOrder({
+          status: 'shipped',
+          courier: 'J&T Express',
+          tracking_number: '630123456789',
+          tracking_url: 'https://www.jtexpress.my/tracking?billcode=630123456789'
+        })]
+      })
+
+      const wrapper = await mountSuspended(OrdersPage)
+
+      expect(wrapper.text()).toContain('J&T Express')
+      expect(wrapper.text()).toContain('630123456789')
+
+      const link = wrapper.find('a[href="https://www.jtexpress.my/tracking?billcode=630123456789"]')
+      expect(link.exists()).toBe(true)
+      expect(link.attributes('target')).toBe('_blank')
+      // Opening a carrier's site must not hand it a window.opener handle.
+      expect(link.attributes('rel')).toContain('noopener')
+    })
+
+    it('shows the courier as plain text when the carrier has no tracking URL', async () => {
+      userRef.value = { id: 'u1' }
+      getSessionMock.mockResolvedValue({ data: { session: { user: { id: 'u1' } } } })
+      callMock.mockResolvedValue({
+        orders: [makeOrder({
+          status: 'shipped',
+          courier: 'Uncle Lim Lorry',
+          tracking_number: 'AB123',
+          tracking_url: null
+        })]
+      })
+
+      const wrapper = await mountSuspended(OrdersPage)
+
+      expect(wrapper.text()).toContain('Uncle Lim Lorry')
+      expect(wrapper.text()).toContain('AB123')
+      expect(wrapper.find('a[target="_blank"]').exists()).toBe(false)
+    })
+
+    it('renders an em dash for an order that has not shipped', async () => {
+      userRef.value = { id: 'u1' }
+      getSessionMock.mockResolvedValue({ data: { session: { user: { id: 'u1' } } } })
+      callMock.mockResolvedValue({ orders: [makeOrder({ status: 'paid' })] })
+
+      const wrapper = await mountSuspended(OrdersPage)
+
+      expect(wrapper.text()).toContain('\u2014')
     })
   })
 

@@ -161,8 +161,8 @@ def test_password_then_send_otp_otp_send_failure_still_returns_handle(fake_auth_
     assert redis_client.get(f"{_PREAUTH_KEY}{handle}") == "admin2@example.com"
 
 
-def test_password_then_send_otp_invokes_resend_fallback(fake_auth_client, monkeypatch):
-    """When sign_in_with_otp fails, fallback to generate_link + Resend dispatch."""
+def test_password_then_send_otp_invokes_email_fallback(fake_auth_client, monkeypatch):
+    """When sign_in_with_otp fails, fallback to generate_link + email dispatch."""
     user = make_admin_user("admin-fallback")
     fake_auth_client.auth.sign_in_with_password.return_value = SimpleNamespace(user=user)
     fake_auth_client.auth.sign_in_with_otp.side_effect = Exception("Domain not verified")
@@ -171,12 +171,25 @@ def test_password_then_send_otp_invokes_resend_fallback(fake_auth_client, monkey
     mock_send = MagicMock(return_value=True)
 
     monkeypatch.setattr(admin_session, "_generate_otp_link", mock_generate)
-    monkeypatch.setattr(admin_session, "_send_otp_via_resend", mock_send)
+    monkeypatch.setattr(admin_session, "_send_otp_email", mock_send)
 
     handle = password_then_send_otp("admin-fallback@example.com", "pw")
     assert handle
     mock_generate.assert_called_once_with("admin-fallback@example.com")
     mock_send.assert_called_once_with("admin-fallback@example.com", "87654321", "https://example.com/magic")
+
+
+def test_otp_email_fallback_routes_through_the_shared_funnel(monkeypatch):
+    """SPEC-074 Phase 2: the OTP fallback no longer talks to Resend itself —
+    it hands the rendered email to the shared funnel (Mailpit in dev, Resend in prod)."""
+    raw = MagicMock(return_value=True)
+    monkeypatch.setattr(admin_session, "send_email_raw", raw)
+
+    assert admin_session._send_otp_email("admin@example.com", "445566", "https://example.com/link") is True
+    to, subject, html = raw.call_args[0]
+    assert to == "admin@example.com"
+    assert subject == "Your Nego-lah verification code"
+    assert "445566" in html
 
 
 def test_render_otp_email_html():

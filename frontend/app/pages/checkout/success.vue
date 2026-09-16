@@ -1,11 +1,11 @@
 <script setup lang="ts">
+import { resolveUserId } from '~/utils/auth'
+
 const { call } = useApi()
 const route = useRoute()
 const user = useSupabaseUser()
 const toast = useToast()
 const { t } = useI18n()
-
-const REDIRECT_SECONDS = 3
 
 // Same palette as the landing hero's dotted matrix.
 const DOT_COLORS = [
@@ -18,34 +18,11 @@ const confirming = ref(true)
 const success = ref(false)
 const refunded = ref(false)
 const errorMessage = ref('')
-const countdown = ref(REDIRECT_SECONDS)
 const orderId = ref('')
 
 const chatUrl = computed(() => {
   const itemId = route.query.item_id as string
   return itemId ? `/chat?item_id=${itemId}` : '/chat'
-})
-
-// Drives the thin bar under the CTA: it drains as the countdown runs, so the
-// wait is legible at a glance without reading the seconds.
-const redirectProgress = computed(() => (countdown.value / REDIRECT_SECONDS) * 100)
-
-let timer: ReturnType<typeof setInterval> | null = null
-
-function startRedirectCountdown() {
-  if (timer) clearInterval(timer)
-  countdown.value = REDIRECT_SECONDS
-  timer = setInterval(() => {
-    countdown.value--
-    if (countdown.value <= 0) {
-      if (timer) clearInterval(timer)
-      navigateTo(chatUrl.value)
-    }
-  }, 1000)
-}
-
-onUnmounted(() => {
-  if (timer) clearInterval(timer)
 })
 
 // Map a backend outcome to the right UI state. `refunded` = this buyer lost a
@@ -59,13 +36,9 @@ function applyOutcome(status?: string) {
       color: 'warning'
     })
   } else {
+    // No toast here: the screen itself already shows "Purchase Successful!",
+    // so a duplicate toast would be redundant.
     success.value = true
-    startRedirectCountdown()
-    toast.add({
-      title: t('checkout.confirmedTitle'),
-      description: t('checkout.confirmedDesc'),
-      color: 'success'
-    })
   }
 }
 
@@ -91,7 +64,7 @@ onMounted(async () => {
     try {
       const res = await call<{ status?: string, order_id?: string }>('/payment/confirm-payment', {
         method: 'POST',
-        query: { item_id: itemId, user_id: user.value?.id, session_id: sessionId }
+        query: { item_id: itemId, user_id: resolveUserId(user.value), session_id: sessionId }
       })
       orderId.value = res?.order_id || ''
       applyOutcome(res?.status)
@@ -113,7 +86,7 @@ onMounted(async () => {
     for (let attempt = 0; attempt < 6; attempt++) {
       try {
         const data = await call<{ orders?: Array<{ id?: string, item_id?: string, status?: string }> }>(
-          `/payment/orders/user/${user.value?.id}`
+          `/payment/orders/user/${resolveUserId(user.value)}`
         )
         const order = data?.orders?.find(o => o.item_id === itemId)
         if (order) {
@@ -134,7 +107,7 @@ onMounted(async () => {
       try {
         const res = await call<{ status?: string, order_id?: string }>('/payment/confirm-payment', {
           method: 'POST',
-          query: { item_id: itemId, user_id: user.value?.id }
+          query: { item_id: itemId, user_id: resolveUserId(user.value) }
         })
         if (res?.status === 'already_sold' || res?.status === 'success') {
           orderId.value = res?.order_id || ''
@@ -232,19 +205,6 @@ onMounted(async () => {
               variant="ghost"
               block
             />
-          </div>
-
-          <!-- Auto-redirect, shown as a draining bar rather than a ticking number -->
-          <div class="mt-6">
-            <div class="h-0.5 w-full rounded-full bg-accented overflow-hidden">
-              <div
-                class="h-full rounded-full bg-primary transition-[width] duration-1000 ease-linear"
-                :style="{ width: `${redirectProgress}%` }"
-              />
-            </div>
-            <p class="mt-2 text-xs text-muted">
-              {{ $t('checkout.redirectingChat', { seconds: countdown }) }}
-            </p>
           </div>
         </template>
 

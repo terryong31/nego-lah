@@ -68,6 +68,23 @@ class FakePubSub:
         self.closed = True
 
 
+class SlowPubSub(FakePubSub):
+    """Redis is a network hop away and the real client awaits one.
+
+    `FakePubSub` resolves without ever yielding, which quietly makes every
+    subscribe/unsubscribe atomic — the one property the real thing does not
+    have, and the one this file needs to be able to break.
+    """
+
+    async def subscribe(self, *channels):
+        await asyncio.sleep(0)
+        self.subscribed.update(channels)
+
+    async def unsubscribe(self, *channels):
+        await asyncio.sleep(0.01)
+        self.subscribed.difference_update(channels)
+
+
 # ---------------------------------------------------------------------------
 # In-process delivery
 # ---------------------------------------------------------------------------
@@ -487,3 +504,43 @@ async def test_publish_delivers_locally_when_the_pubsub_is_not_subscribed():
 
     redis_stub.publish.assert_not_called()
     assert (await asyncio.wait_for(queue.get(), timeout=1.0)) == {"message": "must not vanish"}
+
+
+# ---------------------------------------------------------------------------
+# A stream opening while another closes (SPEC-068)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_a_stream_opening_as_another_closes_keeps_the_channel_subscribed():
+    """The overlap a reload produces: the new page's stream subscribes while the
+    old page's is still tearing down.
+
+    `unsubscribe` dropped the local entry and *then* awaited the Redis command.
+    A subscribe landing in that window found an empty set, so it believed it was
+    the first stream for the user and subscribed — and when the older
+    unsubscribe finally reached Redis it took the channel away underneath it.
+
+    What that leaves is the worst shape a bug can have here: a live SSE
+    connection, attached to a channel nobody publishes to it any more. No error,
+    no disconnect, nothing for the client to react to. The buyer sits there with
+    a healthy-looking stream and is never told anything again, while
+    `GET /chat/unread` keeps answering correctly for anyone who reloads.
+    """
+    broker = NotificationBroker()
+    pubsub = SlowPubSub()
+    broker._pubsub = pubsub
+    channel = channel_for("buyer")
+
+    async with distributed(broker, MagicMock()):
+        closing = await broker.subscribe("buyer")
+        assert channel in pubsub.subscribed
+
+        await asyncio.gather(
+            broker.unsubscribe("buyer", closing),
+            broker.subscribe("buyer"),
+        )
+
+        assert broker.has_subscribers("buyer"), "the new stream is still open"
+        assert channel in pubsub.subscribed, (
+            "a live stream whose channel is unsubscribed is fed nothing, ever"
+        )

@@ -50,7 +50,6 @@ htmlcov/
 
 # ===== Project Specific =====
 stripe-backup-code.txt
-data/
 backend/data/
 # SPEC-045: large media is served from Cloudflare R2, never committed. Master
 # copies live outside the repo (see frontend/scripts/sync-media-r2.mjs).
@@ -73,3 +72,8 @@ dump.rdb
 # Public repo: org/project slugs and auth tokens stay out of git. Sentry CLI
 # reads SENTRY_ORG / SENTRY_PROJECT / SENTRY_AUTH_TOKEN from Infisical instead.
 .sentryclirc
+
+coverage/
+htmlcov/
+.coverage
+coverage.xml

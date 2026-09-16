@@ -56,5 +56,10 @@ useSeoMeta({
     <NuxtLayout>
       <NuxtPage />
     </NuxtLayout>
+    <!--
+      Mounted here rather than in a layout: the tour crosses from `default`
+      to `chat` mid-run, and a layout-scoped instance would unmount under it.
+    -->
+    <TourAppTour />
   </UApp>
 </template>

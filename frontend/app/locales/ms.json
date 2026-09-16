@@ -58,68 +58,13 @@
     "terms": "Terma"
   },
   "home": {
-    "heroTitle1": "Jumpa barang yang anda suka?",
-    "heroTitle2": "Jom",
-    "heroBrand": "Nego-lah",
-    "heroGreeting": "Jumpa barang yang anda suka?",
-    "heroName": "Nego-lah",
-    "heroTagline": "Jom Nego-lah",
-    "heroDesc": "Anda boleh mencari pelbagai alat teknologi, alat muzik dan perkakas rumah. Tawar-menawar harga bila-bila masa dengan AI saya.",
-    "heroPs": "P/S: Anda mungkin dapat tawaran hebat jika berjaya memujuknya 😏",
-    "perkMusic": "Instrumen & Gitar",
-    "perkTech": "Gajet & Teknologi",
-    "perkAi": "Rundingan AI Langsung",
-    "heroDealCelebration": "Tawaran Berjaya! 🎉",
-    "browseStuff": "Lihat barang saya",
-    "featuredListings": "Senarai Pilihan",
-    "inputPlaceholder": "Masukkan mesej anda...",
-    "dialog": {
-      "m1": "Itu Fender Strat milik Terry — jarang dimainkan. Buka harga RM320. 🎸",
-      "m2": "Minat sangat. Boleh dapat RM240 tak?",
-      "m3": "Boleh runding 😄 Saya boleh beri RM280 — adil untuk kita berdua.",
-      "m4": "Setuju! 🤝",
-      "m5": "Terjual! Saya akan bungkus dan pos hari ini. 📦"
-    },
-    "demo": {
-      "jump": "Tengok cara ia berfungsi",
-      "titleLead": "Dia buka RM320.",
-      "titleAccent": "Anda",
-      "titleTail": "takkan bayar harga itu.",
-      "desc": "Tengok rundingan sebenar berlaku. Terry tetapkan harga lantai secara sulit; ejen berhujah di atas paras itu sepanjang hari, dalam tiga bahasa, dan tak sekali pun beritahu anda di mana parasnya.",
-      "you": "Anda",
-      "steps": {
-        "offer": {
-          "title": "Beri harga anda",
-          "desc": "Mesej mana-mana iklan pukul 3 pagi pun boleh. Tiada “masih ada?”, tiada hilang tiba-tiba, tak payah tunggu Terry bangun."
-        },
-        "counter": {
-          "title": "Ejen balas tawaran",
-          "desc": "Ia baca barang, keadaannya dan harga pasaran, kemudian pertahankan pendiriannya — dalam margin yang Terry tetapkan."
-        },
-        "deal": {
-          "title": "Deal, jom",
-          "desc": "Bila setuju, harga terus dikunci ke pembayaran Stripe. Duit ditahan sehingga barang betul-betul dihantar."
-        }
-      }
-    },
-    "rules": {
-      "badge": "Peraturan rumah",
-      "title": "Tiga perkara saya takkan berkompromi",
-      "items": {
-        "grading": {
-          "title": "Calar pun saya ambil gambar",
-          "desc": "Setiap iklan digredkan Macam Baru, Baik atau Sederhana dengan gambar tanpa edit. Kalau ada kemek, anda nampak kemek itu sebelum bayar."
-        },
-        "escrow": {
-          "title": "Duit anda tunggu dalam Stripe",
-          "desc": "Bayaran ditahan dan hanya dilepaskan setelah barang dihantar. Kalau sesuatu terjual dua kali, pembeli kedua dibayar balik secara automatik."
-        },
-        "local": {
-          "title": "Harga dan penghantaran Malaysia",
-          "desc": "Ringgit, kurier tempatan, dijejak sampai ke pintu rumah. Tanya dalam Bahasa Melayu, English atau 中文 — ejen balas dalam bahasa yang sama."
-        }
-      }
-    },
+    "heroTitle1": "“Adakah ini",
+    "heroTitle2": "masih",
+    "heroBrand": "tersedia?”",
+    "heroDesc": "Hampir 80% pembeli yang tanya “Adakah ini masih tersedia?” di Facebook Marketplace akhirnya senyap dan tak jadi beli. Nego-lah menampilkan pasaran AI yang berunding dan memuktamadkan jualan 24/7.",
+    "heroBuyerBubble": "Adakah ini masih tersedia?",
+    "heroAiBubble": "Ya, masih tersedia!",
+    "browseStuff": "Cuba — log masuk",
     "deploy": {
       "title": "Mahu sistem ini berjalan dalam syarikat anda?",
       "desc": "Nego-lah bukan projek main-main atau mockup. Ini sistem sebenar yang terima bayaran tunai Ringgit — dan boleh pasang terus ke kedai, katalog dan margin untung anda sendiri.",
@@ -153,6 +98,16 @@
         }
       },
       "email": "E-mel saya"
+    },
+    "browseStuffAuthed": "Masuk kedai",
+    "pipeline": {
+      "title": "Macam mana ia berfungsi",
+      "soon": "Rakaman akan menyusul",
+      "items": {
+        "listing": "Muat naik",
+        "haggle": "Nego",
+        "delivery": "Hantar"
+      }
     }
   },
   "auth": {
@@ -287,6 +242,7 @@
     "colItem": "Nama Barang",
     "colPrice": "Harga (RM)",
     "colStatus": "Status",
+    "colTracking": "Penjejakan",
     "colDate": "Tarikh Beli",
     "noOrdersYet": "Tiada Pesanan Lagi",
     "noOrdersDesc": "Anda belum membeli sebarang barang lagi.",
@@ -308,7 +264,6 @@
     "nextStep": "Seterusnya: kongsi butiran penghantaran anda dalam sembang",
     "orderRef": "Rujukan pesanan",
     "goToChat": "Ke Sembang Sekarang",
-    "redirectingChat": "Membawa anda ke sembang dalam {seconds}s untuk butiran penghantaran",
     "viewOrders": "Lihat Pesanan Saya",
     "backStorefront": "Kembali ke Kedai",
     "refundedTitle": "Barang Tiada Lagi",
@@ -320,8 +275,6 @@
     "confirmFailed": "Pengesahan pembayaran gagal.",
     "notConfirmedYet": "Kami belum dapat mengesahkan pembayaran anda. Jika anda telah dicaj, ia akan direkodkan tidak lama lagi — semak Pesanan Saya, atau hubungi khidmat sokongan dengan resit Stripe anda.",
     "notVerified": "Kami tidak dapat mengesahkan pembayaran anda secara automatik. Jika anda telah dicaj, sila hubungi khidmat sokongan dengan resit Stripe anda.",
-    "confirmedTitle": "Pembayaran disahkan!",
-    "confirmedDesc": "Pesanan anda telah direkodkan dengan jayanya.",
     "confirmFailedTitle": "Pengesahan gagal",
     "unavailableTitle": "Barang tiada lagi",
     "unavailableDesc": "Seseorang membelinya sejurus sebelum pembayaran anda. Bayaran anda telah dipulangkan sepenuhnya.",
@@ -546,6 +499,70 @@
     "distribution": {
       "available": "Tersedia",
       "sold": "Dijual"
+    }
+  },
+  "tour": {
+    "back": "Kembali",
+    "next": "Seterusnya",
+    "finish": "Selesai",
+    "skip": "Langkau tur",
+    "progress": "{current} daripada {total}",
+    "replay": "Cara ia berfungsi",
+    "payDemoLabel": "Bayar RM280",
+    "payDemoNote": "Dilindungi oleh Stripe",
+    "steps": {
+      "welcome": {
+        "title": "Penjual di sini ialah AI",
+        "body": "Nego-lah ialah pasaran di mana penjualnya seorang ejen AI. Ia tahu setiap penyenaraian, tawar-menawar dalam ringgit, dan bekerja pukul 3 pagi. Ini keseluruhannya dalam masa seminit."
+      },
+      "search": {
+        "title": "Cari sesuatu",
+        "body": "Carian dijalankan pada katalog langsung — nama, keadaan, semuanya."
+      },
+      "filters": {
+        "title": "Ada atau habis dijual",
+        "body": "Barang yang sudah terjual kekal dipaparkan, supaya anda nampak apa yang betul-betul laku."
+      },
+      "price": {
+        "title": "Harga boleh berubah",
+        "body": "Ini harga yang diminta. Tawar sampai turun, dan harga yang anda persetujui akan ikut anda balik ke grid ini."
+      },
+      "listing": {
+        "title": "Apa yang ejen tahu",
+        "body": "Gambar, keadaan dan penerangan — kad pengetahuan yang sama digunakan ejen untuk tawar-menawar. Ia takkan reka calar, dan takkan sembunyikan calar."
+      },
+      "buyNow": {
+        "title": "Bayar harga asal, atau jangan",
+        "body": "Buy Now mengecaj mana yang lebih rendah: harga tersenarai, atau harga yang anda tawar. Tiada kod kupon, tiada kerenah."
+      },
+      "negotiate": {
+        "title": "Cuba tawar",
+        "body": "Ini membuka sembang dengan ejen tentang barang ini."
+      },
+      "chatPrice": {
+        "title": "Perhatikan nombor ini",
+        "body": "Bahagian atas menjejak harga semasa. Setiap tolak ansur yang anda menang dikemas kini di sini — dan pada penyenaraian."
+      },
+      "composer": {
+        "title": "Tawar-menawar",
+        "body": "Tawar rendah. Tanya pasal calar itu. Tulis dalam Bahasa Melayu, English atau 中文 dan ia menjawab dalam bahasa yang sama. Ia memegang harga lantai yang takkan didedahkan kepada anda."
+      },
+      "payCard": {
+        "title": "Setuju, dan ia terus ambil bayaran",
+        "body": "Sebaik harga dipersetujui, ejen menghantar kad pembayaran Stripe terus dalam sembang. Hanya pembayaran yang menahan sesuatu barang — siapa bayar dahulu, dia dapat."
+      },
+      "notifications": {
+        "title": "Balasan akan sampai kepada anda",
+        "body": "Tinggalkan sembang dan satu titik muncul di sini apabila ejen atau manusia membalas. Mesej belum dibaca sampai sebagai satu e-mel ringkasan, bukan dua puluh."
+      },
+      "orders": {
+        "title": "Setiap pembelian, dijejaki",
+        "body": "Status, kurier dan nombor penjejakan muncul di sini sebaik bungkusan dihantar. Anda juga boleh terus tanya ejen di mana barang anda."
+      },
+      "done": {
+        "title": "Itu sahaja tur ini",
+        "body": "Pergi tawar-menawar. Anda boleh ulang tur ini bila-bila masa dari menu di bawah avatar anda."
+      }
     }
   }
 }

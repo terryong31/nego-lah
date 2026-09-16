@@ -82,6 +82,6 @@ SPEC-056 #4 hardened against, except self-inflicted.
   record is what must not be lost.
 
 ## References
-- `specs/SPEC-057-postage-and-shipment-tracking.md`
+- `docs/specs/SPEC-057-postage-and-shipment-tracking.md`
 - ADR 0016 (buffered notification digests) — the same "tell the buyer once, properly" instinct
 - ADR 0018 / SPEC-056 #1 — why the endpoint lives on the CSRF-protected admin router

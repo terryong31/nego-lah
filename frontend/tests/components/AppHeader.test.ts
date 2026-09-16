@@ -81,8 +81,10 @@ describe('components/AppHeader.vue', () => {
 
       // Group 2: navigation shortcuts
       const navGroup = items[1] as { label: string, icon: string, onSelect: () => void }[]
-      expect(navGroup).toHaveLength(3)
-      expect(navGroup.map(i => i.label)).toEqual(['Chat', 'My Orders', 'Profile Settings'])
+      expect(navGroup).toHaveLength(4)
+      // 'How it works' replays the onboarding tour (SPEC-069) -- the only way
+      // back to it once a buyer has seen it, since it auto-starts just once.
+      expect(navGroup.map(i => i.label)).toEqual(['Chat', 'My Orders', 'Profile Settings', 'How it works'])
       expect(navGroup.every(i => typeof i.onSelect === 'function')).toBe(true)
 
       // Group 3: sign out
@@ -269,6 +271,36 @@ describe('components/AppHeader.vue', () => {
       expect(logo.exists()).toBe(true)
       expect(logo.text()).toContain('Nego')
       expect(logo.text()).toMatch(/lah/i)
+    })
+  })
+
+  describe('responsive user trigger (SPEC-072)', () => {
+    it('renders a mobile-only UAvatar inside the dropdown trigger', async () => {
+      userRef.value = {
+        email: 'hello@example.com',
+        user_metadata: { avatar_url: 'https://example.com/avatar.png' }
+      }
+      const wrapper = await mountSuspended(AppHeader)
+
+      const avatar = wrapper.findComponent({ name: 'UAvatar' })
+      expect(avatar.exists()).toBe(true)
+      expect(avatar.classes()).toContain('sm:hidden')
+      expect(avatar.props('src')).toBe('https://example.com/avatar.png')
+      expect(avatar.props('alt')).toBe('hello@example.com')
+    })
+
+    it('wraps the UUser greeting and chevron in a desktop-only container', async () => {
+      userRef.value = {
+        email: 'hello@example.com',
+        user_metadata: { display_name: 'Terry' }
+      }
+      const wrapper = await mountSuspended(AppHeader)
+
+      const userComponent = wrapper.findComponent({ name: 'UUser' })
+      expect(userComponent.exists()).toBe(true)
+      const desktopWrapper = userComponent.element.parentElement
+      expect(desktopWrapper?.classList.contains('hidden')).toBe(true)
+      expect(desktopWrapper?.classList.contains('sm:flex')).toBe(true)
     })
   })
 })

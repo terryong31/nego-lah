@@ -20,6 +20,7 @@ the file-specific notes, tests here:
 No real Gemini/Supabase/network call is ever made.
 """
 
+import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -27,7 +28,14 @@ import pytest
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
 
 import agent.bot as bot
-from agent.context import current_item_id, current_user_id, get_item_id, get_user_id, set_context
+from agent.context import (
+    current_item_id,
+    current_user_id,
+    get_item_id,
+    get_user_id,
+    pending_handoff,
+    set_context,
+)
 
 # ---------------------------------------------------------------------------
 # Shared fakes / fixtures
@@ -189,7 +197,11 @@ def test_build_messages_reconstructs_history_then_appends_new_turn(fake_memory):
     assert isinstance(messages[1], AIMessage) and messages[1].content == "hello!"
     assert isinstance(messages[2], HumanMessage) and messages[2].content == "how much?"
     from agent.config import AGENT_HISTORY_TURNS
-    fake_memory.get_history.assert_called_once_with("user-1", limit=AGENT_HISTORY_TURNS)
+    # SPEC-087: the agent asks for each turn's tool trace too, so the replayed
+    # transcript shows the tool call that produced the answer.
+    fake_memory.get_history.assert_called_once_with(
+        "user-1", limit=AGENT_HISTORY_TURNS, include_tool_calls=True
+    )
 
 
 def test_build_messages_without_item_id_does_not_look_up_item(fake_memory, monkeypatch):
@@ -321,7 +333,7 @@ async def test_chat_returns_extracted_text_and_persists_messages(fake_memory, mo
     fake_memory.add_message.assert_any_call(
         "user-1", "human", "can you do RM50?", None, source="human"
     )
-    fake_memory.add_message.assert_any_call("user-1", "ai", "Sure, RM50 works!", None)
+    fake_memory.add_message.assert_any_call("user-1", "ai", "Sure, RM50 works!", None, "ai", [])
     assert fake_agent.ainvoke_calls[0]["messages"][-1].content == "can you do RM50?"
 
 
@@ -338,7 +350,7 @@ async def test_chat_extracts_text_from_list_of_content_blocks(fake_memory, monke
     result = await bot.chat("user-1", "hi")
 
     assert result == "Part1Part2"
-    fake_memory.add_message.assert_any_call("user-1", "ai", "Part1Part2", None)
+    fake_memory.add_message.assert_any_call("user-1", "ai", "Part1Part2", None, "ai", [])
 
 
 async def test_chat_passes_item_id_through_to_memory_and_context(fake_memory, monkeypatch):
@@ -349,7 +361,8 @@ async def test_chat_passes_item_id_through_to_memory_and_context(fake_memory, mo
     await bot.chat("user-1", "hello", item_id="item-99")
 
     fake_memory.add_message.assert_any_call("user-1", "human", "hello", "item-99", source="human")
-    fake_memory.add_message.assert_any_call("user-1", "ai", "ok", "item-99")
+    # SPEC-087: the AI turn is stored with the trace of what it called (empty here).
+    fake_memory.add_message.assert_any_call("user-1", "ai", "ok", "item-99", "ai", [])
 
 
 async def test_chat_sets_request_scoped_context_for_agent_run(fake_memory, monkeypatch):
@@ -395,11 +408,17 @@ async def _collect_stream(agen):
     "tool_name,expected_status",
     [
         ("call_item_agent", "Understanding the item..."),
-        ("call_stripe_agent", "Generating payment link..."),
+        ("get_item_info", "Understanding the item..."),
+        ("search_items", "Understanding the item..."),
+        ("list_all_items", "Understanding the item..."),
+        ("create_checkout_link", "Generating payment link..."),
+        ("cancel_payment_link", "Cancelling your payment link..."),
+        ("collect_shipping_info", "Saving your shipping details..."),
         ("check_user_orders", "Checking your orders..."),
         ("evaluate_offer", "Evaluating your offer..."),
         ("web_search", "Searching the market..."),
         ("assess_discount_eligibility", "Checking discounts..."),
+        ("transfer_to_human", "Connecting to human seller..."),
         ("some_unmapped_tool", "Cooking..."),
     ],
 )
@@ -418,6 +437,102 @@ async def test_chat_stream_yields_status_for_each_tool_call_chunk(
     assert results == [{"status": expected_status}]
 
 
+def test_customer_tools_contains_all_direct_tools():
+    """Unified Single-Agent Architecture (SPEC-079 / ADR-0026):
+    All domain tools are bound directly on the customer agent without sub-agent indirection."""
+    tool_names = {t.name for t in bot.customer_tools}
+    expected = {
+        "get_item_info",
+        "search_items",
+        "list_all_items",
+        "create_checkout_link",
+        "cancel_payment_link",
+        "collect_shipping_info",
+        "evaluate_offer",
+        "assess_discount_eligibility",
+        "web_search",
+        "check_user_orders",
+        "transfer_to_human",
+    }
+    assert expected.issubset(tool_names)
+
+
+# call_stripe_agent fronts three different jobs (SPEC-078), so its status is
+# not a name-chunk lookup like the tools above — it is classified from the
+# `request` argument once that argument has fully streamed in as valid JSON.
+@pytest.mark.parametrize(
+    "request_text,expected_status",
+    [
+        ("Create payment link for item-1 at RM80", "Generating payment link..."),
+        ("Cancel the existing payment link", "Cancelling your payment link..."),
+        ("Shipping info: recipient John Tan, phone 0123456789", "Saving your shipping details..."),
+        ("Buyer gave their delivery address", "Saving your shipping details..."),
+    ],
+)
+async def test_chat_stream_classifies_stripe_agent_status_from_full_args_in_one_chunk(
+    fake_memory, monkeypatch, request_text, expected_status
+):
+    chunk = AIMessageChunk(
+        content="",
+        tool_call_chunks=[{
+            "name": "call_stripe_agent",
+            "args": json.dumps({"request": request_text}),
+            "id": "call-1",
+            "index": 0,
+        }],
+    )
+    fake_agent = FakeAgent(stream_chunks=[(chunk, {})])
+    monkeypatch.setattr(bot, "_get_customer_agent", lambda: fake_agent)
+
+    results = await _collect_stream(bot.chat_stream("user-1", "hi"))
+
+    assert results == [{"status": expected_status}]
+
+
+async def test_chat_stream_classifies_stripe_agent_status_once_args_finish_streaming(
+    fake_memory, monkeypatch
+):
+    """Real streams split the args JSON across several continuation chunks
+    (no "name", same id) — nothing should be emitted until they add up to
+    valid JSON, and then exactly one classified status should land."""
+    full_args = json.dumps({"request": "Buyer just sent their shipping address"})
+    chunks = [
+        (AIMessageChunk(
+            content="",
+            tool_call_chunks=[{"name": "call_stripe_agent", "args": full_args[:10], "id": "call-1", "index": 0}],
+        ), {}),
+        (AIMessageChunk(
+            content="",
+            tool_call_chunks=[{"name": None, "args": full_args[10:20], "id": "call-1", "index": 0}],
+        ), {}),
+        (AIMessageChunk(
+            content="",
+            tool_call_chunks=[{"name": None, "args": full_args[20:], "id": "call-1", "index": 0}],
+        ), {}),
+    ]
+    fake_agent = FakeAgent(stream_chunks=chunks)
+    monkeypatch.setattr(bot, "_get_customer_agent", lambda: fake_agent)
+
+    results = await _collect_stream(bot.chat_stream("user-1", "hi"))
+
+    assert results == [{"status": "Saving your shipping details..."}]
+
+
+async def test_chat_stream_stripe_agent_with_no_request_argument_falls_back_to_payment_link(
+    fake_memory, monkeypatch
+):
+    chunk = AIMessageChunk(
+        content="",
+        tool_call_chunks=[{"name": "call_stripe_agent", "args": "{}", "id": "call-1", "index": 0}],
+    )
+    fake_agent = FakeAgent(stream_chunks=[(chunk, {})])
+    monkeypatch.setattr(bot, "_get_customer_agent", lambda: fake_agent)
+
+    results = await _collect_stream(bot.chat_stream("user-1", "hi"))
+
+    assert results == [{"status": "Generating payment link..."}]
+
+
 async def test_chat_stream_yields_plain_text_deltas_and_persists_final_text(fake_memory, monkeypatch):
     chunks = [
         (AIMessageChunk(content="Hello "), {}),
@@ -429,7 +544,7 @@ async def test_chat_stream_yields_plain_text_deltas_and_persists_final_text(fake
     results = await _collect_stream(bot.chat_stream("user-1", "hi"))
 
     assert results == ["Hello ", "world!"]
-    fake_memory.add_message.assert_any_call("user-1", "ai", "Hello world!", None)
+    fake_memory.add_message.assert_any_call("user-1", "ai", "Hello world!", None, "ai", [])
 
 
 async def test_chat_stream_skips_non_ai_message_chunks(fake_memory, monkeypatch):
@@ -480,7 +595,12 @@ async def test_chat_stream_multiple_tool_call_chunks_in_one_chunk_yield_multiple
         content="",
         tool_call_chunks=[
             {"name": "call_item_agent", "args": "", "id": "call-1", "index": 0},
-            {"name": "call_stripe_agent", "args": "", "id": "call-2", "index": 1},
+            {
+                "name": "call_stripe_agent",
+                "args": json.dumps({"request": "Create the checkout link"}),
+                "id": "call-2",
+                "index": 1,
+            },
         ],
     )
     fake_agent = FakeAgent(stream_chunks=[(chunk, {})])
@@ -513,7 +633,7 @@ async def test_chat_stream_persists_empty_string_when_nothing_collected(fake_mem
     results = await _collect_stream(bot.chat_stream("user-1", "hi"))
 
     assert results == []
-    fake_memory.add_message.assert_any_call("user-1", "ai", "", None)
+    fake_memory.add_message.assert_any_call("user-1", "ai", "", None, "ai", [])
 
 
 async def test_chat_stream_sets_request_scoped_context(fake_memory, monkeypatch):
@@ -737,11 +857,14 @@ async def test_transfer_to_human_success(fake_memory, monkeypatch):
 
     assert "transferred" in result.lower()
     assert fake_supabase.table.called
-    assert fake_broadcast.called
     assert fake_email_alert.called
     assert fake_email_alert.call_args.kwargs["user_id"] == "user_transfer_1"
     assert fake_email_alert.call_args.kwargs["reason"] == "Customer requested human seller"
-    assert fake_memory.add_message.called
+    # SPEC-070: the separator is left for the turn runner to write once the
+    # agent's farewell has been delivered — see test_chat_handoff_ordering.py.
+    assert "transferred" in (pending_handoff.get() or "").lower()
+    assert not fake_broadcast.called
+    assert not fake_memory.add_message.called
 
 
 async def test_transfer_to_human_missing_user_context():
@@ -854,5 +977,9 @@ def test_the_history_window_is_bounded(fake_memory, monkeypatch):
 
     bot._build_messages("user-1", "hi")
 
-    fake_memory.get_history.assert_called_once_with("user-1", limit=AGENT_HISTORY_TURNS)
+    # SPEC-087: the agent asks for each turn's tool trace too, so the replayed
+    # transcript shows the tool call that produced the answer.
+    fake_memory.get_history.assert_called_once_with(
+        "user-1", limit=AGENT_HISTORY_TURNS, include_tool_calls=True
+    )
     assert AGENT_HISTORY_TURNS <= 50, "SPEC-059 tightened this; it must not drift back up"

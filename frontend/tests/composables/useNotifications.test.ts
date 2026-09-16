@@ -18,10 +18,17 @@ const fetchMock = vi.fn()
 mockNuxtImport('useSupabaseUser', () => () => userRef)
 mockNuxtImport('useRoute', () => () => routeMock)
 mockNuxtImport('useToast', () => () => ({ add: toastAddMock }))
+// Signing out is an event Supabase emits, not a ref reading null — see the
+// composable's auth listener. Captured so the tests can say it properly.
+let authCallback: ((event: string, session: unknown) => void) | null = null
+
 mockNuxtImport('useSupabaseClient', () => () => ({
   auth: {
     getSession: () => Promise.resolve({ data: { session: { access_token: 'jwt-token' } } }),
-    onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => {} } } })
+    onAuthStateChange: (cb: (event: string, session: unknown) => void) => {
+      authCallback = cb
+      return { data: { subscription: { unsubscribe: () => {} } } }
+    }
   }
 }))
 
@@ -102,6 +109,8 @@ const Host = defineComponent({
 
 describe('composables/useNotifications', () => {
   beforeEach(() => {
+    // A fresh session per test, said the way the app says it.
+    authCallback?.('SIGNED_OUT', null)
     userRef.value = null
     routeMock.path = '/'
     unreadResponse = { count: 0, has_unread: false }
@@ -459,12 +468,13 @@ describe('composables/useNotifications', () => {
     it('does not stamp on the way out of a session', async () => {
       // Signing out clears the badge locally. Writing a read watermark for a
       // user who just left is both pointless and unauthenticated.
-      userRef.value = { id: 'user-1' }
+      userRef.value = { sub: 'user-1' }
       const wrapper = await mountSuspended(Host)
       await flushPromises()
       wrapper.vm.hasUnread = true
       wrapper.vm.unreadCount = 3
 
+      authCallback?.('SIGNED_OUT', null)
       userRef.value = null
       await flushPromises()
 

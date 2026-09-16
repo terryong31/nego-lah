@@ -8,14 +8,12 @@ const { userRef } = vi.hoisted(() => ({
   userRef: { __v_isRef: true, value: null as Record<string, unknown> | null }
 }))
 const { toastAddMock } = vi.hoisted(() => ({ toastAddMock: vi.fn() }))
-const { navigateToMock } = vi.hoisted(() => ({ navigateToMock: vi.fn() }))
 
 const callMock = vi.fn()
 
 mockNuxtImport('useApi', () => () => ({ call: callMock }))
 mockNuxtImport('useSupabaseUser', () => () => userRef)
 mockNuxtImport('useToast', () => () => ({ add: toastAddMock }))
-mockNuxtImport('navigateTo', () => navigateToMock)
 
 // mountSuspended's `route` option (raw path+querystring, resolved via a real
 // router.replace()) does not reliably land in this page's `useRoute()` by the
@@ -89,18 +87,14 @@ describe('pages/checkout/success.vue', () => {
       })
     })
 
-    it('shows the success UI and a success toast when the backend confirms success', async () => {
+    it('shows the success UI without a redundant success toast when the backend confirms success', async () => {
       callMock.mockResolvedValue({ status: 'success' })
 
       const wrapper = await mountAt({ item_id: 'item-1', session_id: 'sess-1' })
       await flushPromises()
 
       expect(wrapper.text()).toContain('Purchase Successful!')
-      expect(toastAddMock).toHaveBeenCalledWith({
-        title: 'Payment confirmed!',
-        description: 'Your order has been recorded successfully.',
-        color: 'success'
-      })
+      expect(toastAddMock).not.toHaveBeenCalled()
     })
 
     it('shows the refunded UI and a warning toast when the backend reports status "refunded"', async () => {
@@ -125,11 +119,7 @@ describe('pages/checkout/success.vue', () => {
       await flushPromises()
 
       expect(wrapper.text()).toContain('Purchase Successful!')
-      expect(toastAddMock).toHaveBeenCalledWith({
-        title: 'Payment confirmed!',
-        description: 'Your order has been recorded successfully.',
-        color: 'success'
-      })
+      expect(toastAddMock).not.toHaveBeenCalled()
     })
 
     it('treats an error whose data.status is "already_sold" as a success', async () => {
@@ -222,11 +212,7 @@ describe('pages/checkout/success.vue', () => {
         expect(call[0]).toBe('/payment/orders/user/u1')
       })
       expect(wrapper.text()).toContain('Purchase Successful!')
-      expect(toastAddMock).toHaveBeenCalledWith({
-        title: 'Payment confirmed!',
-        description: 'Your order has been recorded successfully.',
-        color: 'success'
-      })
+      expect(toastAddMock).not.toHaveBeenCalled()
     })
 
     it('applies the refunded outcome when the matching order\'s own status is "refunded"', async () => {
@@ -456,17 +442,6 @@ describe('pages/checkout/success.vue', () => {
       const chatBtn = buttons.find(b => b.text().includes('Go to Chat Now'))
       expect(chatBtn).toBeDefined()
       expect(chatBtn?.props('to')).toBe('/chat?item_id=item-1')
-    })
-
-    it('automatically navigates to chat after countdown expires', async () => {
-      navigateToMock.mockClear()
-      vi.useFakeTimers()
-      callMock.mockResolvedValue({ status: 'success' })
-      await mountAt({ item_id: 'item-1', session_id: 'sess-1' })
-      await flushPromises()
-
-      await vi.advanceTimersByTimeAsync(3500)
-      expect(navigateToMock).toHaveBeenCalledWith('/chat?item_id=item-1')
     })
   })
 })

@@ -113,7 +113,44 @@ Please continue negotiating with the seller for a fair price."""
         logger.info(f"❌ SECURITY: Rejected suspiciously high price {agreed_price}")
         return f"ERROR: Price RM{agreed_price:.2f} seems unreasonably high. Please verify the correct price."
 
-    logger.info(f"✅ SECURITY: Price {agreed_price} >= min {min_price} - APPROVED")
+    # ========================================
+    # SPEC-089: the price must also be one we actually OFFERED.
+    #
+    # The floor check above answers "is this above the absolute minimum?". It
+    # does not answer "is this a price we agreed to?" — and those come apart the
+    # moment the model invents a discount. Observed: a RM1800 offer on a RM2599
+    # listing with a RM2000 floor, no `evaluate_offer` call at all, and the agent
+    # volunteering "I can offer it at RM2300". RM1800 is below the floor, so the
+    # authorised answer was no counter whatsoever; RM2300 cleared min_price and
+    # would have been charged.
+    #
+    # SPEC-084 already made the server the authority on the standing price for
+    # counters. Checkout is where that authority turns into money.
+    # ========================================
+    from payment.pricing import active_negotiated_price
+
+    try:
+        standing_price = active_negotiated_price(user_id, item_id)
+    except Exception as e:  # noqa: BLE001 — fall back to the listing, never skip the check
+        logger.warning(f"⚠️ Could not resolve standing price, holding to listed: {e}")
+        standing_price = None
+    if standing_price is None:
+        standing_price = asking_price
+
+    # A cent of tolerance: these are currency amounts carried as floats.
+    if agreed_price < standing_price - 0.01:
+        logger.info(
+            f"❌ SECURITY: Rejected unauthorised discount {agreed_price} < standing {standing_price}"
+        )
+        # Names neither the floor nor the standing price: this text reaches the
+        # model, and the model talks to the buyer.
+        return (
+            "PRICE NOT AUTHORISED: that price was never agreed. Call `evaluate_offer` with "
+            "the buyer's offer and use the exact amount it returns. Do not invent a discount, "
+            "and do not tell the buyer any number that did not come from that tool."
+        )
+
+    logger.info(f"✅ SECURITY: Price {agreed_price} >= min {min_price} and >= standing {standing_price} - APPROVED")
 
 
     try:
@@ -228,27 +265,52 @@ def cancel_payment_link(item_id: str) -> str:
         return "Error cancelling payment link. Please try again."
 
 
+def _join_and(items: list[str]) -> str:
+    """'a' / 'a and b' / 'a, b and c' — for the saved/missing-field sentences below."""
+    if not items:
+        return ""
+    if len(items) == 1:
+        return items[0]
+    return ", ".join(items[:-1]) + " and " + items[-1]
+
+
 @tool
-def collect_shipping_info(order_id: str, recipient_name: str, phone: str, address: str) -> str:
+def collect_shipping_info(
+    order_id: str,
+    recipient_name: str = None,
+    phone: str = None,
+    address: str = None,
+) -> str:
     """
-    Collect and save shipping information for an order after payment.
-    Use this after the buyer has paid and provides their shipping details.
+    Save shipping information for an order after payment — one field at a
+    time or all three together.
+
+    Call this the MOMENT the buyer gives ANY shipping detail (their name,
+    phone, OR address) in their message — do not wait until all three have
+    been provided. Pass only the field(s) the buyer just gave in THIS
+    message; anything they gave earlier is already saved and stays untouched.
+    The result tells you what is still missing, so you know what to ask for
+    next.
 
     Args:
         order_id: The order ID from the payment
-        recipient_name: Full name of the recipient
-        phone: Phone number for delivery
-        address: Full shipping address
+        recipient_name: Full name of the recipient, if given in this message
+        phone: Phone number for delivery, if given in this message
+        address: Full shipping address, if given in this message
 
     Returns:
-        Confirmation message
+        Confirmation of what was saved, and what (if anything) is still needed
     """
 
     from agent.context import get_user_id
     from connector import admin_supabase
 
-    masked_phone = phone.strip()[:3] + "****" + phone.strip()[-2:] if len(phone.strip()) > 5 else "***"
-    masked_address = address.strip()[:10] + "..." if len(address.strip()) > 10 else "***"
+    recipient_name = (recipient_name or "").strip() or None
+    phone = (phone or "").strip() or None
+    address = (address or "").strip() or None
+
+    masked_phone = (phone[:3] + "****" + phone[-2:]) if phone and len(phone) > 5 else ("***" if phone else None)
+    masked_address = (address[:10] + "...") if address and len(address) > 10 else address
 
     logger.info(f"\n{'='*50}")
     logger.info("📦 COLLECT_SHIPPING_INFO CALLED")
@@ -272,20 +334,63 @@ def collect_shipping_info(order_id: str, recipient_name: str, phone: str, addres
             "Please make sure you are logged in and try again."
         )
 
-    try:
-        # Update the order, strictly scoped to the buyer who owns it.
-        result = admin_supabase.table('orders').update({
-            'recipient_name': recipient_name,
-            'phone': phone,
-            'address': address,
-            'status': 'confirmed'
-        }).eq('id', order_id).eq('buyer_id', user_id).execute()
+    if not any([recipient_name, phone, address]):
+        return "ERROR: No shipping details were provided. Ask the buyer for their name, phone, or address."
 
-        if result.data:
-            logger.info("✅ Shipping info saved successfully")
-            return f"Shipping information saved! Your order will be shipped to:\n\n**{recipient_name}**\n📞 {phone}\n📍 {address}\n\nYou'll receive updates when your item ships. Thank you for your purchase!"
-        else:
+    try:
+        # SPEC-078: the buyer rarely gives name/phone/address in one message,
+        # and the old version silently discarded whatever arrived first — it
+        # required all three and only ever wrote once. Read what is already on
+        # the order (still scoped to the buyer who owns it) so a message that
+        # only gives the name doesn't need the phone/address repeated, and so
+        # we know whether THIS update completes the set.
+        existing = (
+            admin_supabase.table('orders')
+            .select('recipient_name, phone, address')
+            .eq('id', order_id).eq('buyer_id', user_id).execute()
+        )
+        if not existing.data:
             return "Order not found. Please check the order ID."
+
+        current = existing.data[0]
+        merged_name = recipient_name or current.get('recipient_name')
+        merged_phone = phone or current.get('phone')
+        merged_address = address or current.get('address')
+        complete = bool(merged_name and merged_phone and merged_address)
+
+        # Only write the field(s) THIS call actually provided — a partial
+        # update must not blank out columns the buyer hasn't given yet.
+        update_data = {
+            k: v for k, v in {
+                'recipient_name': recipient_name,
+                'phone': phone,
+                'address': address,
+            }.items() if v
+        }
+        if complete:
+            update_data['status'] = 'confirmed'
+
+        result = (
+            admin_supabase.table('orders').update(update_data)
+            .eq('id', order_id).eq('buyer_id', user_id).execute()
+        )
+
+        if not result.data:
+            return "Order not found. Please check the order ID."
+
+        if complete:
+            logger.info("✅ Shipping info saved successfully")
+            return f"Shipping information saved! Your order will be shipped to:\n\n**{merged_name}**\n📞 {merged_phone}\n📍 {merged_address}\n\nYou'll receive updates when your item ships. Thank you for your purchase!"
+
+        saved = _join_and([label for label, val in (
+            ("your name", recipient_name), ("your phone number", phone), ("your address", address)
+        ) if val])
+        missing = _join_and([label for label, val in (
+            ("your name", merged_name), ("a phone number", merged_phone), ("your address", merged_address)
+        ) if not val])
+        saved_text = f"Got it, I've saved {saved}. " if saved else ""
+        logger.info(f"📝 Partial shipping info saved — still missing: {missing}")
+        return f"{saved_text}I still need {missing} to complete your order."
 
     except Exception as e:
         logger.info(f"❌ Error: {str(e)}")

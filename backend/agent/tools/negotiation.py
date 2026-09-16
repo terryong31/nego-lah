@@ -83,7 +83,7 @@ def evaluate_offer(item_id: str, offered_price: float, extra_discount_percent: f
     logger.info(f"📦 Item ID: {item_id}")
     logger.info(f"💵 Offered Price: RM{offered_price}")
     logger.info(f"🎁 Extra Discount: {extra_discount_percent}%")
-    logger.info(f"🪙 Current Standing Price: RM{current_price}")
+    logger.info(f"🪙 Current Standing Price (from model): RM{current_price}")
     logger.info(f"{'='*50}")
 
     # Retrieve context item_id if available
@@ -110,18 +110,48 @@ def evaluate_offer(item_id: str, offered_price: float, extra_discount_percent: f
     discount_amount = listed_price * (extra_discount_percent / 100)
     adjusted_threshold = max(listed_price - discount_amount, min_price)
 
-    # The seller's current standing price — the lowest we've already offered/agreed
-    # to this conversation. Counters anchor to THIS, not the listed price, so the
-    # negotiation only ever moves down. Sanitize into [min_price, listed_price];
-    # if no prior offer was made (0 / unset), the anchor is the listed price.
-    anchor = listed_price
+    # The seller's current standing price — the lowest we've already offered or
+    # agreed to. Counters anchor to THIS, not the listed price, so the
+    # negotiation only ever moves down.
+    #
+    # SPEC-084: the standing price is resolved from the SERVER, not from the
+    # `current_price` argument alone. Asking the model to carry conversational
+    # state in a tool argument did not work — across a full eval run it arrived
+    # as 0 on 13 calls out of 13, so the anchor silently fell back to the listed
+    # price every turn and the agent re-quoted the list price after conceding.
+    # `active_negotiated_price` is the same resolver the item card and checkout
+    # already use, so all three surfaces now agree on what this buyer was quoted.
+    #
+    # The argument is still honoured, but only ever DOWNWARD: the agent may have
+    # quoted lower within this turn than the cache has recorded, while a
+    # hallucinated high value must not be able to undo a real concession.
+    from agent.context import get_user_id
+
+    user_id = get_user_id()
+
+    standing_price = None
+    try:
+        from payment.pricing import active_negotiated_price
+
+        standing_price = active_negotiated_price(user_id, item_id)
+    except Exception as e:  # noqa: BLE001 — a cache hiccup must not break a negotiation
+        logger.warning(f"⚠️ Could not resolve standing price, anchoring to listed: {e}")
+
+    candidates = [listed_price]
     if current_price and current_price > 0:
-        anchor = min(max(current_price, min_price), listed_price)
+        candidates.append(float(current_price))
+    if standing_price is not None:
+        candidates.append(float(standing_price))
+
+    # Clamp into [min_price, listed_price]: nothing may drag the anchor under
+    # the floor, and nothing may lift it above the listing.
+    anchor = min(max(min(candidates), min_price), listed_price)
 
     # LOG: Price calculations
     logger.info(f"📊 Listed Price: RM{listed_price}")
     logger.info(f"🔻 Min Price (floor): RM{min_price}")
     logger.info(f"🎯 Adjusted Threshold: RM{adjusted_threshold}")
+    logger.info(f"🗄️ Standing Price (from server): {standing_price}")
     logger.info(f"⚓ Anchor (standing price): RM{anchor}")
     logger.info(f"{'='*50}\n")
 
@@ -181,15 +211,40 @@ def evaluate_offer(item_id: str, offered_price: float, extra_discount_percent: f
         # repeat it. The model has its own last quote in the transcript; the
         # tool tells it to restate that and hold.
         counter = None
+        # SPEC-084: tell the model WHICH price to hold. "Hold firm at the price
+        # you last quoted" assumed the model could remember its own last quote
+        # from the transcript; it cannot. Given no number it improvised, and
+        # what it improvised was the LISTED price — so a below-floor lowball
+        # after a concession withdrew the concession.
+        #
+        # Naming the anchor here discloses nothing: it is a price this buyer was
+        # already quoted out loud. The exception is an anchor sitting exactly on
+        # `min_price`, where the number IS the floor — that path still quotes
+        # nothing at all (SPEC-044 A, and see
+        # `test_a_standing_price_at_the_floor_quotes_no_number_at_all`).
+        # Phrasing matters here. "Hold firm at RM1150 and do not go lower" was
+        # relayed to the buyer as "I can't go lower than RM1150" — a floor claim
+        # about the LISTED price, which is both the wording the persona bans and
+        # a lie that ends the negotiation while RM150 of room remains. The
+        # instruction is addressed to the agent's own conduct instead: restate,
+        # concede nothing, invite them up.
+        if anchor > min_price:
+            hold_instruction = (
+                f"Your standing price is still RM{anchor:.0f}. Restate that number and invite them "
+                f"to come up. Concede nothing this round."
+            )
+        else:
+            hold_instruction = (
+                "Restate the price you last quoted, invite them to come up, and concede nothing "
+                "this round."
+            )
         result = (
             f"REJECT_FLOOR: Offer of RM{offered_price} is too low to accept. "
-            f"Hold firm at the price you last quoted and do not go lower. "
-            f"Do NOT state a minimum, a floor, or how low you can go."
+            f"{hold_instruction} "
+            f"Do NOT say this is your lowest, that you cannot go lower, or name any minimum "
+            f"or floor — none of that is true and none of it is yours to say."
         )
 
-    from agent.context import get_user_id
-
-    user_id = get_user_id()
     if user_id and item_id:
         try:
             from cache import redis_client

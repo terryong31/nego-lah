@@ -53,6 +53,22 @@ RESEND_ALLOWED_RECIPIENTS = {
     if addr.strip()
 }
 
+# SPEC-074: local dev email sink. When SMTP_HOST is set, every outbound email
+# goes to that SMTP server (Mailpit in dev) instead of the Resend API —
+# catch-all, instant, and nothing ever leaves the machine. Production never
+# sets it, so the Resend path there is untouched. SMTP_PORT tolerates an
+# empty-string override (present-but-falsy, the conftest pattern).
+SMTP_HOST = os.getenv("SMTP_HOST")
+SMTP_PORT = int(os.getenv("SMTP_PORT") or 1025)
+SMTP_FROM = os.getenv("SMTP_FROM")
+
+# SPEC-074 Phase 2: the admin inbox for operational alerts (sale alerts,
+# human-handoff pings, sandbox-free receipt alerts). This used to be overloaded
+# onto RESEND_FORWARD_TO — the inbound-mail forwarding target — which conflated
+# two concerns. ADMIN_NOTIFY_EMAIL is the honest name; the Resend var remains
+# the fallback so existing deployments keep working without a new secret.
+ADMIN_NOTIFY_EMAIL = os.getenv("ADMIN_NOTIFY_EMAIL") or RESEND_FORWARD_TO
+
 # Public URL of the frontend, used for Stripe redirect URLs etc.
 # Defaults to the local dev server; set FRONTEND_URL=https://negolah.my in
 # staging/production. Trailing slash is stripped so we can build paths safely.

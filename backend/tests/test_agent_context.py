@@ -8,8 +8,17 @@ since agent/context.py has zero external dependencies (just `contextvars`).
 import asyncio
 
 import pytest
+from langchain_core.tools import tool
 
-from agent.context import current_item_id, current_user_id, get_item_id, get_user_id, set_context
+from agent.context import (
+    current_item_id,
+    current_user_id,
+    get_item_id,
+    get_user_id,
+    pending_discount,
+    pending_handoff,
+    set_context,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -136,3 +145,65 @@ async def test_context_set_inside_task_does_not_leak_to_caller():
     # The parent task's context is unaffected by what the child set.
     assert get_user_id() is None
     assert get_item_id() is None
+
+
+# ---------------------------------------------------------------------------
+# SPEC-070 — a tool has to be able to hand something back
+#
+# LangChain runs every tool body inside `copy_context()` (`set_config_context`
+# in langchain_core/tools/base.py, both the sync and the async path), so a value
+# a tool writes with `ContextVar.set()` goes into a copy the request never
+# reads. `pending_discount` and `pending_handoff` are exactly that hand-back, so
+# they are checked here through a real tool invocation rather than by setting
+# them from the test's own context — which is the one place the broken version
+# still looks like it works.
+# ---------------------------------------------------------------------------
+
+async def test_a_signal_set_inside_an_async_tool_reaches_the_request():
+    @tool
+    async def async_probe() -> str:
+        """Hand a value back to the turn."""
+        pending_handoff.set("--- handed over ---")
+        return "ok"
+
+    set_context(user_id="user-1", item_id=None)
+    await async_probe.ainvoke({})
+
+    assert pending_handoff.get() == "--- handed over ---"
+
+
+def test_a_signal_set_inside_a_sync_tool_reaches_the_request():
+    @tool
+    def sync_probe() -> str:
+        """Hand a value back to the turn."""
+        pending_discount.set(75.0)
+        return "ok"
+
+    set_context(user_id="user-1", item_id="item-1")
+    sync_probe.invoke({})
+
+    assert pending_discount.get() == 75.0
+
+
+async def test_signals_do_not_bleed_between_concurrent_turns():
+    """Each turn seeds its own box, so one buyer's handoff cannot separate
+    another buyer's conversation."""
+
+    async def turn(notice):
+        set_context(user_id=notice, item_id=None)
+        await asyncio.sleep(0)
+        pending_handoff.set(notice)
+        await asyncio.sleep(0)
+        return pending_handoff.get()
+
+    assert await asyncio.gather(turn("a"), turn("b")) == ["a", "b"]
+
+
+def test_a_new_turn_starts_with_nothing_pending():
+    set_context(user_id="user-1", item_id=None)
+    pending_handoff.set("--- handed over ---")
+
+    set_context(user_id="user-1", item_id=None)
+
+    assert pending_handoff.get() is None
+    assert pending_discount.get() is None

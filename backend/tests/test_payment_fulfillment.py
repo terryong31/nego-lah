@@ -404,14 +404,26 @@ def test_finalize_won_sale_alerts_sentry_when_no_recipient_address_resolves(monk
     monkeypatch.setattr("services.email_service.send_seller_sale_alert", MagicMock(), raising=False)
     captured = []
     monkeypatch.setattr(fulfillment.sentry_sdk, "capture_message", lambda msg, **kw: captured.append((msg, kw)))
-    # Force the non-sandbox branch (env.STRIPE_API_KEY is re-imported inside the
-    # function) so the RESEND_FORWARD_TO catch-all redirect doesn't kick in.
-    monkeypatch.setattr("env.STRIPE_API_KEY", "sk_live_xxx")
 
     fulfillment._finalize_won_sale("item-1", "user-1", "pi_1", 25.0, "Widget", None, order_id="ord-2")
 
     receipt.assert_not_called()
     assert any(kw["tags"]["alert"] == "receipt_no_address" for _m, kw in captured)
+
+
+def test_finalize_won_sale_never_redirects_sandbox_receipts(monkeypatch, patch_supabase, fake_supabase, _quiet_side_effects, _no_network_broadcast):
+    """SPEC-074 Phase 2: with dev Resend retired there is no sandbox catch-all —
+    the receipt is addressed to the buyer we resolved, even on a Stripe test key."""
+    patch_supabase("payment.fulfillment", admin=fake_supabase)
+    monkeypatch.setattr("payment.buyer.account_email", lambda _uid: "buyer@example.com")
+    monkeypatch.setattr("env.STRIPE_API_KEY", "sk_test_dummy")
+    receipt = MagicMock(return_value=True)
+    monkeypatch.setattr("services.email_service.send_purchase_receipt", receipt, raising=False)
+    monkeypatch.setattr("services.email_service.send_seller_sale_alert", MagicMock(), raising=False)
+
+    fulfillment._finalize_won_sale("item-1", "user-1", "pi_1", 25.0, "Widget", None, order_id="ord-9")
+
+    assert receipt.call_args[0][0] == "buyer@example.com"
 
 
 def test_finalize_won_sale_sends_to_the_account_email_when_stripe_passed_none(monkeypatch, patch_supabase, fake_supabase, _quiet_side_effects, _no_network_broadcast):

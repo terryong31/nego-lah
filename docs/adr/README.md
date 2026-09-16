@@ -29,3 +29,7 @@ changes an earlier one, add a new ADR and mark the old one's status.
 | [0020](0020-item-knowledge-card-over-per-turn-vision.md) | An Item Knowledge Card Instead of Re-Sending the Photos Every Turn | Accepted |
 | [0021](0021-agent-turns-outlive-their-http-response.md) | Agent Turns Outlive the HTTP Response That Requested Them | Accepted |
 | [0022](0022-a-message-from-the-future-is-history.md) | A Message From the Future Is History, Not News | Accepted |
+| [0023](0023-the-design-system-already-had-a-tour.md) | The Design System Already Had a Tour, and Its Anchor Does Not Watch the DOM | Accepted |
+| [0024](0024-what-a-tool-hands-back-and-when-the-buyer-sees-it.md) | What a Tool Hands Back, and When the Buyer Sees It | Accepted |
+| [0025](0025-edge-proxy-pre-auth-rate-limiting-local-jwt.md) | Edge Proxy Lockdown, Pre-Routing ASGI Rate Limiting, and Local JWT Verification | Accepted |
+| [0026](0026-unified-single-agent-architecture.md) | Unified Single-Agent Architecture with Direct Tool Calling | Accepted |

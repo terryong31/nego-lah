@@ -35,19 +35,21 @@ from conftest import make_supabase_result
 @pytest.fixture(autouse=True)
 def _reset_context_vars():
     """`evaluate_offer` reads `user_id` from `agent.context.get_user_id()` and,
-    per SPEC-041, writes `agent.context.pending_discount` -- both ContextVars
-    live on the ambient (non-Task) context for a plain sync test, so without a
-    reset they'd leak into whichever test runs next (same rationale as
-    `test_agent_context.py`'s `_reset_context_vars` fixture)."""
+    per SPEC-041, writes `agent.context.pending_discount` -- the ids live on the
+    ambient (non-Task) context for a plain sync test, so without a reset they'd
+    leak into whichever test runs next (same rationale as
+    `test_agent_context.py`'s `_reset_context_vars` fixture). The discount is a
+    per-turn signal rather than a ContextVar (SPEC-070), so it is emptied by
+    starting a fresh turn rather than by restoring a token."""
     user_token = context.current_user_id.set(None)
     item_token = context.current_item_id.set(None)
-    discount_token = context.pending_discount.set(None)
+    context.pending_discount.set(None)
     try:
         yield
     finally:
         context.current_user_id.reset(user_token)
         context.current_item_id.reset(item_token)
-        context.pending_discount.reset(discount_token)
+        context.pending_discount.set(None)
 
 
 def _chain(fake_supabase):
@@ -345,8 +347,14 @@ def test_genuine_need_accepts_near_the_floor_but_still_holds_below_it(fake_supab
 
 def test_offer_below_min_price_is_held_without_a_counter(fake_supabase, patch_supabase):
     """SPEC-047: a below-floor lowball earns no concession. The tool holds --
-    restate the last quote, don't go lower -- and quotes no number at all so
-    the floor stays confidential (SPEC-044 A)."""
+    restate the standing price, don't go lower -- and never names the floor
+    (SPEC-044 A).
+
+    SPEC-084 changed WHICH price is restated. "Hold firm at the price you last
+    quoted" left the model to recall its own last quote, and it could not: given
+    no number it improvised the listed price, withdrawing a concession it had
+    already made. The instruction now names the anchor -- here the listed price,
+    since nothing has been conceded -- while the floor (70) stays unnamed."""
     _set_item(fake_supabase, {"price": 100, "min_price": 70})
     patch_supabase("connector", admin=fake_supabase)
 
@@ -354,9 +362,12 @@ def test_offer_below_min_price_is_held_without_a_counter(fake_supabase, patch_su
 
     assert result == (
         "REJECT_FLOOR: Offer of RM50.0 is too low to accept. "
-        "Hold firm at the price you last quoted and do not go lower. "
-        "Do NOT state a minimum, a floor, or how low you can go."
+        "Your standing price is still RM100. Restate that number and invite them to come up. "
+        "Concede nothing this round. "
+        "Do NOT say this is your lowest, that you cannot go lower, or name any minimum "
+        "or floor — none of that is true and none of it is yours to say."
     )
+    assert "70" not in result
 
 
 def test_min_price_defaults_to_70_percent_of_listed_when_unset(fake_supabase, patch_supabase):

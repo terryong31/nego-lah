@@ -169,7 +169,10 @@ def _set_cache(is_up: bool) -> None:
 def _probe_headers() -> dict[str, str]:
     """Headers for probing and authenticating against local-llm endpoint."""
     _, _, api_key = _local_config()
-    headers = {"Origin": "https://api.negolah.my"}
+    headers = {
+        "Origin": "https://api.negolah.my",
+        "User-Agent": "NegoLah-Backend/1.0",
+    }
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     return headers
@@ -360,8 +363,16 @@ def _build_local_model(temperature: float) -> ChatOpenAI:
         api_key=api_key or "local-key",
         temperature=temperature,
         streaming=True,
+        # Ask for token counts on the stream. Without this the self-hosted
+        # engine reports none at all, and every cost/token figure for a local
+        # turn comes out as zero — which reads as "free" rather than
+        # "unmeasured" (SPEC-083's eval report said exactly that).
+        stream_usage=True,
         max_retries=1,
-        default_headers={"Origin": "https://api.negolah.my"},
+        default_headers={
+            "Origin": "https://api.negolah.my",
+            "User-Agent": "NegoLah-Backend/1.0",
+        },
         timeout=httpx.Timeout(
             LOCAL_READ_TIMEOUT,
             connect=LOCAL_CONNECT_TIMEOUT,

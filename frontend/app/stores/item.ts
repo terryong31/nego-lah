@@ -10,6 +10,9 @@
  *   session. Subsequent calls for the same ID are no-ops.
  * - `applyDiscount(itemId, price)` patches discountedPrice in place when the
  *   backend emits a `data-discount` SSE frame. No API call is made.
+ * - `setOwner(userId)` scopes the cache to one signed-in buyer and empties it
+ *   when that buyer changes (SPEC-082) — the rows are user-scoped, so they must
+ *   never outlive the identity that fetched them.
  * - Getters (`effectivePrice`, `hasDiscount`, `discountPercent`) expose computed
  *   price state to components.
  *
@@ -38,6 +41,13 @@ type FetchFn = (itemId: string) => Promise<StoreItem>
 
 export function useItemStore(fetchFn?: FetchFn) {
   const _items = useState<Map<string, ItemState>>('item-store', () => new Map())
+
+  // SPEC-082: which buyer the cached rows belong to. The cache is user-scoped —
+  // `GET /items/:id` attaches `discounted_price` resolved from the *calling*
+  // buyer's negotiated price — so an entry is only valid for the identity that
+  // fetched it. Kept in `useState` alongside the map so both live and die
+  // together across the tab session.
+  const _owner = useState<string | null>('item-store-owner', () => null)
 
   // ---------------------------------------------------------------------------
   // Internal fetch — uses injected fn in tests, real useApi in production.
@@ -98,6 +108,26 @@ export function useItemStore(fetchFn?: FetchFn) {
     _items.value = new Map()
   }
 
+  /**
+   * SPEC-082: bind the cache to a signed-in buyer, emptying it whenever that
+   * buyer changes (`null` = signed out).
+   *
+   * Without this, signing out and signing in as someone else in the same tab
+   * left the map intact: `fetchIfMissing` saw a warm entry, skipped the API
+   * call, and showed the second buyer the first buyer's negotiated price until
+   * a hard reload dropped JS memory.
+   *
+   * Re-asserting the SAME owner is a no-op on purpose. Supabase emits plenty of
+   * events carrying an unchanged session (token refresh, a repeated
+   * INITIAL_SESSION, a tab regaining focus), and clearing on those would throw
+   * away a price the chat SSE stream had just applied.
+   */
+  function setOwner(userId: string | null): void {
+    if (_owner.value === userId) return
+    _owner.value = userId
+    _items.value = new Map()
+  }
+
   // ---------------------------------------------------------------------------
   // Getters
   // ---------------------------------------------------------------------------
@@ -145,6 +175,7 @@ export function useItemStore(fetchFn?: FetchFn) {
     refetch,
     applyDiscount,
     clear,
+    setOwner,
     getItem,
     effectivePrice,
     hasDiscount,

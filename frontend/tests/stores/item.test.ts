@@ -114,4 +114,57 @@ describe('stores/item.ts — useItemStore', () => {
       expect(store.discountPercent(ITEM_ID)).toBe(0)
     })
   })
+  // SPEC-082 — the cache holds user-scoped data (`discounted_price` is resolved
+  // per buyer), so it must not survive a change of signed-in user.
+  describe('setOwner — identity scoping', () => {
+    beforeEach(() => {
+      // Detach from whatever identity a previous test left behind.
+      useItemStore().setOwner(null)
+      useItemStore().clear()
+    })
+
+    it('drops a cached item when a different buyer takes over the tab', async () => {
+      const fetchFn = vi.fn()
+        .mockResolvedValueOnce({ ...BASE_ITEM, discounted_price: 850 })
+        .mockResolvedValueOnce({ ...BASE_ITEM })
+      const store = useItemStore(fetchFn)
+
+      store.setOwner('buyer-a')
+      await store.fetchIfMissing(ITEM_ID)
+      expect(store.effectivePrice(ITEM_ID)).toBe(850)
+
+      store.setOwner('buyer-b')
+
+      expect(store.getItem(ITEM_ID)).toBeUndefined()
+      await store.fetchIfMissing(ITEM_ID)
+      expect(fetchFn).toHaveBeenCalledTimes(2)
+      expect(store.effectivePrice(ITEM_ID)).toBe(1025)
+      expect(store.hasDiscount(ITEM_ID)).toBe(false)
+    })
+
+    it('empties the cache on sign-out', async () => {
+      const { store } = makeStore({ ...BASE_ITEM, discounted_price: 850 })
+
+      store.setOwner('buyer-a')
+      await store.fetchIfMissing(ITEM_ID)
+
+      store.setOwner(null)
+
+      expect(store.getItem(ITEM_ID)).toBeUndefined()
+    })
+
+    it('keeps a live negotiated price when the same owner is re-asserted', async () => {
+      const { store } = makeStore({ ...BASE_ITEM })
+
+      store.setOwner('buyer-a')
+      await store.fetchIfMissing(ITEM_ID)
+      store.applyDiscount(ITEM_ID, 900)
+
+      // Token refresh / repeated INITIAL_SESSION / tab focus all re-assert the
+      // same user; none of them may drop the price the SSE stream just set.
+      store.setOwner('buyer-a')
+
+      expect(store.effectivePrice(ITEM_ID)).toBe(900)
+    })
+  })
 })

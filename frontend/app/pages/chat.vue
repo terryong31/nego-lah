@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useChat } from '@ai-sdk/vue'
 import { DefaultChatTransport } from 'ai'
-import { loginRedirect } from '~/utils/auth'
+import { loginRedirect, resolveUserId } from '~/utils/auth'
 import { useItemStore } from '~/stores/item'
 
 definePageMeta({
@@ -141,8 +141,9 @@ const { messages, status, stop, sendMessage } = useChat({
         body: {
           ...body,
           message: text,
-          user_id: user.value?.id,
-          item_id: contextItemId.value || null
+          user_id: resolveUserId(user.value),
+          item_id: contextItemId.value || null,
+          language: locale.value || 'en'
         }
       }
     }
@@ -341,10 +342,11 @@ watch(input, (val) => {
 })
 
 async function currentUserId(): Promise<string | null> {
-  if (user.value?.id) return user.value.id
+  const fromClaims = resolveUserId(user.value)
+  if (fromClaims) return fromClaims
   // user ref can lag on a hard refresh — fall back to the session directly.
   const { data: { session } } = await supabase.auth.getSession()
-  return session?.user?.id ?? null
+  return resolveUserId(session?.user)
 }
 
 async function loadInitial() {
@@ -390,6 +392,85 @@ async function loadMore() {
   }
 }
 
+// --- Live message intake ---------------------------------------------------
+// SPEC-070: `useChat` streams into this same `messages` array, and it can only
+// update a turn that is still the LAST entry — its writer compares the
+// in-flight message's id against the tail and, when they differ, appends a
+// SECOND copy of the whole reply. A broadcast pushed on top of a streaming turn
+// therefore duplicates it (and strands the typewriter, which reveals the tail
+// message and nothing else). The agent's handoff separator arrives mid-turn
+// every time, which is how a COD conversation ended up reading the same reply
+// on both sides of the divider. So nothing lands in `messages` while a turn is
+// in flight; it waits here and lands once the reply is finished.
+interface LivePayload { content?: string, role?: string, source?: string }
+
+const turnInFlight = computed(() => status.value === 'streaming' || status.value === 'submitted')
+const pendingLive = ref<ReturnType<typeof liveMessage>[]>([])
+
+function liveMessage(msg: LivePayload) {
+  const role: 'user' | 'assistant' | 'system'
+    = (msg.role === 'system' || msg.source === 'system') ? 'system' : (msg.role as 'user' | 'assistant')
+  return {
+    id: uid(),
+    role,
+    parts: [
+      { type: 'text' as const, text: msg.content ?? '' },
+      ...(msg.source ? [{ type: 'data-source' as const, data: msg.source }] : [])
+    ]
+  }
+}
+
+// True when the broadcast is just the reply the buyer is already reading. The
+// agent's own text goes out on this channel to sync the seller's console, and
+// it can arrive either mid-turn or a beat behind the stream's own `finish`.
+function echoesTail(content: string) {
+  const last = messages.value[messages.value.length - 1]
+  return !!last && last.role === 'assistant' && getMessageText(last).trim() === content.trim()
+}
+
+function appendLive(msg: LivePayload) {
+  // A new array rather than a push: `messages` is a shallowRef, so mutating it
+  // in place renders nothing once the SDK has stopped writing to it.
+  messages.value = [...messages.value, liveMessage(msg)]
+  scrollToBottom()
+}
+
+function flushPendingLive() {
+  if (!pendingLive.value.length) return
+  messages.value = [...messages.value, ...pendingLive.value]
+  pendingLive.value = []
+  scrollToBottom()
+}
+
+function receiveLive(payload: unknown) {
+  const msg = payload as LivePayload
+  // Drop any empty messages just to be safe
+  if (!msg || !msg.content) return
+
+  // Customer already has their own message rendered locally
+  if (msg.source === 'human' || msg.role === 'user') return
+
+  if (msg.source === 'ai' && (turnInFlight.value || echoesTail(msg.content))) return
+
+  // A system separator means the AI was just handed over or handed back. Read
+  // back now rather than on flush: the indicator must not go on promising an
+  // answer from an AI that has already stepped out.
+  if (msg.role === 'system' || msg.source === 'system') {
+    loadChatSettings()
+  }
+
+  // Held for the reveal as well as for the stream: the typewriter reveals the
+  // TAIL message, so anything landing on top of a reply still being typed out
+  // cuts it short and pops the rest in at once. The backend now sends the
+  // separator right after the stream closes, which is squarely inside that
+  // window.
+  if (turnInFlight.value || typingActive()) {
+    pendingLive.value.push(liveMessage(msg))
+    return
+  }
+  appendLive(msg)
+}
+
 onMounted(async () => {
   const { data: { session } } = await supabase.auth.getSession()
   accessToken.value = session?.access_token || ''
@@ -406,33 +487,7 @@ onMounted(async () => {
       listenFor: 'seller',
       sendAs: 'customer',
       accessToken: accessToken.value,
-      onMessage: (payload) => {
-        const msg = payload as { content?: string, role?: string, source?: string }
-        // Drop any empty messages just to be safe
-        if (!msg || !msg.content) return
-
-        // Customer already has their own message rendered locally
-        if (msg.source === 'human' || msg.role === 'user') return
-
-        // If useChat is actively streaming an AI turn, ignore AI broadcast to prevent double bubble
-        if (msg.source === 'ai' && (status.value === 'streaming' || status.value === 'submitted')) return
-
-        // A system separator means the AI was just handed over or handed back.
-        if (msg.role === 'system' || msg.source === 'system') {
-          loadChatSettings()
-        }
-
-        // Push the new message into the view
-        messages.value.push({
-          id: globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2),
-          role: (msg.role === 'system' || msg.source === 'system') ? 'system' : (msg.role as 'user' | 'assistant'),
-          parts: [
-            { type: 'text', text: msg.content },
-            ...(msg.source ? [{ type: 'data-source' as const, data: msg.source }] : [])
-          ]
-        })
-        scrollToBottom()
-      }
+      onMessage: receiveLive
     })
   }
 
@@ -464,6 +519,11 @@ async function loadChatSettings() {
 watch(status, (now, before) => {
   if ((before === 'streaming' || before === 'submitted') && now !== 'streaming' && now !== 'submitted') {
     loadChatSettings()
+    // Anything held back during the turn lands now — unless the typewriter is
+    // still revealing the reply, in which case moving it off the tail would cut
+    // the reveal short and pop the rest of the message in at once. `typeTick`
+    // flushes when it finishes.
+    if (!typingActive()) flushPendingLive()
   }
 })
 
@@ -586,6 +646,10 @@ function startTyping() {
   typeTimer = setInterval(typeTick, 1000 / CHAR_RATE)
 }
 
+function typingActive() {
+  return typeTimer !== null
+}
+
 function stopTyping() {
   if (typeTimer) {
     clearInterval(typeTimer)
@@ -593,6 +657,10 @@ function stopTyping() {
   }
   typingId.value = null
   shownText.value = ''
+  // The reveal is over, so the tail is free: whatever the turn held back can
+  // land now (SPEC-070). Not while a turn is still running — that is the case
+  // the queue exists for.
+  if (!turnInFlight.value) flushPendingLive()
 }
 
 onUnmounted(stopTyping)
@@ -648,7 +716,7 @@ async function handleBuyNow() {
   try {
     const res = await call<{ checkout_url?: string }>('/payment/checkout', {
       method: 'POST',
-      body: { item_id: contextItem.value.item_id, user_id: user.value?.id }
+      body: { item_id: contextItem.value.item_id, user_id: resolveUserId(user.value) }
     })
     if (res?.checkout_url) {
       window.location.href = res.checkout_url
@@ -691,7 +759,10 @@ async function handleBuyNow() {
         </div>
       </NuxtLink>
 
-      <div class="flex-1 min-w-0">
+      <div
+        data-tour="chat-item-price"
+        class="flex-1 min-w-0"
+      >
         <NuxtLink
           :to="`/items/${contextItem.item_id}`"
           class="block"
@@ -929,6 +1000,7 @@ async function handleBuyNow() {
 
       <UChatPrompt
         v-model="input"
+        data-tour="chat-composer"
         :placeholder="promptPlaceholder"
         :disabled="cooldown.isCoolingDown.value"
         variant="subtle"

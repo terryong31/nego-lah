@@ -333,3 +333,58 @@ async def test_optional_user_lookup_ignores_a_token_in_the_query_string(patch_su
     request = SimpleNamespace(headers={}, query_params={"token": "a-real-access-token"})
 
     assert await get_optional_user_id(request) is None
+
+
+@pytest.mark.asyncio
+async def test_jwt_valid_token_verified_locally_without_supabase_call(patch_supabase, fake_supabase, monkeypatch):
+    """SPEC-077 / TODO 65: Valid JWTs decode locally, never calling Supabase Auth."""
+    patch_supabase("auth_middleware", admin=fake_supabase)
+    configure_ban_check(fake_supabase, is_banned=False)
+
+    secret = "test-secret-at-least-32-bytes-long!"
+    monkeypatch.setenv("SUPABASE_JWT_SECRET", secret)
+    from core.jwt_auth import jwt_verifier
+    jwt_verifier.secret = secret
+
+    now = int(time.time())
+    import jwt
+    token = jwt.encode(
+        {"sub": "local-jwt-user-888", "aud": "authenticated", "exp": now + 3600, "role": "authenticated"},
+        secret,
+        algorithm="HS256",
+    )
+
+    request = make_request({"Authorization": f"Bearer {token}"})
+    user_id = await verify_user_token(request)
+
+    assert user_id == "local-jwt-user-888"
+    fake_supabase.auth.get_user.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_jwt_forged_token_fails_locally_without_supabase_call(patch_supabase, fake_supabase, monkeypatch):
+    """SPEC-077 / TODO 65: Forged JWTs fail in microseconds on CPU without hitting Supabase."""
+    patch_supabase("auth_middleware", admin=fake_supabase)
+    configure_ban_check(fake_supabase, is_banned=False)
+
+    secret = "test-secret-at-least-32-bytes-long!"
+    monkeypatch.setenv("SUPABASE_JWT_SECRET", secret)
+    from core.jwt_auth import jwt_verifier
+    jwt_verifier.secret = secret
+
+    now = int(time.time())
+    import jwt
+    token = jwt.encode(
+        {"sub": "local-jwt-user-888", "aud": "authenticated", "exp": now + 3600, "role": "authenticated"},
+        "wrong-secret-key-that-does-not-match!",
+        algorithm="HS256",
+    )
+
+    request = make_request({"Authorization": f"Bearer {token}"})
+    with pytest.raises(HTTPException) as exc:
+        await verify_user_token(request)
+
+    assert exc.value.status_code == 401
+    assert exc.value.detail == "Invalid token"
+    fake_supabase.auth.get_user.assert_not_called()
+

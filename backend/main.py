@@ -11,6 +11,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from core.defense_middleware import RequestDefenseMiddleware, SecurityHeadersMiddleware
+from core.rate_limit_middleware import IPRateLimitMiddleware
 from core.telemetry import init_sentry
 from limiter import limiter
 from logger import logger
@@ -186,15 +187,16 @@ if cors_origins_str:
 else:
     origins = _PROD_ORIGINS if IS_PROD else _DEV_ORIGINS + _PROD_ORIGINS
 
-# Defense middleware — OWASP security headers & request body / path guards.
+# Defense middleware — OWASP security headers, pre-routing rate limits & request body / path guards.
 # Registered before CORSMiddleware: Starlette wraps middleware in reverse
 # registration order, so the last one added ends up outermost. CORSMiddleware
-# must be outermost — RequestDefenseMiddleware short-circuits (returns a
-# response directly, without calling call_next) on oversized/malformed
-# requests, and a response that never reaches CORSMiddleware carries no
+# must be outermost — RequestDefenseMiddleware and IPRateLimitMiddleware short-circuit
+# (return a response directly, without calling call_next) on oversized/malformed
+# or rate-limited requests, and a response that never reaches CORSMiddleware carries no
 # Access-Control-* headers, which the browser reports as a CORS failure
-# instead of the real 413/400 (see SPEC-042).
+# instead of the real 413/429/400 (see SPEC-042 and SPEC-077).
 app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(IPRateLimitMiddleware)
 app.add_middleware(RequestDefenseMiddleware)
 
 app.add_middleware(
@@ -212,8 +214,9 @@ app.add_middleware(
         "baggage",
         "X-Turnstile-Token",
         "cf-turnstile-response",
+        "CF-Connecting-IP",
     ],
-    expose_headers=["X-CSRF-Token", "sentry-trace", "baggage"],
+    expose_headers=["X-CSRF-Token", "sentry-trace", "baggage", "Retry-After"],
 )
 
 # Include routers

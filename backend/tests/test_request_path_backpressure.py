@@ -209,32 +209,28 @@ def test_redis_client_is_created_with_an_explicit_max_connections(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# D — rate limits are actually applied to routes
+# D — rate limits are actually applied to routes (SPEC-077 / IPRateLimitMiddleware)
 # ---------------------------------------------------------------------------
 
-def _limited_endpoint_names():
-    """slowapi records every decorated endpoint in `_route_limits`, keyed by
-    the endpoint's qualified name."""
-    from limiter import limiter
-    return set(limiter._route_limits.keys())
-
-
 @pytest.mark.parametrize(
-    "endpoint_name",
+    "path,expected_bucket",
     [
-        "notifications_stream",
-        "get_all_items",
-        "get_featured",
-        "get_item_by_id",
-        "checkout",
+        ("/chat/notifications/stream", "notifications"),
+        ("/items", "items"),
+        ("/items/featured", "items"),
+        ("/items/item-123", "items"),
+        ("/payment/checkout", "checkout"),
+        ("/chat/stream", "chat_stream"),
+        ("/user/123/profile", "user"),
     ],
 )
-def test_hot_endpoints_have_a_rate_limit_applied(endpoint_name):
-    """Registering the limiter without decorating anything is inert config."""
-    applied = _limited_endpoint_names()
-    assert any(endpoint_name in name for name in applied), (
-        f"{endpoint_name} has no @limiter.limit — applied limits: {sorted(applied)}"
-    )
+def test_hot_endpoints_have_a_rate_limit_applied(path, expected_bucket):
+    """SPEC-077 / TODO 64: IPRateLimitMiddleware routes map to dedicated rate limit buckets."""
+    from limiter import resolve_route_limit
+
+    bucket, limit = resolve_route_limit(path)
+    assert bucket == expected_bucket
+    assert limit is not None
 
 
 @pytest.mark.asyncio

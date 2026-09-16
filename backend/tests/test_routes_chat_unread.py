@@ -156,7 +156,11 @@ async def test_read_covers_messages_the_clock_cannot_reach(
     read is a chip that comes back on the next load."""
     auth_user("buyer-10")
     patch_supabase("routes.chat", admin=fake_supabase)
-    skewed = (NOW + timedelta(seconds=30)).isoformat()
+    # Off the live clock, not the import-time `NOW`: this is the one skew in
+    # this module that points forward, so a suite that takes longer than the
+    # skew to reach it would watch `read_watermark` pick `now` and fail here
+    # for reasons that have nothing to do with SPEC-066.
+    skewed = (datetime.now(UTC) + timedelta(seconds=30)).isoformat()
     monkeypatch.setattr(
         "agent.memory.conversation_memory.newest_at",
         lambda user_id, role: skewed if role == "ai" else None,

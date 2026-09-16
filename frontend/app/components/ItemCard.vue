@@ -76,6 +76,8 @@ const imageUrl = computed(() => {
 
   <UCard
     v-else-if="item"
+    :data-tour="isSold ? undefined : 'item-card'"
+    :data-tour-item="item.item_id"
     class="group cursor-pointer transition-all duration-300 flex flex-col overflow-hidden h-full"
     :ui="{ body: 'p-2.5 sm:p-3 flex flex-col flex-1 gap-2.5 sm:gap-3', footer: 'p-2.5 sm:p-3 flex justify-between items-center gap-2' }"
     @click="navigateTo(`/items/${item.item_id}`)"
@@ -109,7 +111,10 @@ const imageUrl = computed(() => {
     </div>
 
     <template #footer>
-      <div class="flex flex-col min-w-0">
+      <div
+        :data-tour="isSold ? undefined : 'item-card-price'"
+        class="flex flex-col min-w-0"
+      >
         <span class="text-xs text-muted">{{ $t('items.price') }}</span>
         <div
           v-if="hasDiscount(displayItem)"

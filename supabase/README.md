@@ -17,11 +17,22 @@ Database schema, RLS, and storage policies for Nego-lah, managed with the
 
 ## Migrations
 
+For detailed entity-relationship diagrams and table schemas, see [`docs/data/README.md`](../docs/data/README.md).
+
 | File | Purpose |
 | --- | --- |
 | `20260628000000_baseline_schema.sql` | Core tables (`CREATE TABLE IF NOT EXISTS`, safe on an existing DB). |
 | `20260628000100_rls_and_storage.sql` | Enables RLS, `items` public read, storage read-only for clients. |
 | `20260628000200_admin_redesign.sql` | Drops the old `admin_users` / `admin_allowed_ips` tables, adds `admin_audit_log`. |
+| `20260629000000_item_soft_delete.sql` | Adds `deleted_at` timestamp for soft-deletion. |
+| `20260630000000_payment_idempotency.sql` | Adds unique constraints and idempotency keys to payments. |
+| `20260701000000_item_translations.sql` | Adds `translations` JSONB column for trilingual content. |
+| `20260702000000_items_column_privileges.sql` | Restricts `SELECT` grants on `items` to hide confidential columns (`min_price`, `buyer_id`). |
+| `20260907000000_append_only_messages.sql` | Introduces high-concurrency append-only `messages` table and backfills history. |
+| `20260909000000_admin_conversation_read_state.sql` | Adds admin durable conversation read watermark tracking. |
+| `20260910000000_order_shipment_tracking.sql` | Adds courier, tracking number, tracking URL, and shipment timestamps to `orders`. |
+| `20260910100000_buyer_conversation_read_state.sql` | Tracks buyer unread message watermarks. |
+| `20260910110000_conversation_archive.sql` | Adds conversation archive status flag. |
 
 ## Admin authentication
 

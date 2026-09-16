@@ -270,20 +270,54 @@ async def test_lease_frees_up_for_the_next_turn_after_the_first_finishes(local_e
 # Scenario 5 — persona/history continuity across providers
 # ---------------------------------------------------------------------------
 
-async def test_scenario_5_same_history_regardless_of_provider(local_env, tunnel_up, monkeypatch):
-    """The message list handed to the agent must be byte-identical whether the
-    turn lands on Qwen or on Gemini — provider selection is transport, not
-    conversation state."""
+HISTORY_ROWS = [
+    {"role": "human", "content": "got any iphones?"},
+    {"role": "ai", "content": "Yep! iPhone 13 for RM1500 😊"},
+]
+
+
+@pytest.fixture
+def stub_local_turn(monkeypatch):
+    """Make the SPEC-091 local path inert, so it takes no network call.
+
+    The two passes are covered in `test_agent_decide.py` / `test_agent_speak.py`;
+    what matters here is only which path a pinned provider takes.
+    """
+    import agent.bot as bot
+    from agent.decide import TurnDecision
+
+    async def _no_tool(_brief):
+        return TurnDecision(tool=None)
+
+    class _Speaker:
+        async def astream(self, _messages):
+            yield type("Chunk", (), {"content": "sure thing"})()
+
+    monkeypatch.setattr(bot, "decide_turn", _no_tool)
+    monkeypatch.setattr(bot, "speaker_model", lambda: _Speaker())
+
+
+async def test_scenario_5_both_providers_read_the_same_history(
+    local_env, tunnel_up, stub_local_turn, monkeypatch
+):
+    """Provider selection is transport, not conversation state.
+
+    SPEC-091 gives the two engines different turn architectures — the local one
+    routes through decide-then-speak rather than the ReAct agent — so the
+    *message list* is no longer comparable between them. What must still hold is
+    that both read the same transcript: a buyer who overflows to Gemini
+    mid-negotiation cannot land in a conversation that has forgotten anything.
+    """
     import agent.bot as bot
 
-    monkeypatch.setattr(
-        bot.conversation_memory,
-        "get_history",
-        lambda user_id, limit=50: [
-            {"role": "human", "content": "got any iphones?"},
-            {"role": "ai", "content": "Yep! iPhone 13 for RM1500 😊"},
-        ],
-    )
+    seen = []
+
+    def _history(user_id):
+        seen.append(user_id)
+        return list(HISTORY_ROWS)
+
+    monkeypatch.setattr(bot, "fetch_history", _history)
+    monkeypatch.setattr(bot.conversation_memory, "add_message", lambda *a, **kw: None)
 
     captured = []
 
@@ -294,20 +328,39 @@ async def test_scenario_5_same_history_regardless_of_provider(local_env, tunnel_
             yield  # pragma: no cover - makes this an async generator
 
     monkeypatch.setattr(bot, "_get_customer_agent", lambda: RecordingAgent())
-    monkeypatch.setattr(bot.conversation_memory, "add_message", lambda *a, **kw: None)
 
-    # Turn A: laptop idle -> local.
+    # Turn A: laptop idle -> local (decide-then-speak).
     async for _ in bot.chat_stream(user_id="u1", message="how much?"):
         pass
 
-    # Turn B: laptop busy -> Gemini overflow.
+    # Turn B: laptop busy -> Gemini overflow (ReAct).
     assert try_acquire_local_llm_lease() is not None
     async for _ in bot.chat_stream(user_id="u1", message="how much?"):
         pass
 
-    assert len(captured) == 2
-    local_msgs, cloud_msgs = captured
-    assert [(type(m), m.content) for m in local_msgs] == [(type(m), m.content) for m in cloud_msgs]
+    assert seen == ["u1", "u1"]
+    # Only the cloud turn reaches the ReAct agent, and it carries the history.
+    assert len(captured) == 1
+    assert [m.content for m in captured[0][:2]] == [row["content"] for row in HISTORY_ROWS]
+
+
+async def test_scenario_5_local_turn_never_touches_the_react_agent(
+    local_env, tunnel_up, stub_local_turn, monkeypatch
+):
+    """SPEC-091: a pinned-local turn runs the two-pass path, not the ReAct loop."""
+    import agent.bot as bot
+
+    monkeypatch.setattr(bot, "fetch_history", lambda user_id: list(HISTORY_ROWS))
+    monkeypatch.setattr(bot.conversation_memory, "add_message", lambda *a, **kw: None)
+
+    def _boom():  # pragma: no cover - must never run
+        raise AssertionError("local turn must not build the ReAct agent")
+
+    monkeypatch.setattr(bot, "_get_customer_agent", _boom)
+
+    chunks = [c async for c in bot.chat_stream(user_id="u1", message="how much?")]
+
+    assert "sure thing" in "".join(c for c in chunks if isinstance(c, str))
 
 
 # ---------------------------------------------------------------------------
@@ -377,17 +430,17 @@ async def test_provider_metadata_shape_cloud(local_env, tunnel_down):
         assert meta["hardware"]
 
 
-async def test_bot_chat_stream_emits_provider_metadata_first(local_env, tunnel_up, monkeypatch):
+async def test_bot_chat_stream_emits_provider_metadata_first(
+    local_env, tunnel_up, stub_local_turn, monkeypatch
+):
     """`chat_stream` announces the provider before any token so the UI can show
     the attribution chip while the answer is still generating."""
     import agent.bot as bot
 
-    class SilentAgent:
-        async def astream(self, payload, stream_mode="messages"):
-            return
-            yield  # pragma: no cover
-
-    monkeypatch.setattr(bot, "_get_customer_agent", lambda: SilentAgent())
+    # A pinned-local provider takes the SPEC-091 decide-then-speak path, not the
+    # ReAct agent, so `stub_local_turn` is what makes this turn inert. Stubbing
+    # `_get_customer_agent` here instead silenced nothing and sent both passes to
+    # the real Apple M5 endpoint, failing the suite whenever the tunnel was down.
     monkeypatch.setattr(bot.conversation_memory, "get_history", lambda *a, **kw: [])
     monkeypatch.setattr(bot.conversation_memory, "add_message", lambda *a, **kw: None)
 

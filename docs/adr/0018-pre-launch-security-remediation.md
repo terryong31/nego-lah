@@ -127,6 +127,6 @@ phone and address of any order by id. `PUT /user/{id}/email` took no password an
   transcript.
 
 ## References
-- `specs/SPEC-056-pre-launch-security-remediation.md`
-- `docs/SECURITY_ANTI_PATTERNS.md`
+- `docs/specs/SPEC-056-pre-launch-security-remediation.md`
+- `docs/security/ANTI_PATTERNS.md`
 - ADR 0015 (SPEC-051), whose optional-scoping fix this supersedes with a fail-closed one

@@ -40,8 +40,8 @@ def csrf(client):
 
 @pytest.fixture
 def notifications(monkeypatch):
-    """Capture the three fan-out calls without performing any of them."""
-    sent = {"emails": [], "chats": []}
+    """Capture the fan-out calls without performing any of them."""
+    sent = {"emails": [], "chats": [], "persisted": []}
 
     monkeypatch.setattr(
         "services.email_service.send_shipment_notice",
@@ -50,6 +50,12 @@ def notifications(monkeypatch):
     monkeypatch.setattr(
         "payment.fulfillment.broadcast_to_chat",
         lambda user_id, content, role="ai", source="ai": sent["chats"].append((user_id, content, source)),
+    )
+    # SPEC-078: the shipment notice must be written to the transcript, not
+    # just broadcast live — see `_notify_buyer_of_shipment`.
+    monkeypatch.setattr(
+        "agent.memory.conversation_memory.add_message",
+        lambda uid, role, msg, *a, **k: sent["persisted"].append((uid, role, msg)),
     )
     monkeypatch.setattr("payment.buyer.account_email", lambda _uid: "buyer@example.com")
     return sent
@@ -275,6 +281,31 @@ async def test_the_buyer_is_told_by_email_and_in_the_chat(
     # source="human"/"system").
     assert source == "ai"
 
+    # SPEC-078: the notice must land in the transcript, not just the live
+    # broadcast — otherwise a buyer who isn't on the chat page at this exact
+    # instant loses the message entirely, even though `notified.chat` says True.
+    assert len(notifications["persisted"]) == 1
+    persisted_uid, persisted_role, persisted_msg = notifications["persisted"][0]
+    assert persisted_uid == "buyer-1"
+    assert persisted_role == "ai"
+    assert "630123456789" in persisted_msg
+
+
+async def test_the_chat_notice_is_persisted_even_when_notify_is_true_but_buyer_is_offline(
+    client, admin_user, admin_supabase, csrf, notifications
+):
+    """The historical bug: the message only ever reached a live Realtime
+    broadcast, so an offline buyer never saw it, before or after reconnecting,
+    because nothing was ever written to `messages`."""
+    admin_user()
+    _order_lookup(admin_supabase, ORDER)
+    _order_update(admin_supabase, {**ORDER, "courier": "J&T Express", "tracking_number": "630123456789"})
+
+    await _ship(client, csrf)
+
+    # Persisted regardless of whether anyone was there to receive the live push.
+    assert notifications["persisted"], "shipment notice was never saved to the buyer's chat history"
+
 
 async def test_notify_false_records_the_shipment_silently(
     client, admin_user, admin_supabase, csrf, notifications
@@ -289,6 +320,7 @@ async def test_notify_false_records_the_shipment_silently(
     assert res.status_code == 200
     assert notifications["emails"] == []
     assert notifications["chats"] == []
+    assert notifications["persisted"] == []
     assert res.json()["notified"] == {"email": False, "chat": False}
 
 
@@ -327,6 +359,10 @@ async def test_a_failing_broadcast_does_not_lose_the_shipment(
 
     assert res.status_code == 200
     assert res.json()["notified"] == {"email": True, "chat": False}
+    # The write to `messages` happens before the (failing) live broadcast, so
+    # the notice still survives in the buyer's transcript even though the
+    # realtime push and the "chat: True" flag do not.
+    assert notifications["persisted"], "the notice must still be saved to history"
 
 
 # ---------------------------------------------------------------------------
@@ -348,6 +384,7 @@ async def test_marking_an_order_delivered_stamps_the_time_and_notifies(
     assert admin_supabase.table.return_value.update.call_args[0][0]["delivered_at"]
     assert len(notifications["emails"]) == 1
     assert notifications["emails"][0][2] is True, "the notice must be worded as a delivery"
+    assert len(notifications["persisted"]) == 1
 
 
 async def test_other_status_changes_do_not_notify_the_buyer(

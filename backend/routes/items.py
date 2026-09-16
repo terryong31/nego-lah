@@ -5,7 +5,6 @@ from fastapi import APIRouter, HTTPException, Request, status
 
 from auth_middleware import get_optional_user_id
 from items import PUBLIC_ITEM_COLUMNS, PUBLIC_ITEM_SELECT, get_featured_items, get_items
-from limiter import CATALOG_LIMIT, limiter
 
 # Public items API — READ ONLY.
 # All writes (create/update/delete, image management) live under the admin router
@@ -68,7 +67,6 @@ def _apply_discount(item: dict, user_id: str | None) -> dict:
 
 
 @router.get('')
-@limiter.limit(CATALOG_LIMIT)
 async def get_all_items(request: Request, keyword: str | None = None) -> list[dict]:
     """
     Get all items or search by keyword.
@@ -88,7 +86,6 @@ async def get_all_items(request: Request, keyword: str | None = None) -> list[di
 
 
 @router.get('/featured')
-@limiter.limit(CATALOG_LIMIT)
 async def get_featured(request: Request, limit: int = 6) -> list[dict]:
     """
     Get the most-interacted listings for the home page.
@@ -105,7 +102,6 @@ async def get_featured(request: Request, limit: int = 6) -> list[dict]:
 
 
 @router.get('/{item_id}')
-@limiter.limit(CATALOG_LIMIT)
 async def get_item_by_id(item_id: str, request: Request) -> dict:
     """
     Get a specific item by ID.

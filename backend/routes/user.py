@@ -27,7 +27,6 @@ from connector import admin_supabase, new_user_client
 from core.images import MAX_AVATAR_EDGE, process_upload
 from core.uploads import MAX_AVATAR_IMAGE_BYTES
 from env import STORAGE_BUCKET
-from limiter import ACCOUNT_LIMIT, limiter
 from logger import logger
 from schemas import (
     AccountDeleteSchema,
@@ -96,7 +95,6 @@ def _reauthenticate(user_id: str, current_password: str):
 
 
 @router.put("/{user_id}/password")
-@limiter.limit(ACCOUNT_LIMIT)
 def change_password(
     user_id: str,
     payload: PasswordUpdateSchema,
@@ -120,7 +118,6 @@ def change_password(
 
 
 @router.put("/{user_id}/email")
-@limiter.limit(ACCOUNT_LIMIT)
 def change_email(
     user_id: str,
     payload: EmailUpdateSchema,
@@ -158,7 +155,6 @@ def change_email(
 
 
 @router.put("/{user_id}/language")
-@limiter.limit(ACCOUNT_LIMIT)
 def update_language(
     user_id: str,
     payload: LanguageUpdateSchema,
@@ -188,6 +184,12 @@ def update_language(
         admin_supabase.auth.admin.update_user_by_id(
             user_id, {"user_metadata": metadata}
         )
+        try:
+            from cache import redis_client
+            if redis_client:
+                redis_client.set(f"user:{user_id}:lang", lang, ex=86400)
+        except Exception as cache_err:
+            logger.debug(f"Redis language cache write failed for {user_id}: {cache_err}")
     except Exception as e:
         logger.error(f"Error updating language for user {user_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to update language") from e
@@ -195,8 +197,46 @@ def update_language(
     return {"message": "Language updated", "preferred_language": lang}
 
 
+def get_user_preferred_language(user_id: str | None) -> str:
+    """Retrieve user's preferred language from Redis cache or Supabase auth metadata.
+
+    Returns 'en', 'ms', or 'zh' (defaulting to 'en' on miss or error).
+    """
+    if not user_id:
+        return "en"
+
+    cache_key = f"user:{user_id}:lang"
+    try:
+        from cache import redis_client
+        if redis_client:
+            cached = redis_client.get(cache_key)
+            if cached:
+                cached_str = cached.decode("utf-8") if isinstance(cached, bytes) else str(cached)
+                if cached_str in SUPPORTED_LANGUAGES:
+                    return cached_str
+    except Exception as e:
+        logger.debug(f"Redis language cache read failed for {user_id}: {e}")
+
+    try:
+        user_res = admin_supabase.auth.admin.get_user_by_id(user_id)
+        if user_res and getattr(user_res, "user", None):
+            meta_lang = (user_res.user.user_metadata or {}).get("preferred_language")
+            if meta_lang and str(meta_lang).lower().strip() in SUPPORTED_LANGUAGES:
+                normalized = str(meta_lang).lower().strip()
+                try:
+                    from cache import redis_client
+                    if redis_client:
+                        redis_client.set(cache_key, normalized, ex=86400)
+                except Exception as cache_err:
+                    logger.debug(f"Redis language cache set failed for {user_id}: {cache_err}")
+                return normalized
+    except Exception as e:
+        logger.debug(f"Supabase auth language lookup failed for {user_id}: {e}")
+
+    return "en"
+
+
 @router.put("/{user_id}/profile")
-@limiter.limit(ACCOUNT_LIMIT)
 async def update_profile(
     user_id: str,
     request: Request,
@@ -283,7 +323,6 @@ async def update_profile(
 
 
 @router.delete("/{user_id}")
-@limiter.limit(ACCOUNT_LIMIT)
 def delete_account(
     user_id: str,
     payload: AccountDeleteSchema,
@@ -307,10 +346,6 @@ def delete_account(
     # Best-effort cleanup of app data (don't abort the delete if a table is empty)
     for table, column in [
         ("chat_settings", "user_id"),
-        ("conversations", "user_id"),
-        # SPEC-043 moved history here. Both tables are listed: `conversations`
-        # still holds everything written before the cutover, and leaving it
-        # behind would keep a deleted user's transcript on disk.
         ("messages", "user_id"),
         ("user_profiles", "id"),
     ]:

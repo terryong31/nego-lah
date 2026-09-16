@@ -517,6 +517,10 @@ async def test_get_user_orders_success_with_item_join(
         "status": "sold",
         "created_at": "2026-01-01T00:00:00Z",
         "stripe_payment_id": "pi_1",
+        "courier": None,
+        "tracking_number": None,
+        "tracking_url": None,
+        "shipped_at": None,
     }
     orders_mock.select.return_value.eq.return_value.order.return_value.execute.return_value = (
         make_supabase_result([order_row])
@@ -548,6 +552,10 @@ async def test_get_user_orders_success_with_item_join(
             "status": "sold",
             "created_at": "2026-01-01T00:00:00Z",
             "stripe_payment_id": "pi_1",
+            "courier": None,
+            "tracking_number": None,
+            "tracking_url": None,
+            "shipped_at": None,
         }
     ]
     orders_mock.select.return_value.eq.assert_any_call("buyer_id", "buyer-1")
@@ -605,6 +613,152 @@ async def test_get_user_orders_empty_returns_empty_list(
 
     assert response.status_code == 200
     assert response.json() == {"orders": []}
+
+
+async def _user_orders_with(order_row, client, patch_supabase, fake_supabase):
+    """Run GET /payment/orders/user/buyer-1 over one orders row."""
+    orders_mock = MagicMock()
+    items_mock = MagicMock()
+    fake_supabase.table.side_effect = lambda name: {
+        "orders": orders_mock,
+        "items": items_mock,
+    }[name]
+    orders_mock.select.return_value.eq.return_value.order.return_value.execute.return_value = (
+        make_supabase_result([order_row])
+    )
+    items_mock.select.return_value.eq.return_value.execute.return_value = make_supabase_result([])
+    patch_supabase("routes.payment", admin=fake_supabase)
+
+    response = await client.get("/payment/orders/user/buyer-1")
+    assert response.status_code == 200
+    return response.json()["orders"][0]
+
+
+async def test_get_user_orders_exposes_shipment_to_the_buyer(
+    client, auth_user, patch_supabase, fake_supabase
+):
+    """SPEC-069: the console records a shipment, and the buyer can finally see it.
+
+    Fails pre-fix: the route projected a fixed set of columns and dropped
+    courier/tracking entirely, so a buyer's only tracking channel was the
+    shipment email or asking the agent in chat."""
+    auth_user("buyer-1")
+
+    body = await _user_orders_with(
+        {
+            "id": "order-3",
+            "item_id": "item-3",
+            "item_name": "Strat",
+            "amount": 280,
+            "status": "shipped",
+            "created_at": "2026-01-03T00:00:00Z",
+            "stripe_payment_id": "pi_3",
+            "courier": "J&T Express",
+            "tracking_number": "630123456789",
+            "tracking_url": "https://tracker.example/630123456789",
+            "shipped_at": "2026-01-04T00:00:00Z",
+        },
+        client,
+        patch_supabase,
+        fake_supabase,
+    )
+
+    assert body["courier"] == "J&T Express"
+    assert body["tracking_number"] == "630123456789"
+    # A URL already stored by the console wins over anything we could derive.
+    assert body["tracking_url"] == "https://tracker.example/630123456789"
+    assert body["shipped_at"] == "2026-01-04T00:00:00Z"
+
+
+async def test_get_user_orders_derives_tracking_url_when_absent(
+    client, auth_user, patch_supabase, fake_supabase
+):
+    """A row written before tracking_url existed still gets a link."""
+    auth_user("buyer-1")
+
+    body = await _user_orders_with(
+        {
+            "id": "order-4",
+            "item_id": "item-4",
+            "item_name": "Amp",
+            "amount": 400,
+            "status": "shipped",
+            "created_at": "2026-01-05T00:00:00Z",
+            "stripe_payment_id": "pi_4",
+            # The seller's shorthand, not the canonical name.
+            "courier": "jnt",
+            "tracking_number": "630999888777",
+            "tracking_url": None,
+            "shipped_at": "2026-01-06T00:00:00Z",
+        },
+        client,
+        patch_supabase,
+        fake_supabase,
+    )
+
+    assert body["courier"] == "J&T Express"
+    assert body["tracking_url"] == "https://www.jtexpress.my/tracking?billcode=630999888777"
+
+
+async def test_get_user_orders_unknown_courier_offers_no_link(
+    client, auth_user, patch_supabase, fake_supabase
+):
+    """An unrecognised carrier is still recorded -- it just has no URL."""
+    auth_user("buyer-1")
+
+    body = await _user_orders_with(
+        {
+            "id": "order-5",
+            "item_id": "item-5",
+            "item_name": "Pedal",
+            "amount": 90,
+            "status": "shipped",
+            "created_at": "2026-01-07T00:00:00Z",
+            "stripe_payment_id": "pi_5",
+            "courier": "Uncle Lim Lorry",
+            "tracking_number": "AB123",
+            "tracking_url": None,
+            "shipped_at": "2026-01-08T00:00:00Z",
+        },
+        client,
+        patch_supabase,
+        fake_supabase,
+    )
+
+    assert body["courier"] == "Uncle Lim Lorry"
+    assert body["tracking_number"] == "AB123"
+    assert body["tracking_url"] is None
+
+
+async def test_get_user_orders_unshipped_reports_nulls(
+    client, auth_user, patch_supabase, fake_supabase
+):
+    """Not every order has shipped; the fields are present and empty, not absent."""
+    auth_user("buyer-1")
+
+    body = await _user_orders_with(
+        {
+            "id": "order-6",
+            "item_id": "item-6",
+            "item_name": "Cable",
+            "amount": 20,
+            "status": "paid",
+            "created_at": "2026-01-09T00:00:00Z",
+            "stripe_payment_id": "pi_6",
+            "courier": None,
+            "tracking_number": None,
+            "tracking_url": None,
+            "shipped_at": None,
+        },
+        client,
+        patch_supabase,
+        fake_supabase,
+    )
+
+    assert body["courier"] is None
+    assert body["tracking_number"] is None
+    assert body["tracking_url"] is None
+    assert body["shipped_at"] is None
 
 
 async def test_get_user_orders_mismatch_is_403(client, auth_user, patch_supabase, fake_supabase):

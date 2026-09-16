@@ -97,7 +97,7 @@ The prices in `MODEL_PRICING` are dated (`PRICES_SOURCED`) and printed with ever
 because they will go stale and someone will otherwise quote them as current.
 
 ## References
-- `specs/SPEC-059-agent-cost-reduction-and-evaluation.md`
+- `docs/specs/SPEC-059-agent-cost-reduction-and-evaluation.md`
 - ADR 0003 (dual-provider multimodal LLM failover), ADR 0007 (hybrid edge/cloud router) —
   the self-hosted model is priced at zero marginal cost per token for the reason given there
 - SPEC-047 / ADR 0011 — why the floor lives in a tool and not in the prompt

@@ -1,5 +1,21 @@
 <script setup lang="ts">
 import MemphisCharacters from '~/components/hero/MemphisCharacters.vue'
+import { loginRedirect } from '~/utils/auth'
+
+/**
+ * The landing page's subject is the system, not one seller (SPEC-069).
+ *
+ * Both calls to action lead to the same place by way of the same door: the
+ * storefront, where the onboarding tour is waiting. Signing in first is the
+ * point — the interesting half of this product (negotiation, checkout,
+ * tracking) is behind auth, and a visitor who never signs in never sees it.
+ */
+const user = useSupabaseUser()
+const { locale } = useI18n()
+
+const enterStore = computed(() =>
+  user.value ? '/items' : loginRedirect('/items')
+)
 </script>
 
 <template>
@@ -19,52 +35,36 @@ import MemphisCharacters from '~/components/hero/MemphisCharacters.vue'
         <!-- Main Punchy Headline with Memphis wave highlight -->
         <h1 class="text-3xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight text-highlighted leading-[1.15]">
           {{ $t('home.heroTitle1') }}<br>
-          {{ $t('home.heroTitle2') }}
-          <span class="relative inline-block text-primary">
-            {{ $t('home.heroBrand') }}
-            <!-- Playful Memphis Wave Underline -->
-            <svg
-              class="absolute -bottom-1 sm:-bottom-2 left-0 w-full h-3 text-primary/40 overflow-visible"
-              viewBox="0 0 100 12"
-              fill="none"
-              preserveAspectRatio="none"
-            >
-              <path
-                d="M 0 6 Q 25 12 50 6 T 100 6"
-                stroke="currentColor"
-                stroke-width="4.5"
-                stroke-linecap="round"
-              />
-            </svg>
+          {{ $t('home.heroTitle2') }}{{ locale === 'zh' ? '' : ' ' }}<span class="relative inline-block text-primary">{{ $t('home.heroBrand') }}<svg
+            class="absolute -bottom-1 sm:-bottom-2 left-0 w-full h-3 text-primary/40 overflow-visible"
+            viewBox="0 0 100 12"
+            fill="none"
+            preserveAspectRatio="none"
+          >
+            <path
+              d="M 0 6 Q 25 12 50 6 T 100 6"
+              stroke="currentColor"
+              stroke-width="4.5"
+              stroke-linecap="round"
+            />
+          </svg>
           </span>
         </h1>
       </template>
 
       <template #description>
-        <!-- Subtitle and playful note with symmetrical spacing -->
-        <div class="flex flex-col items-center lg:items-start gap-5">
-          <p class="text-base sm:text-lg text-muted leading-relaxed">
-            {{ $t('home.heroDesc') }}
-          </p>
-          <div>
-            <UBadge
-              color="primary"
-              variant="subtle"
-              size="md"
-            >
-              {{ $t('home.heroPs') }}
-            </UBadge>
-          </div>
-        </div>
+        <p class="text-base sm:text-lg text-muted leading-relaxed">
+          {{ $t('home.heroDesc') }}
+        </p>
       </template>
 
       <template #footer>
         <!-- CTA Button (centered on mobile, left on lg) -->
         <div class="flex flex-wrap items-center justify-center lg:justify-start gap-3 pt-2">
           <UButton
-            to="/items"
+            :to="enterStore"
             size="xl"
-            :label="$t('home.browseStuff')"
+            :label="user ? $t('home.browseStuffAuthed') : $t('home.browseStuff')"
             trailing-icon="i-lucide-arrow-right"
             class="font-bold shadow-lg hover:shadow-primary/25 transition-all duration-300 hover:scale-[1.02] active:scale-[0.98]"
           />
@@ -77,11 +77,8 @@ import MemphisCharacters from '~/components/hero/MemphisCharacters.vue'
       </div>
     </UHero>
 
-    <!-- Product Walkthrough Video Showcase (Screen Studio walkthrough) -->
-    <HomeProductVideoShowcase />
-
-    <!-- Terry's promises, in his own voice -->
-    <HomeHouseRules />
+    <!-- How it works: the walkthrough, scrubbed by scroll -->
+    <HomeAgentPipeline />
 
     <!-- B2B: this system ports to your company -->
     <HomeDeployPitch />

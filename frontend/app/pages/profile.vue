@@ -6,7 +6,7 @@ import {
   type EmailChangeForm,
   type PasswordChangeForm
 } from '~/utils/schemas'
-import { resolveAvatarUrl } from '~/utils/auth'
+import { resolveAvatarUrl, resolveUserId } from '~/utils/auth'
 
 definePageMeta({
   middleware: 'auth'
@@ -39,7 +39,7 @@ const initials = computed(() => {
 // path id and the Authorization header are guaranteed to refer to the same user.
 async function getUserId(): Promise<string | null> {
   const { data: { session } } = await supabase.auth.getSession()
-  return session?.user?.id ?? user.value?.id ?? null
+  return resolveUserId(session?.user) ?? resolveUserId(user.value)
 }
 
 // Keep local fields in sync if the user object updates elsewhere

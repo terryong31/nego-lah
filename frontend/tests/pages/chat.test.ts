@@ -678,6 +678,170 @@ describe('pages/chat.vue', () => {
     })
   })
 
+  // SPEC-070: `useChat` streams into the very array these broadcasts land in,
+  // and the SDK only knows how to update a turn that is still the LAST entry —
+  // anything pushed on top of an in-flight reply makes its next write append a
+  // SECOND copy of that whole reply. The agent's COD handoff broadcasts its
+  // separator mid-turn every time, which is how the buyer ended up reading the
+  // same six bubbles on either side of the divider.
+  describe('realtime onMessage while a turn is in flight', () => {
+    const REPLY = 'Ah, COD isn\'t something I can set up here'
+
+    async function mountMidTurn() {
+      userRef.value = { id: 'user-1' }
+      const wrapper = await mountPage()
+      const onMessage = typingState.join.mock.calls[0]![1].onMessage as (payload: unknown) => void
+      // What the SDK leaves on the array while it streams: the buyer's message
+      // and the assistant message it is writing into.
+      messagesRef.value = [
+        { id: 'u1', role: 'user', parts: [{ type: 'text', text: 'boleh cod x?' }] },
+        { id: 'a1', role: 'assistant', parts: [{ type: 'text', text: REPLY }] }
+      ]
+      statusRef.value = 'streaming'
+      await nextTick()
+      return { wrapper, onMessage }
+    }
+
+    async function settle() {
+      statusRef.value = 'ready'
+      await flushPromises()
+    }
+
+    it('holds a mid-turn separator back, leaving the streaming reply on the tail', async () => {
+      const { onMessage } = await mountMidTurn()
+
+      onMessage({ role: 'system', source: 'system', content: '--- transferred to Terry ---' })
+      await nextTick()
+
+      expect(messagesRef.value).toHaveLength(2)
+      expect(messagesRef.value.at(-1)!.role).toBe('assistant')
+
+      await settle()
+
+      expect(messagesRef.value).toHaveLength(3)
+      expect(messagesRef.value.at(-1)!.role).toBe('system')
+      expect(messagesRef.value.at(-1)!.parts[0]).toEqual({
+        type: 'text',
+        text: '--- transferred to Terry ---'
+      })
+    })
+
+    it('flushes what it held in arrival order, as a new array', async () => {
+      const { onMessage } = await mountMidTurn()
+      const before = messagesRef.value
+
+      onMessage({ role: 'system', source: 'system', content: '--- transferred to Terry ---' })
+      onMessage({ role: 'assistant', source: 'admin', content: 'Terry here — where you staying?' })
+      await settle()
+
+      // A new array, not a push: `messages` is a shallowRef, so an in-place
+      // mutation after the SDK stops writing renders nothing.
+      expect(messagesRef.value).not.toBe(before)
+      expect(messagesRef.value.map(m => m.role)).toEqual(['user', 'assistant', 'system', 'assistant'])
+      expect(messagesRef.value.at(-1)!.parts[0]!.text).toBe('Terry here — where you staying?')
+    })
+
+    it('re-reads the AI setting the moment the separator arrives, not when it lands', async () => {
+      const { onMessage } = await mountMidTurn()
+      callMock.mockClear()
+
+      onMessage({ role: 'system', source: 'system', content: '--- transferred to Terry ---' })
+      await flushPromises()
+
+      expect(callMock).toHaveBeenCalledWith('/chat/settings/user-1')
+    })
+
+    it('drops the agent echoing its own reply, whether it lands during the turn or after it', async () => {
+      const { onMessage } = await mountMidTurn()
+
+      onMessage({ role: 'assistant', source: 'ai', content: REPLY })
+      await settle()
+      expect(messagesRef.value).toHaveLength(2)
+
+      // The broadcast that syncs the seller's console can also arrive a beat
+      // after the SSE stream closes — same words, same duplicate.
+      onMessage({ role: 'assistant', source: 'ai', content: REPLY })
+      await nextTick()
+      expect(messagesRef.value).toHaveLength(2)
+    })
+
+    it('waits for the typewriter to finish revealing the reply before the separator lands', async () => {
+      // Held back for the reveal, not just for the stream: the separator moving
+      // onto the tail mid-reveal cuts it short and pops the rest of the reply
+      // in at once — which is the same jolt, one frame long, this fixes.
+      userRef.value = { id: 'user-1' }
+      getSessionMock.mockResolvedValue({ data: { session: { access_token: 'live-token' } } })
+      const wrapper = await mountPage()
+
+      await wrapper.find('textarea').setValue('boleh cod x?')
+      await wrapper.find('form').trigger('submit')
+      await flushPromises()
+
+      messagesRef.value = [
+        { id: 'u1', role: 'user', parts: [{ type: 'text', text: 'boleh cod x?' }] },
+        { id: 'a1', role: 'assistant', parts: [{ type: 'text', text: 'Sure' }] }
+      ]
+      statusRef.value = 'streaming'
+      await nextTick()
+
+      const onMessage = typingState.join.mock.calls[0]![1].onMessage as (payload: unknown) => void
+      onMessage({ role: 'system', source: 'system', content: '--- transferred to Terry ---' })
+
+      // Stream done, reveal still going: 'S' of 'Sure' at 20ms/char.
+      await vi.advanceTimersByTimeAsync(20)
+      statusRef.value = 'ready'
+      await vi.advanceTimersByTimeAsync(20)
+      expect(messagesRef.value).toHaveLength(2)
+      expect(vm(wrapper).shownText).toBe('Su')
+
+      await vi.advanceTimersByTimeAsync(60)
+      expect(messagesRef.value.at(-1)!.role).toBe('system')
+    })
+
+    it('holds a separator that arrives after the stream closes until the reveal is done', async () => {
+      // The production path since SPEC-070's backend half: the separator is
+      // broadcast after the reply has been delivered, so it lands with the
+      // stream already settled and the typewriter still running.
+      userRef.value = { id: 'user-1' }
+      getSessionMock.mockResolvedValue({ data: { session: { access_token: 'live-token' } } })
+      const wrapper = await mountPage()
+
+      await wrapper.find('textarea').setValue('boleh cod x?')
+      await wrapper.find('form').trigger('submit')
+      await flushPromises()
+
+      messagesRef.value = [
+        { id: 'u1', role: 'user', parts: [{ type: 'text', text: 'boleh cod x?' }] },
+        { id: 'a1', role: 'assistant', parts: [{ type: 'text', text: 'Sure' }] }
+      ]
+      statusRef.value = 'streaming'
+      await nextTick()
+      await vi.advanceTimersByTimeAsync(20)
+      statusRef.value = 'ready'
+
+      const onMessage = typingState.join.mock.calls[0]![1].onMessage as (payload: unknown) => void
+      onMessage({ role: 'system', source: 'system', content: '--- transferred to Terry ---' })
+      await nextTick()
+
+      expect(messagesRef.value).toHaveLength(2)
+      await vi.advanceTimersByTimeAsync(20)
+      expect(vm(wrapper).shownText).toBe('Su')
+
+      await vi.advanceTimersByTimeAsync(60)
+      expect(messagesRef.value.at(-1)!.role).toBe('system')
+    })
+
+    it('still appends immediately when nothing is streaming', async () => {
+      const { onMessage } = await mountMidTurn()
+      await settle()
+
+      onMessage({ role: 'assistant', source: 'admin', content: 'Terry here' })
+      await nextTick()
+
+      expect(messagesRef.value.at(-1)!.parts[0]!.text).toBe('Terry here')
+    })
+  })
+
   describe('send()', () => {
     it('does nothing for blank/whitespace-only text', async () => {
       userRef.value = { id: 'user-1' }
@@ -800,7 +964,8 @@ describe('pages/chat.vue', () => {
           existing: true,
           message: 'Hello World',
           user_id: 'user-42',
-          item_id: 'item-9'
+          item_id: 'item-9',
+          language: 'en'
         }
       })
     })
@@ -813,7 +978,7 @@ describe('pages/chat.vue', () => {
       const result = chatTransport().prepareSendMessagesRequest({ messages: [], body: {} })
 
       expect(result).toEqual({
-        body: { message: '', user_id: 'user-1', item_id: null }
+        body: { message: '', user_id: 'user-1', item_id: null, language: 'en' }
       })
     })
   })

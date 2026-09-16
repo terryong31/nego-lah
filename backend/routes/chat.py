@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import contextlib
+import inspect
 import json
 import os
 import time
@@ -8,7 +9,7 @@ import time
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from agent.context import pending_discount
+from agent.context import new_turn, pending_discount, pending_handoff
 from auth_middleware import get_user_id_from_body_or_token, verify_user_token
 from cache import (
     check_ai_token_limit,
@@ -18,7 +19,6 @@ from cache import (
     track_ai_tokens,
 )
 from connector import admin_supabase
-from limiter import NOTIFICATION_STREAM_LIMIT, limiter
 from logger import logger
 
 router = APIRouter(prefix="", tags=["Chat"])
@@ -251,6 +251,41 @@ async def _deliver(user_id: str, text: str) -> None:
         logger.debug(f"Unread digest queue skipped for {user_id}: {e}")
 
 
+async def _flush_handoff_notice(user_id: str) -> None:
+    """Write the separator a `transfer_to_human` left pending, if any.
+
+    SPEC-070: the tool used to write it itself, mid-turn, which put it above
+    the farewell it explains and pushed it into the buyer's live message list
+    while the reply was still streaming into that same list — the AI SDK then
+    rendered the whole reply a second time. Draining it here, after the reply
+    has been delivered, mirrors the rate-limit handoff below it and leaves the
+    transcript in the order it is read back in.
+
+    Called from the turn's `finally`, so a turn that timed out or threw still
+    tells the buyer why nobody is answering: by then the AI is already off.
+    """
+    notice = pending_handoff.get()
+    if not notice:
+        return
+    pending_handoff.set(None)
+
+    from agent.memory import conversation_memory
+    from payment.fulfillment import broadcast_to_chat
+
+    try:
+        await asyncio.to_thread(
+            conversation_memory.add_message, user_id, "system", notice, source="system"
+        )
+    except Exception as e:
+        logger.warning(f"⚠️ Failed to persist the handoff separator for {user_id}: {e}")
+    try:
+        await asyncio.to_thread(
+            broadcast_to_chat, user_id, notice, role="system", source="system"
+        )
+    except Exception as e:
+        logger.warning(f"⚠️ Failed to broadcast the handoff separator for {user_id}: {e}")
+
+
 async def _run_turn(
     *,
     user_id: str,
@@ -259,6 +294,7 @@ async def _run_turn(
     file_data: list,
     remaining: int,
     relay: _TurnRelay,
+    language: str | None = None,
 ) -> None:
     """Drive one agent turn to completion, whatever the buyer's browser does.
 
@@ -269,6 +305,11 @@ async def _run_turn(
     """
     from agent.bot import chat_stream
     from agent.memory import conversation_memory
+
+    # This turn's own signal box, opened before anything can write to it. The
+    # tools hand `pending_discount` / `pending_handoff` back through it, and it
+    # has to belong to this task or two concurrent turns share one dict.
+    new_turn()
 
     # Stable id correlating all text parts of this single assistant message.
     text_id = "0"
@@ -393,12 +434,18 @@ async def _run_turn(
         # chat_stream is a native async generator (LangGraph .astream), so the
         # LLM's network I/O yields control and never blocks the event loop —
         # concurrent chats and the admin console stay responsive.
-        turn = chat_stream(
-            user_id=user_id,
-            message=message or "Please analyze these files.",
-            item_id=item_id,
-            files=file_data if file_data else None,
-        )
+        turn_kwargs = {
+            "user_id": user_id,
+            "message": message or "Please analyze these files.",
+            "item_id": item_id,
+            "files": file_data if file_data else None,
+        }
+        sig = inspect.signature(chat_stream)
+        if "language" in sig.parameters or any(
+            p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+        ):
+            turn_kwargs["language"] = language
+        turn = chat_stream(**turn_kwargs)
         # One budget for the whole turn, not per chunk: a turn that dribbles a
         # token every few seconds forever is just as stuck as one that never
         # yields at all, and only a wall-clock deadline catches both.
@@ -514,9 +561,13 @@ async def _run_turn(
         relay.emit({"type": "error", "errorText": "Something went wrong. Please try again."})
         relay.emit({"type": "finish"})
     finally:
-        # Unconditional: a response waiting on frames that never end would hang
-        # the buyer's browser on a spinner for as long as it kept the socket.
+        # Unconditional, and first: a response waiting on frames that never end
+        # would hang the buyer's browser on a spinner for as long as it kept the
+        # socket, and the separator below is I/O that could be cancelled.
         relay.end()
+        # After the reply on every path, including the ones that never produced
+        # one — see `_flush_handoff_notice`.
+        await _flush_handoff_notice(user_id)
 
 
 @router.post("/chat/stream")
@@ -546,6 +597,7 @@ async def chat_stream(request: Request):
         body_user_id = form.get("user_id", "")
         message = form.get("message", "")
         item_id = form.get("item_id")
+        language = form.get("language")
 
         # Read and encode uploaded files
         files = form.getlist("files")
@@ -563,9 +615,16 @@ async def chat_stream(request: Request):
         body_user_id = body.get("user_id", "")
         message = body.get("message", "")
         item_id = body.get("item_id")
+        language = body.get("language")
 
     # Validate token matches body user_id
     user_id = get_user_id_from_body_or_token(body_user_id, token_user_id)
+
+    if isinstance(language, str):
+        language = language.strip().lower()
+    if not language or language not in ("en", "ms", "zh"):
+        from routes.user import get_user_preferred_language
+        language = await asyncio.to_thread(get_user_preferred_language, user_id)
 
     # Validate required fields - allow empty message if files are present
     if not message and not file_data:
@@ -626,6 +685,7 @@ async def chat_stream(request: Request):
         file_data=file_data,
         remaining=remaining,
         relay=relay,
+        language=language,
     ))
     _running_turns.add(producer)
     producer.add_done_callback(_running_turns.discard)
@@ -704,7 +764,6 @@ async def mark_read(user_id: str = Depends(verify_user_token)):
 
 
 @router.post("/chat/notifications/ticket")
-@limiter.limit(NOTIFICATION_STREAM_LIMIT)
 async def notifications_ticket(request: Request, user_id: str = Depends(verify_user_token)):
     """Mint a short-lived, single-use ticket for opening the notification stream.
 
@@ -721,7 +780,6 @@ async def notifications_ticket(request: Request, user_id: str = Depends(verify_u
 
 
 @router.get("/chat/notifications/stream")
-@limiter.limit(NOTIFICATION_STREAM_LIMIT)
 async def notifications_stream(request: Request):
     """
     Real-time Server-Sent Events (SSE) notification stream.

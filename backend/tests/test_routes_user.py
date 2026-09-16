@@ -525,12 +525,9 @@ async def test_delete_account_success(client, auth_user, patch_supabase, session
     assert resp.status_code == 200
     assert resp.json() == {"message": "Account deleted successfully"}
     fake_admin.auth.admin.delete_user.assert_called_once_with("user-1")
-    # Cleanup covers every table holding this user's data. `messages` is the
-    # SPEC-043 history table; `conversations` still holds whatever was written
-    # before that cutover, so deleting an account has to clear both or a
-    # deleted user's transcript outlives their account.
+    # Cleanup covers every table holding this user's data.
     cleaned_tables = [call.args[0] for call in fake_admin.table.call_args_list]
-    assert cleaned_tables == ["chat_settings", "conversations", "messages", "user_profiles"]
+    assert cleaned_tables == ["chat_settings", "messages", "user_profiles"]
 
 
 async def test_delete_account_invalidates_token(client, auth_user, patch_supabase, monkeypatch, session_client):

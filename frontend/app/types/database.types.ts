@@ -90,41 +90,6 @@ export type Database = {
         }
         Relationships: []
       }
-      conversations: {
-        Row: {
-          created_at: string
-          id: string
-          item_id: string | null
-          messages: Json
-          updated_at: string
-          user_id: string | null
-        }
-        Insert: {
-          created_at?: string
-          id?: string
-          item_id?: string | null
-          messages?: Json
-          updated_at?: string
-          user_id?: string | null
-        }
-        Update: {
-          created_at?: string
-          id?: string
-          item_id?: string | null
-          messages?: Json
-          updated_at?: string
-          user_id?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: 'conversations_item_id_fkey'
-            columns: ['item_id']
-            isOneToOne: false
-            referencedRelation: 'items'
-            referencedColumns: ['id']
-          }
-        ]
-      }
       items: {
         Row: {
           buyer_id: string | null
@@ -169,45 +134,60 @@ export type Database = {
           address: string | null
           amount: number | null
           buyer_id: string | null
+          courier: string | null
           created_at: string
+          delivered_at: string | null
           id: string
           item_id: string | null
           item_name: string | null
           notes: string | null
           phone: string | null
           recipient_name: string | null
+          shipped_at: string | null
           status: string
           stripe_payment_id: string | null
+          tracking_number: string | null
+          tracking_url: string | null
           updated_at: string
         }
         Insert: {
           address?: string | null
           amount?: number | null
           buyer_id?: string | null
+          courier?: string | null
           created_at?: string
+          delivered_at?: string | null
           id?: string
           item_id?: string | null
           item_name?: string | null
           notes?: string | null
           phone?: string | null
           recipient_name?: string | null
+          shipped_at?: string | null
           status?: string
           stripe_payment_id?: string | null
+          tracking_number?: string | null
+          tracking_url?: string | null
           updated_at?: string
         }
         Update: {
           address?: string | null
           amount?: number | null
           buyer_id?: string | null
+          courier?: string | null
           created_at?: string
+          delivered_at?: string | null
           id?: string
           item_id?: string | null
           item_name?: string | null
           notes?: string | null
           phone?: string | null
           recipient_name?: string | null
+          shipped_at?: string | null
           status?: string
           stripe_payment_id?: string | null
+          tracking_number?: string | null
+          tracking_url?: string | null
           updated_at?: string
         }
         Relationships: [

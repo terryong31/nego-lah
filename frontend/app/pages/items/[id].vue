@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { loginRedirect } from '~/utils/auth'
+import { loginRedirect, resolveUserId } from '~/utils/auth'
 import { useItemStore } from '~/stores/item'
 
 interface Item {
@@ -84,7 +84,7 @@ async function handleBuyNow() {
       method: 'POST',
       body: {
         item_id: id.value,
-        user_id: user.value.id
+        user_id: resolveUserId(user.value)
       }
     })
 
@@ -189,7 +189,10 @@ async function handleBuyNow() {
       <!-- Right side: title+price top, compact description, buttons pinned bottom -->
       <div class="flex flex-col md:h-full py-2 min-h-0">
         <!-- Title + price -->
-        <div class="shrink-0 space-y-3">
+        <div
+          data-tour="item-detail-price"
+          class="shrink-0 space-y-3"
+        >
           <h1 class="text-3xl font-extrabold text-highlighted tracking-tight">
             {{ localizedTitle }}
           </h1>
@@ -248,6 +251,7 @@ async function handleBuyNow() {
           >
             <!-- Buy Now -->
             <UButton
+              data-tour="item-buy-now"
               size="lg"
               color="primary"
               variant="solid"
@@ -261,6 +265,7 @@ async function handleBuyNow() {
 
             <!-- Bargain / Chat -->
             <UButton
+              data-tour="item-negotiate"
               size="lg"
               color="neutral"
               variant="outline"

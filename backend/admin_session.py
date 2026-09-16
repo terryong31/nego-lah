@@ -21,12 +21,12 @@ import re
 import secrets
 from pathlib import Path
 
-import httpx
 from fastapi import HTTPException, Request, Response
 from supabase import create_client
 
 from cache import check_rate_limit, redis_client
 from connector import admin_supabase
+from core.ip import get_client_ip
 from csrf import clear_csrf, generate_csrf_token, set_csrf_cookie
 from env import (
     ADMIN_COOKIE_DOMAIN,
@@ -36,12 +36,11 @@ from env import (
     ADMIN_COOKIE_SECURE,
     ADMIN_PREAUTH_TTL,
     ADMIN_SESSION_TTL,
-    RESEND_API_KEY,
-    RESEND_FORWARD_FROM,
     SUPABASE_URL,
     USER_SUPABASE_KEY,
 )
 from logger import logger
+from services.email_service import send_email_raw
 
 # Redis key prefixes
 _SESS_KEY = "admin:sess:"        # sid -> {user_id, email}
@@ -66,18 +65,11 @@ def _auth_client():
 def client_ip(request: Request) -> str:
     """The caller's address, as resolved by the server — never as claimed.
 
-    Reading `X-Forwarded-For` here was a bypass: Caddy *appends* to whatever
-    header the client sent, so the first value is attacker-chosen. Since this
-    keys the admin login limiter (`adminlogin:{email}:{ip}`), rotating one
-    header gave unlimited password attempts, and it forged the IP recorded in
-    the audit log too.
-
-    `request.client.host` is uvicorn's own answer. It applies X-Forwarded-For
-    only for peers in `--forwarded-allow-ips` (see the Dockerfile), taking the
-    last address a trusted proxy didn't add — which is the real client, and is
-    not something the client can influence.
+    Behind Cloudflare and Caddy, this prioritizes CF-Connecting-IP injected by
+    Cloudflare edge (when origin firewall restricts access to Cloudflare IPs),
+    falling back to uvicorn's resolved peer (request.client.host).
     """
-    return request.client.host if request.client else "unknown"
+    return get_client_ip(request)
 
 
 # ---------------------------------------------------------------------------
@@ -152,17 +144,17 @@ def password_then_send_otp(email: str, password: str) -> str:
     except Exception as e:
         logger.debug(f"Best-effort sign_out failed (ignored): {e}")
 
-    # Factor 2: email OTP. Falls back to direct Resend generation/dispatch if Supabase mailer fails.
+    # Factor 2: email OTP. Falls back to direct generation/dispatch if Supabase mailer fails.
     # Returns a handle regardless so the response shape can't be used to probe accounts.
     try:
         client.auth.sign_in_with_otp({"email": email, "options": {"should_create_user": False}})
     except Exception as e:
-        logger.warning(f"Supabase sign_in_with_otp failed for {email} ({e}); attempting direct Resend fallback")
+        logger.warning(f"Supabase sign_in_with_otp failed for {email} ({e}); attempting direct email fallback")
         otp, action_link = _generate_otp_link(email)
         if otp:
-            sent = _send_otp_via_resend(email, otp, action_link)
+            sent = _send_otp_email(email, otp, action_link)
             if not sent:
-                logger.error(f"Failed to deliver admin OTP to {email} via Resend fallback")
+                logger.error(f"Failed to deliver admin OTP to {email} via email fallback")
         else:
             logger.error(f"Failed to generate admin OTP link for {email}")
 
@@ -216,45 +208,16 @@ def _generate_otp_link(email: str) -> tuple[str | None, str | None]:
         return None, None
 
 
-def _send_otp_via_resend(email: str, otp: str, action_link: str | None = None) -> bool:
-    """Fallback OTP delivery via Resend API when Supabase built-in mailer fails."""
-    if not RESEND_API_KEY:
-        return False
+def _send_otp_email(email: str, otp: str, action_link: str | None = None) -> bool:
+    """Fallback OTP delivery when Supabase's built-in mailer fails.
 
+    Routes through the shared email funnel (SPEC-074): Mailpit over SMTP in
+    dev, Resend with the verified domain sender in production.
+    """
     html_content = _render_otp_email_html(otp, action_link)
-    headers = {
-        "Authorization": f"Bearer {RESEND_API_KEY}",
-        "Content-Type": "application/json",
-    }
-
-    senders = []
-    if RESEND_FORWARD_FROM:
-        senders.append(RESEND_FORWARD_FROM)
-    senders.append("Nego-lah <onboarding@resend.dev>")
-
-    seen = set()
-    unique_senders = [s for s in senders if s and not (s in seen or seen.add(s))]
-
-    for sender in unique_senders:
-        payload = {
-            "from": sender,
-            "to": [email],
-            # Code stays out of the subject (lock-screen exposure, plaintext
-            # mail-server logs, open-rate hit) — it's in the body + preheader.
-            "subject": "Your Nego-lah verification code",
-            "html": html_content,
-        }
-        try:
-            with httpx.Client(timeout=10.0) as http_client:
-                resp = http_client.post("https://api.resend.com/emails", headers=headers, json=payload)
-                if resp.status_code < 300:
-                    logger.info(f"Admin OTP delivered to {email} via Resend fallback (sender: {sender})")
-                    return True
-                logger.warning(f"Resend send attempt from {sender} returned {resp.status_code}: {resp.text}")
-        except Exception as err:
-            logger.warning(f"Resend send attempt from {sender} failed: {err}")
-
-    return False
+    # Code stays out of the subject (lock-screen exposure, plaintext
+    # mail-server logs, open-rate hit) — it's in the body + preheader.
+    return send_email_raw(email, "Your Nego-lah verification code", html_content)
 
 
 # ---------------------------------------------------------------------------

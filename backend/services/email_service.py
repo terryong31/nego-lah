@@ -1,23 +1,29 @@
 """
 Email Service Module
-Handles sending transactional emails via Resend:
+Handles sending transactional emails via Resend (production) or a local SMTP
+sink / Mailpit (development, SPEC-074):
 - Purchase receipts to buyers
 - Sale alert notifications to sellers
 - Unread message alerts to offline users
 - Human-in-the-loop escalation alerts to admin
 """
 
+import smtplib
 from datetime import UTC, datetime
+from email.message import EmailMessage
 from pathlib import Path
 
 import httpx
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from env import (
+    ADMIN_NOTIFY_EMAIL,
     FRONTEND_URL,
     RESEND_API_KEY,
     RESEND_FORWARD_FROM,
-    RESEND_FORWARD_TO,
+    SMTP_FROM,
+    SMTP_HOST,
+    SMTP_PORT,
     STORAGE_BUCKET,
     SUPABASE_URL,
 )
@@ -51,10 +57,62 @@ def render_email_template(template_name: str, context: dict) -> str:
     return template.render(**merged_context)
 
 
+def _send_email(to_email: str, subject: str, html_content: str) -> bool:
+    """Route one outbound email: local SMTP (Mailpit) when SMTP_HOST is set, Resend otherwise.
+
+    Dev machines point SMTP_HOST at Mailpit (SPEC-074), so mail is caught
+    locally instead of going to the real Resend API. SMTP wins even when a
+    RESEND_API_KEY is still present in the dev environment — no dev machine
+    should silently keep sending real mail. Production never sets SMTP_HOST
+    and keeps the Resend path unchanged.
+    """
+    if SMTP_HOST:
+        return _send_email_via_smtp(to_email, subject, html_content)
+    return _send_email_via_resend(to_email, subject, html_content)
+
+
+def send_email_raw(to_email: str, subject: str, html_content: str) -> bool:
+    """Send pre-rendered HTML through the shared funnel.
+
+    Escape hatch for senders outside this module that render their own
+    templates (e.g. the admin OTP fallback) — they get the same
+    Mailpit/Resend routing and failure semantics as every email_service sender.
+    """
+    return _send_email(to_email, subject, html_content)
+
+
+def _send_email_via_smtp(to_email: str, subject: str, html_content: str) -> bool:
+    """Deliver an email to the local dev SMTP sink (Mailpit)."""
+    message = EmailMessage()
+    message["From"] = SMTP_FROM or RESEND_FORWARD_FROM or "Nego-Lah <noreply@negolah.my>"
+    message["To"] = to_email
+    message["Subject"] = subject
+    message.set_content(html_content, subtype="html")
+
+    try:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10.0) as server:
+            server.send_message(message)
+        logger.info(
+            f"📧 Email '{subject}' delivered to {to_email} via SMTP ({SMTP_HOST}:{SMTP_PORT})"
+        )
+        return True
+    except Exception as err:
+        logger.warning(f"⚠️ SMTP send to {to_email!r} via {SMTP_HOST}:{SMTP_PORT} failed: {err}")
+        return False
+
+
 def _send_email_via_resend(to_email: str, subject: str, html_content: str) -> bool:
-    """Send an email via Resend API."""
+    """Send an email via Resend API from the single verified domain sender."""
     if not RESEND_API_KEY:
         logger.warning("⚠️ RESEND_API_KEY is not configured; skipping email delivery.")
+        return False
+
+    # SPEC-074 Phase 2: one sender — the verified domain address. The old
+    # multi-sender loop retried through Resend's onboarding@resend.dev sandbox
+    # address, which only ever delivered to the account owner; dev mail goes to
+    # Mailpit now, so a missing sender fails closed instead.
+    if not RESEND_FORWARD_FROM:
+        logger.error("❌ RESEND_FORWARD_FROM is not configured; refusing to send via Resend.")
         return False
 
     headers = {
@@ -62,47 +120,30 @@ def _send_email_via_resend(to_email: str, subject: str, html_content: str) -> bo
         "Content-Type": "application/json",
     }
 
-    senders = []
-    if RESEND_FORWARD_FROM:
-        senders.append(RESEND_FORWARD_FROM)
-    senders.append("Nego-lah <onboarding@resend.dev>")
-
-    seen = set()
-    unique_senders = [s for s in senders if s and not (s in seen or seen.add(s))]
-
     logger.info(
         f"📧 _send_email_via_resend — to={to_email!r} subject={subject!r} "
-        f"senders={unique_senders}"
+        f"sender={RESEND_FORWARD_FROM!r}"
     )
 
-    # NOTE (sandbox / dev): Resend's onboarding@resend.dev test sender can ONLY
-    # deliver to the verified Resend account owner's email address. Any other
-    # recipient will be silently rejected (HTTP 2xx but no delivery). If you're
-    # hitting this in development, set RESEND_FORWARD_FROM to a custom domain
-    # you've verified in Resend, or set RESEND_TEST_OVERRIDE_TO to redirect all
-    # outbound mail to your own inbox.
+    payload = {
+        "from": RESEND_FORWARD_FROM,
+        "to": [to_email],
+        "subject": subject,
+        "html": html_content,
+    }
+    try:
+        with httpx.Client(timeout=10.0) as http_client:
+            resp = http_client.post("https://api.resend.com/emails", headers=headers, json=payload)
+            if resp.status_code < 300:
+                logger.info(f"📧 Email '{subject}' delivered to {to_email} via Resend")
+                return True
+            logger.warning(
+                f"⚠️ Resend send → {to_email!r} returned HTTP {resp.status_code}: {resp.text}"
+            )
+    except Exception as err:
+        logger.warning(f"⚠️ Resend send to {to_email!r} failed: {err}")
 
-    for sender in unique_senders:
-        payload = {
-            "from": sender,
-            "to": [to_email],
-            "subject": subject,
-            "html": html_content,
-        }
-        try:
-            with httpx.Client(timeout=10.0) as http_client:
-                resp = http_client.post("https://api.resend.com/emails", headers=headers, json=payload)
-                if resp.status_code < 300:
-                    logger.info(f"📧 Email '{subject}' delivered to {to_email} via Resend (sender: {sender})")
-                    return True
-                logger.warning(
-                    f"⚠️ Resend send attempt from {sender!r} → {to_email!r} "
-                    f"returned HTTP {resp.status_code}: {resp.text}"
-                )
-        except Exception as err:
-            logger.warning(f"Resend send attempt from {sender} failed: {err}")
-
-    logger.error(f"❌ All Resend send attempts failed for {to_email!r} (subject: {subject!r})")
+    logger.error(f"❌ Resend send failed for {to_email!r} (subject: {subject!r})")
     return False
 
 
@@ -127,7 +168,7 @@ def send_purchase_receipt(buyer_email: str, order: dict) -> bool:
         "orders_url": orders_url,
     }
     html = render_email_template("purchase_receipt.html", context)
-    return _send_email_via_resend(buyer_email, subject, html)
+    return _send_email(buyer_email, subject, html)
 
 
 def send_shipment_notice(buyer_email: str, order: dict, delivered: bool = False) -> bool:
@@ -158,7 +199,7 @@ def send_shipment_notice(buyer_email: str, order: dict, delivered: bool = False)
         **facts,
     }
     html = render_email_template("shipment_notice.html", context)
-    return _send_email_via_resend(buyer_email, subject, html)
+    return _send_email(buyer_email, subject, html)
 
 
 def send_seller_sale_alert(seller_email: str, order: dict) -> bool:
@@ -183,11 +224,11 @@ def send_seller_sale_alert(seller_email: str, order: dict) -> bool:
     }
     html = render_email_template("seller_sale_alert.html", context)
 
-    target_email = seller_email or RESEND_FORWARD_TO
+    target_email = seller_email or ADMIN_NOTIFY_EMAIL
     if not target_email:
         logger.warning("No seller email configured; skipping seller sale alert.")
         return False
-    return _send_email_via_resend(target_email, subject, html)
+    return _send_email(target_email, subject, html)
 
 
 def send_unread_message_email(buyer_email: str, message_snippet: str, item_name: str | None = None) -> bool:
@@ -202,7 +243,7 @@ def send_unread_message_email(buyer_email: str, message_snippet: str, item_name:
         "chat_url": chat_url,
     }
     html = render_email_template("unread_message.html", context)
-    return _send_email_via_resend(buyer_email, subject, html)
+    return _send_email(buyer_email, subject, html)
 
 
 def send_unread_digest_email(
@@ -240,12 +281,12 @@ def send_unread_digest_email(
         "chat_url": chat_url,
     }
     html = render_email_template("unread_digest.html", context)
-    return _send_email_via_resend(buyer_email, subject, html)
+    return _send_email(buyer_email, subject, html)
 
 
 def send_human_transfer_alert(user_id: str, reason: str, user_email: str = None, summary: str = None) -> bool:
     """Send an urgent alert to the admin/seller when an AI chat is transferred to human."""
-    admin_email = RESEND_FORWARD_TO or "terry@negolah.my"
+    admin_email = ADMIN_NOTIFY_EMAIL or "terry@negolah.my"
     user_display = user_email or user_id
     subject = f"Action needed: chat handed to you — {user_display}"
     console_chat_url = f"{FRONTEND_URL}/_console/chats?user={user_id}"
@@ -264,4 +305,4 @@ def send_human_transfer_alert(user_id: str, reason: str, user_email: str = None,
         "date_str": date_str,
     }
     html = render_email_template("human_transfer_alert.html", context)
-    return _send_email_via_resend(admin_email, subject, html)
+    return _send_email(admin_email, subject, html)

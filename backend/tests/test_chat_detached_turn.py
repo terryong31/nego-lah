@@ -17,7 +17,6 @@ that used to kill the turn.
 import asyncio
 import json
 
-import pytest
 from starlette.requests import Request
 
 from conftest import make_supabase_result
@@ -53,48 +52,6 @@ def fake_verify_user_token(user_id):
     async def _fake(request):
         return user_id
     return _fake
-
-
-@pytest.fixture
-def turn_env(monkeypatch, patch_supabase, fake_supabase):
-    """Everything a turn touches, recorded instead of performed."""
-    record = {"persisted": [], "broadcast": [], "queued": [], "charged": []}
-
-    def _setup(user_id, *, subscribed=False):
-        monkeypatch.setattr(
-            "routes.chat.verify_user_token", fake_verify_user_token(user_id)
-        )
-        (
-            fake_supabase.table.return_value.select.return_value.eq.return_value
-            .execute.return_value
-        ) = make_supabase_result([])
-        patch_supabase("routes.chat", admin=fake_supabase)
-
-        monkeypatch.setattr(
-            "agent.memory.conversation_memory.add_message",
-            lambda uid, role, msg, *a, **k: record["persisted"].append((uid, role, msg)),
-        )
-        monkeypatch.setattr(
-            "payment.fulfillment.broadcast_to_chat",
-            lambda uid, content, role="ai", source="ai": record["broadcast"].append(
-                (uid, content, role, source)
-            ),
-        )
-        monkeypatch.setattr(
-            "services.unread_digest.queue_unread_message",
-            lambda uid, content, item_name=None: record["queued"].append((uid, content)),
-        )
-        monkeypatch.setattr(
-            "notifications.notification_broker.has_subscribers",
-            lambda uid: subscribed,
-        )
-        monkeypatch.setattr(
-            "routes.chat.track_ai_tokens",
-            lambda uid, inp, out: record["charged"].append((uid, inp, out)),
-        )
-        return record
-
-    return _setup
 
 
 async def _hang_up_after_first_token(response):

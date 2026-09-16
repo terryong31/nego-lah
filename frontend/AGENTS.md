@@ -26,7 +26,8 @@ This directory contains the client application for **Nego-Lah**, built with **Nu
    - Authentication is managed via `@nuxtjs/supabase` purely on the client.
    - Sessions and JWT tokens are stored client-side in localStorage/cookies.
 
-5. **Test-Driven Development (TDD):**
+5. **Test-Driven Development & LeanSpec:**
+   - Implementations are driven by specs in `/docs/specs/SPEC-XXX-<name>.md` (<2,000 tokens).
    - Write unit and component tests using **Vitest** (`frontend/tests/`).
    - Run tests via `bun run test` or `bun test:watch`.
    - All tests must pass before submitting changes.

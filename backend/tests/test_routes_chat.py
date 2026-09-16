@@ -1139,3 +1139,67 @@ async def test_chat_stream_accepts_a_long_but_human_message(
     )
 
     assert resp.status_code == 200
+
+
+async def test_chat_stream_propagates_request_language(
+    client, monkeypatch, patch_supabase, fake_supabase
+):
+    """Chat stream extracts language from body and passes it to agent."""
+    user_id = "user-lang-1"
+    monkeypatch.setattr("routes.chat.verify_user_token", await fake_verify_user_token_factory(user_id))
+    monkeypatch.setattr("routes.chat.check_rate_limit", lambda *a, **k: True)
+    monkeypatch.setattr("routes.chat.get_rate_limit_remaining", lambda *a, **k: 9)
+    monkeypatch.setattr("routes.chat.track_ai_tokens", lambda *a, **k: None)
+    set_chat_settings_select(fake_supabase, [])
+    patch_supabase("routes.chat", admin=fake_supabase)
+
+    passed_kwargs = {}
+
+    async def fake_chat_stream(user_id, message, item_id=None, files=None, language=None):
+        passed_kwargs["user_id"] = user_id
+        passed_kwargs["language"] = language
+        yield "terbaik!"
+
+    monkeypatch.setattr("agent.bot.chat_stream", fake_chat_stream)
+
+    resp = await client.post(
+        "/chat/stream",
+        json={"user_id": user_id, "message": "boleh nego?", "language": "ms"},
+        headers={"Authorization": "Bearer sometoken"},
+    )
+
+    assert resp.status_code == 200
+    assert passed_kwargs["language"] == "ms"
+
+
+async def test_chat_stream_resolves_preferred_language_when_omitted(
+    client, monkeypatch, patch_supabase, fake_supabase
+):
+    """Chat stream resolves language via get_user_preferred_language when omitted in body."""
+    user_id = "user-lang-2"
+    monkeypatch.setattr("routes.chat.verify_user_token", await fake_verify_user_token_factory(user_id))
+    monkeypatch.setattr("routes.chat.check_rate_limit", lambda *a, **k: True)
+    monkeypatch.setattr("routes.chat.get_rate_limit_remaining", lambda *a, **k: 9)
+    monkeypatch.setattr("routes.chat.track_ai_tokens", lambda *a, **k: None)
+    monkeypatch.setattr("routes.user.get_user_preferred_language", lambda uid: "zh")
+    set_chat_settings_select(fake_supabase, [])
+    patch_supabase("routes.chat", admin=fake_supabase)
+
+    passed_kwargs = {}
+
+    async def fake_chat_stream(user_id, message, item_id=None, files=None, language=None):
+        passed_kwargs["user_id"] = user_id
+        passed_kwargs["language"] = language
+        yield "可以"
+
+    monkeypatch.setattr("agent.bot.chat_stream", fake_chat_stream)
+
+    resp = await client.post(
+        "/chat/stream",
+        json={"user_id": user_id, "message": "可以便宜点吗"},
+        headers={"Authorization": "Bearer sometoken"},
+    )
+
+    assert resp.status_code == 200
+    assert passed_kwargs["language"] == "zh"
+

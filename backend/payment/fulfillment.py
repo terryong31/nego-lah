@@ -234,31 +234,17 @@ def _finalize_won_sale(item_id, user_id, payment_intent, amount, item_name, buye
 
         resolved_buyer_email = buyer_email or account_email(user_id)
 
-        from env import RESEND_FORWARD_TO, STRIPE_API_KEY
+        from env import ADMIN_NOTIFY_EMAIL
         from services.email_service import send_purchase_receipt, send_seller_sale_alert
 
-        # In sandbox / dev mode (Stripe test key) the buyer email typed at
-        # checkout is synthetic and Resend won't deliver to it via the
-        # onboarding@resend.dev test sender. Fall back to RESEND_FORWARD_TO so
-        # the receipt always reaches the developer's inbox during testing.
-        is_sandbox = bool(STRIPE_API_KEY and STRIPE_API_KEY.startswith("sk_test_"))
-        effective_buyer_email = resolved_buyer_email
-        if is_sandbox and not effective_buyer_email and RESEND_FORWARD_TO:
-            logger.info(
-                f"ℹ️ Sandbox mode: no resolved buyer email for {user_id}; "
-                f"redirecting receipt to RESEND_FORWARD_TO ({RESEND_FORWARD_TO})"
-            )
-            effective_buyer_email = RESEND_FORWARD_TO
-        elif is_sandbox and effective_buyer_email and RESEND_FORWARD_TO:
-            logger.info(
-                f"ℹ️ Sandbox mode: buyer email is {effective_buyer_email!r}. "
-                f"Note — onboarding@resend.dev can only deliver to your Resend account "
-                f"owner email. If receipts aren't arriving, set RESEND_FORWARD_FROM to "
-                f"a verified custom domain, or check your Resend dashboard logs."
-            )
+        # SPEC-074 Phase 2: the old sandbox-mode redirect of receipts to
+        # RESEND_FORWARD_TO is gone — it existed only because Resend's dev
+        # sender couldn't deliver to synthetic checkout addresses. Dev mail
+        # lands in Mailpit now, so the receipt is addressed to whoever the
+        # buyer actually is, in every environment.
 
         logger.info(
-            f"📧 Preparing order emails — buyer={effective_buyer_email!r} "
+            f"📧 Preparing order emails — buyer={resolved_buyer_email!r} "
             f"order_id={order_id} item={item_name!r} amount=RM{amount:.2f}"
         )
 
@@ -269,14 +255,14 @@ def _finalize_won_sale(item_id, user_id, payment_intent, amount, item_name, buye
             "buyer_email": resolved_buyer_email,
             "buyer_id": user_id,
         }
-        if effective_buyer_email:
+        if resolved_buyer_email:
             # SPEC-048: a receipt that silently fails to send is a support
             # ticket waiting to happen ("I paid and got nothing"). Make it loud.
-            sent = send_purchase_receipt(effective_buyer_email, order_info)
+            sent = send_purchase_receipt(resolved_buyer_email, order_info)
             if not sent:
                 msg = (
                     f"❌ Purchase receipt NOT delivered for order {order_id} "
-                    f"(buyer {user_id}, {effective_buyer_email!r}) — Resend rejected every send attempt"
+                    f"(buyer {user_id}, {resolved_buyer_email!r}) — Resend rejected every send attempt"
                 )
                 logger.error(msg)
                 sentry_sdk.capture_message(
@@ -287,13 +273,13 @@ def _finalize_won_sale(item_id, user_id, payment_intent, amount, item_name, buye
         else:
             msg = (
                 f"❌ No buyer email resolved for order {order_id} (buyer {user_id}) — "
-                f"receipt not sent. Set RESEND_FORWARD_TO to catch receipts in dev/sandbox."
+                f"receipt not sent."
             )
             logger.error(msg)
             sentry_sdk.capture_message(
                 msg, level="error", tags={"alert": "receipt_no_address", "order_id": str(order_id or "")}
             )
-        seller_target = RESEND_FORWARD_TO
+        seller_target = ADMIN_NOTIFY_EMAIL
         if seller_target:
             send_seller_sale_alert(seller_target, order_info)
     except Exception as mail_err:

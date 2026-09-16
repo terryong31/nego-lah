@@ -31,6 +31,16 @@ watch(() => route.query.keyword, (newVal) => {
   debouncedSearch.value = (newVal as string) || ''
 })
 
+// SPEC-069: the storefront is where a buyer lands after signing in, so it is
+// where the tour introduces itself -- once, and never again unless replayed
+// from the user menu.
+const user = useSupabaseUser()
+const tour = useOnboardingTour()
+
+onMounted(() => {
+  if (user.value) tour.maybeAutoStart()
+})
+
 const { data: items, pending } = useAsyncData(
   'items-listing',
   () => {
@@ -76,6 +86,7 @@ useSeoMeta({
     <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
       <UInput
         v-model="searchInput"
+        data-tour="items-search"
         icon="i-lucide-search"
         size="md"
         variant="outline"
@@ -84,7 +95,10 @@ useSeoMeta({
       />
 
       <!-- Filter pills -->
-      <div class="flex gap-1.5 self-start sm:self-center">
+      <div
+        data-tour="items-filters"
+        class="flex gap-1.5 self-start sm:self-center"
+      >
         <UButton
           :label="$t('items.filterAll')"
           size="sm"

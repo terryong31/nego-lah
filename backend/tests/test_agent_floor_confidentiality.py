@@ -36,13 +36,13 @@ from conftest import make_supabase_result
 def _reset_context_vars():
     user_token = context.current_user_id.set(None)
     item_token = context.current_item_id.set(None)
-    discount_token = context.pending_discount.set(None)
+    context.pending_discount.set(None)
     try:
         yield
     finally:
         context.current_user_id.reset(user_token)
         context.current_item_id.reset(item_token)
-        context.pending_discount.reset(discount_token)
+        context.pending_discount.set(None)
 
 
 def _set_item(fake_supabase, row):
@@ -119,7 +119,11 @@ def test_a_standing_price_at_the_floor_quotes_no_number_at_all(
     assert result.startswith("REJECT_FLOOR:")
     assert "70" not in result
     assert "Counter with" not in result
-    assert "Hold firm" in result
+    # SPEC-084 reworded this: "Hold firm at RMx and do not go lower" was relayed
+    # to the buyer as "I can't go lower than RMx" — a floor claim. The
+    # instruction now addresses the agent's own conduct instead. With the anchor
+    # ON the floor it still names no number at all.
+    assert "Restate the price you last quoted" in result
 
 
 def test_the_floor_is_still_enforced_even_though_it_is_not_named(fake_supabase, patch_supabase):
@@ -138,8 +142,15 @@ def test_the_floor_is_still_enforced_even_though_it_is_not_named(fake_supabase, 
 
 def test_below_floor_offer_is_held_not_countered(fake_supabase, patch_supabase):
     """SPEC-047 revised this: a below-floor lowball earns no concession, so
-    there is no counter to leak anything. The tool tells the model to restate
-    its last quote and hold, and names no number."""
+    there is no counter to leak anything.
+
+    SPEC-084 revised it again. The tool used to name no number at all, which
+    meant the model had to recall its own last quote — and it could not, so it
+    improvised the listed price and withdrew concessions it had already made.
+    The standing price is now named. That is not a disclosure: here it IS the
+    listed price, which the buyer is looking at. The FLOOR is still never named,
+    and the instruction no longer tells the buyer anything about how low the
+    seller can go."""
     _set_item(fake_supabase, {"price": 100, "min_price": 70})
     patch_supabase("connector", admin=fake_supabase)
 
@@ -147,7 +158,8 @@ def test_below_floor_offer_is_held_not_countered(fake_supabase, patch_supabase):
 
     assert result.startswith("REJECT_FLOOR:")
     assert "Counter with" not in result
-    assert "Hold firm" in result
+    assert "Your standing price is still RM100" in result
+    assert "Concede nothing" in result
     assert "70" not in result
 
 

@@ -20,5 +20,13 @@ describe('components/hero/MemphisCharacters.vue', () => {
 
     // Dotted Matrix element
     expect(wrapper.find('.grid-cols-4').exists()).toBe(true)
+
+    // Chat dialogue bubbles for Lady (Buyer) and AI Assistant
+    const bubbles = wrapper.findAll('.animate-bubble-in')
+    expect(bubbles.length).toBe(2)
+
+    // Buyer asking "Is this still available?" and AI replying
+    expect(wrapper.text()).toContain('Is this still available?')
+    expect(wrapper.text()).toContain('Yes, it\'s available!')
   })
 })

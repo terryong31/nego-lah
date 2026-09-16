@@ -293,10 +293,6 @@ def admin_delete_user(user_id: str, admin: dict = Depends(verify_admin)):
     # Best-effort cleanup of app data (don't abort if a table is empty)
     for table, column in [
         ("chat_settings", "user_id"),
-        ("conversations", "user_id"),
-        # SPEC-043 moved history here. Both tables are listed: `conversations`
-        # still holds everything written before the cutover, and leaving it
-        # behind would keep a deleted user's transcript on disk.
         ("messages", "user_id"),
         ("user_profiles", "id"),
     ]:

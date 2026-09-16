@@ -1,0 +1,3042 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Second-Hand Store API",
+    "description": "Fully autonomous second-hand store with AI negotiation",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/user/{user_id}/account": {
+      "get": {
+        "tags": [
+          "User"
+        ],
+        "summary": "Account Status",
+        "description": "Lightweight probe used by the login flow. `verify_user_token` already raises\n403 for a banned account, so reaching the body means the user is allowed in.",
+        "operationId": "account_status_user__user_id__account_get",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/user/{user_id}/password": {
+      "put": {
+        "tags": [
+          "User"
+        ],
+        "summary": "Change Password",
+        "description": "Change the authenticated user's password (verifies the current password first).",
+        "operationId": "change_password_user__user_id__password_put",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordUpdateSchema"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/user/{user_id}/email": {
+      "put": {
+        "tags": [
+          "User"
+        ],
+        "summary": "Change Email",
+        "description": "Request a change of the authenticated user's email address.\n\nSPEC-056 #3. This used to hand `{\"email\": ..., \"email_confirm\": True}` to the\nadmin API with no password check: the new address was marked verified on the\nspot, and neither the old nor the new inbox heard about it. A stolen access\ntoken was therefore a permanent account takeover \u2014 the attacker owns the\naddress that password resets go to, and the real owner has no notification\nand no way back.\n\nNow it costs the password, and the update runs on the user's OWN session, so\nSupabase treats it as a change request and mails the confirmation link. The\naddress does not move until someone clicks it.",
+        "operationId": "change_email_user__user_id__email_put",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmailUpdateSchema"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/user/{user_id}/language": {
+      "put": {
+        "tags": [
+          "User"
+        ],
+        "summary": "Update Language",
+        "description": "Update the authenticated user's preferred language in Supabase auth user_metadata.\nSupported languages: 'en' (English), 'ms' (Bahasa Melayu), 'zh' (Simplified Chinese).",
+        "operationId": "update_language_user__user_id__language_put",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LanguageUpdateSchema"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/user/{user_id}/profile": {
+      "put": {
+        "tags": [
+          "User"
+        ],
+        "summary": "Update Profile",
+        "description": "Update the authenticated user's display name and/or profile picture.\n\nThe avatar is uploaded to storage server-side using the service role key -\nclients are never allowed to write to the bucket directly (read-only).\nBoth values are stored in the Supabase auth user_metadata, the avatar under\n`custom_avatar_url` so an OAuth sign-in can't overwrite it.",
+        "operationId": "update_profile_user__user_id__profile_put",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_update_profile_user__user_id__profile_put"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/user/{user_id}": {
+      "delete": {
+        "tags": [
+          "User"
+        ],
+        "summary": "Delete Account",
+        "description": "Permanently delete the authenticated user's account.\n\nRemoves app-side data (profile, chat settings, conversations) and the\nSupabase auth user. Orders/transactions are intentionally retained as\nbusiness records.\n\nSPEC-056 #7: costs the password too. This is irreversible and takes the\ntranscript with it, so a lifted access token must not be enough on its own.",
+        "operationId": "delete_account_user__user_id__delete",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountDeleteSchema"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/items": {
+      "get": {
+        "tags": [
+          "Items"
+        ],
+        "summary": "Get All Items",
+        "description": "Get all items or search by keyword.\n\nReturns empty list if no items found (industry standard).",
+        "operationId": "get_all_items_items_get",
+        "parameters": [
+          {
+            "name": "keyword",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Keyword"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response Get All Items Items Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/items/featured": {
+      "get": {
+        "tags": [
+          "Items"
+        ],
+        "summary": "Get Featured",
+        "description": "Get the most-interacted listings for the home page.\n\nDefined before '/{item_id}' so the literal 'featured' path isn't\ncaptured as an item id.",
+        "operationId": "get_featured_items_featured_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 6,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response Get Featured Items Featured Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/items/{item_id}": {
+      "get": {
+        "tags": [
+          "Items"
+        ],
+        "summary": "Get Item By Id",
+        "description": "Get a specific item by ID.\n\nReturns 404 if item not found (this is correct usage).",
+        "operationId": "get_item_by_id_items__item_id__get",
+        "parameters": [
+          {
+            "name": "item_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Item Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Item By Id Items  Item Id  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/chat/history/{user_id}": {
+      "get": {
+        "tags": [
+          "Chat"
+        ],
+        "summary": "Get Chat History",
+        "description": "Get a page of chat history for a user from Supabase.\n`offset` counts back from the newest message; `limit` is the page size.\nReturns { messages, has_more, next_offset } for lazy \"load older\" paging.\nRequires valid JWT token matching the user_id.",
+        "operationId": "get_chat_history_chat_history__user_id__get",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 20,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Chat"
+        ],
+        "summary": "Clear Chat History",
+        "description": "Clear chat history for a user. Requires valid JWT token.",
+        "operationId": "clear_chat_history_chat_history__user_id__delete",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/chat/settings/{user_id}": {
+      "get": {
+        "tags": [
+          "Chat"
+        ],
+        "summary": "Get Chat Settings",
+        "description": "Get chat settings (AI enabled status) for a user. Requires valid JWT token.",
+        "operationId": "get_chat_settings_chat_settings__user_id__get",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/chat/stream": {
+      "post": {
+        "tags": [
+          "Chat"
+        ],
+        "summary": "Chat Stream",
+        "description": "Stream chat response using Server-Sent Events.\nRequires valid JWT token in Authorization header.\nAccepts both JSON body and multipart form data with optional file attachments.\n\nDeliberately NOT Turnstile-gated: a siteverify token is single-use and\nexpires in ~300s, so it can only guard one-shot submissions (the auth entry\npoints in SPEC-003), not an endpoint the client calls on every message.\nAbuse protection here is JWT auth + the per-user rate limit below + the AI\ntoken budget.",
+        "operationId": "chat_stream_chat_stream_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/chat/unread": {
+      "get": {
+        "tags": [
+          "Chat"
+        ],
+        "summary": "Get Unread",
+        "description": "How many seller/agent messages this buyer hasn't read (SPEC-061).\n\nThe count is the header chip's only source of truth across a reload. Both\nthe user and the scope come from the JWT \u2014 there is no `user_id` in the\npath and therefore nothing to scope optionally\n(`docs/SECURITY_ANTI_PATTERNS.md`).\n\nCutoff is the later of the watermark and the buyer's own newest message:\ntyping is proof of presence, and it is what a conversation with no\nwatermark yet counts from, so shipping this does not mark an existing\nuser's whole history unread.\n\n`role='ai'` is both the agent and the seller \u2014 the console writes seller\nreplies as `role='ai', source='admin'`. `system` separators are not\nmessages anyone is waiting on.",
+        "operationId": "get_unread_chat_unread_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/chat/read": {
+      "post": {
+        "tags": [
+          "Chat"
+        ],
+        "summary": "Mark Read",
+        "description": "Mark this buyer's conversation read, at now (SPEC-061).",
+        "operationId": "mark_read_chat_read_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/chat/notifications/ticket": {
+      "post": {
+        "tags": [
+          "Chat"
+        ],
+        "summary": "Notifications Ticket",
+        "description": "Mint a short-lived, single-use ticket for opening the notification stream.\n\nSPEC-056 #6. `EventSource` cannot set headers, which is why the stream used\nto accept `?token=<supabase access token>`. That put an hour-long credential\nfor the whole API into every access log, proxy log, APM breadcrumb and\nbrowser history entry that touches the URL. This endpoint is a normal\nheader-authenticated POST; what goes in the URL afterwards is a 30-second\nticket good for exactly one stream and nothing else.",
+        "operationId": "notifications_ticket_chat_notifications_ticket_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/chat/notifications/stream": {
+      "get": {
+        "tags": [
+          "Chat"
+        ],
+        "summary": "Notifications Stream",
+        "description": "Real-time Server-Sent Events (SSE) notification stream.\nEmits instant notifications when the seller sends a message.\n\nAuthorised by a `?ticket=` minted at POST /chat/notifications/ticket. Access\ntokens are deliberately NOT accepted here any more (SPEC-056 #6) \u2014 a URL is\na public place, and the ticket is designed to be worthless in one.",
+        "operationId": "notifications_stream_chat_notifications_stream_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/payment/checkout": {
+      "post": {
+        "tags": [
+          "Payment"
+        ],
+        "summary": "Checkout",
+        "description": "Create a Stripe checkout session for an item.\n\n`request` is the raw Starlette request, which slowapi requires by that\nexact name to key the limit; the JSON body moved to `payload`. FastAPI\nderives the body from the Pydantic type, not the parameter name, so the\nHTTP contract is unchanged.",
+        "operationId": "checkout_payment_checkout_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckoutRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/payment/active/{user_id}": {
+      "get": {
+        "tags": [
+          "Payment"
+        ],
+        "summary": "Get Active Payments",
+        "description": "Get all active payment link URLs for a user.",
+        "operationId": "get_active_payments_payment_active__user_id__get",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/payment/webhook/stripe": {
+      "post": {
+        "tags": [
+          "Payment"
+        ],
+        "summary": "Stripe Webhook",
+        "description": "Handle Stripe webhooks.\n\nWhen a payment is completed:\n1. Marks the item as 'sold'\n2. Records the transaction",
+        "operationId": "stripe_webhook_payment_webhook_stripe_post",
+        "parameters": [
+          {
+            "name": "stripe-signature",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Stripe-Signature"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/payment/transactions": {
+      "get": {
+        "tags": [
+          "Payment"
+        ],
+        "summary": "Get Transactions",
+        "description": "Get all transactions (sales history). Admin only.",
+        "operationId": "get_transactions_payment_transactions_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/payment/orders/user/{user_id}": {
+      "get": {
+        "tags": [
+          "Payment"
+        ],
+        "summary": "Get User Orders",
+        "description": "Get all orders for a specific user by their ID.\nReturns orders with item details.",
+        "operationId": "get_user_orders_payment_orders_user__user_id__get",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/payment/confirm-payment": {
+      "post": {
+        "tags": [
+          "Payment"
+        ],
+        "summary": "Confirm Payment",
+        "description": "Frontend fallback after the success redirect, in case the Stripe webhook is\ndelayed. This NEVER marks an item sold on trust \u2014 it requires a Stripe\nCheckout Session id that Stripe itself confirms as 'paid'. The actual\nfulfilment is delegated to the same idempotent, race-safe path the webhook\nuses, so calling this is always safe (duplicate calls are no-ops).",
+        "operationId": "confirm_payment_payment_confirm_payment_post",
+        "parameters": [
+          {
+            "name": "item_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Item Id"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "session_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/auth/login": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Admin Login",
+        "description": "Factor 1. Verify password + admin role, then email a 6-digit OTP.\n\nReturns an opaque pre-auth handle to use with /auth/verify-2fa. The response\nis intentionally identical whether or not the email is a real admin.\n\nTurnstile-gated (SPEC-044 D): the only unauthenticated credential endpoint\nin the system, and the one whose per-IP throttle was bypassable by rotating\n`X-Forwarded-For` until `client_ip` stopped reading that header. Unlike\n/chat/stream this is a one-shot submission, so a single-use siteverify\ntoken is the right shape for it. Bypassed in development, and open rather\nthan closed when Cloudflare itself is unreachable \u2014 see verify_turnstile.",
+        "operationId": "admin_login_admin_auth_login_post",
+        "parameters": [
+          {
+            "name": "X-Turnstile-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Turnstile-Token"
+            }
+          },
+          {
+            "name": "cf-turnstile-response",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cf-Turnstile-Response"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminLoginRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/auth/verify-2fa": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Admin Verify 2Fa",
+        "description": "Factor 2. Verify the email OTP and open the admin session cookie.",
+        "operationId": "admin_verify_2fa_admin_auth_verify_2fa_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Admin2FARequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/auth/logout": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Admin Logout",
+        "description": "Invalidate the current admin session.",
+        "operationId": "admin_logout_admin_auth_logout_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/auth/session": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Admin Session",
+        "description": "Lightweight check used by the frontend route middleware.",
+        "operationId": "admin_session_admin_auth_session_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/auth/csrf": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Admin Csrf Token",
+        "description": "Return a fresh CSRF token. Called on page refresh when the cookie may be stale.",
+        "operationId": "admin_csrf_token_admin_auth_csrf_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/users": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Get All Users",
+        "description": "Get all users with their profiles and chat settings.",
+        "operationId": "get_all_users_admin_users_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/users/{user_id}/profile": {
+      "put": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Update User Profile",
+        "description": "Update a user's profile (display name, avatar).",
+        "operationId": "update_user_profile_admin_users__user_id__profile_put",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserProfileUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/users/{user_id}/avatar": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Upload User Avatar",
+        "description": "Upload a user avatar.",
+        "operationId": "upload_user_avatar_admin_users__user_id__avatar_post",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_user_avatar_admin_users__user_id__avatar_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/users/{user_id}/ban": {
+      "put": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Ban User",
+        "description": "Ban or unban a user.",
+        "operationId": "ban_user_admin_users__user_id__ban_put",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BanRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/users/{user_id}/ai": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Get User Ai Status",
+        "description": "Get the current AI status for a user.",
+        "operationId": "get_user_ai_status_admin_users__user_id__ai_get",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Toggle User Ai",
+        "description": "Enable or disable AI for a specific user.",
+        "operationId": "toggle_user_ai_admin_users__user_id__ai_put",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AIToggleRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/users/{user_id}": {
+      "delete": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Admin Delete User",
+        "description": "Permanently delete a user: app-side data + the Supabase auth user.\nOrders are intentionally retained as business records.",
+        "operationId": "admin_delete_user_admin_users__user_id__delete",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/chats": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Get All Chats",
+        "description": "Get list of all active conversations, enriched with the user's display\nname / avatar and an `unread` flag.\n\n`unread` is the seller's read watermark (SPEC-053): true when the newest\nCUSTOMER message is newer than `chat_settings.admin_last_read_at`. A\nconversation that has never been marked falls back to the original rule \u2014\nthe customer sent the last message and is still waiting for a reply.\n\nArchived conversations (SPEC-063) are omitted unless `include_archived`.\nEvery row also carries the identity fields the console's customer panel\nshows \u2014 this handler already holds every auth user and profile, so asking\nfor them again from a second endpoint would be a round trip for data that\nis already in hand.",
+        "operationId": "get_all_chats_admin_chats_get",
+        "parameters": [
+          {
+            "name": "include_archived",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Include Archived"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/chats/{user_id}": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Get User Chat",
+        "description": "Get a specific user's conversation history.",
+        "operationId": "get_user_chat_admin_chats__user_id__get",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 10,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/chats/{user_id}/read": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Set Chat Read State",
+        "description": "Mark a conversation read (or back to unread) \u2014 SPEC-053.\n\n`read: true` stamps the watermark over every customer message already in\nthe thread, which clears the dot until they say something new. `read:\nfalse` clears it, putting the thread back in the Unread filter so it can be\ntriaged later.\n\nThe mark covers the transcript rather than reading the clock (SPEC-066):\nrows written before that fix carry the API host's local time in a UTC\ncolumn, and a `now` stamp never gets past them.",
+        "operationId": "set_chat_read_state_admin_chats__user_id__read_post",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminReadStateRequest",
+                "default": {
+                  "read": true
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/chats/{user_id}/archive": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Set Chat Archived",
+        "description": "Archive a conversation out of the console list, or restore it \u2014 SPEC-063.\n\nReversible by construction: this writes one timestamp and never touches\n`messages`. Mounted on the `protected` router, so the admin session and the\nCSRF header are already required by the time this runs.",
+        "operationId": "set_chat_archived_admin_chats__user_id__archive_post",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminArchiveRequest",
+                "default": {
+                  "archived": true
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/chats/{user_id}/message": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Admin Send Message",
+        "description": "Send a message to a user as the admin (seller).",
+        "operationId": "admin_send_message_admin_chats__user_id__message_post",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminMessageRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/cleanup-stripe": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Cleanup Expired Stripe Links",
+        "description": "Cleanup expired Stripe payment links.\nCall this periodically (e.g., via cron job) to clean up abandoned payments.",
+        "operationId": "cleanup_expired_stripe_links_admin_cleanup_stripe_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/orders": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Get All Orders",
+        "description": "Get all orders for admin view with summary stats.",
+        "operationId": "get_all_orders_admin_orders_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/orders/{order_id}": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Get Order",
+        "description": "Get a specific order by ID.",
+        "operationId": "get_order_admin_orders__order_id__get",
+        "parameters": [
+          {
+            "name": "order_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Order Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Update Order",
+        "description": "Update order details.",
+        "operationId": "update_order_admin_orders__order_id__put",
+        "parameters": [
+          {
+            "name": "order_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Order Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrderUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Delete Order",
+        "description": "Delete an order.",
+        "operationId": "delete_order_admin_orders__order_id__delete",
+        "parameters": [
+          {
+            "name": "order_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Order Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/orders/{order_id}/status": {
+      "put": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Update Order Status",
+        "description": "Update order status. Reaching 'delivered' also tells the buyer (SPEC-057).",
+        "operationId": "update_order_status_admin_orders__order_id__status_put",
+        "parameters": [
+          {
+            "name": "order_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Order Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrderStatusUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/orders/{order_id}/shipment": {
+      "put": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Record Shipment",
+        "description": "Record postage for a paid order and tell the buyer about it.\n\nSPEC-057. Before this the lifecycle simply stopped: `status` could be set to\n'shipped' but there was nowhere to put what it shipped WITH, so the seller\npasted tracking numbers into the chat by hand and the agent could only\nrepeat the word \"shipped\" when asked.\n\nOne call does all four things \u2014 record, stamp, email, post to the chat \u2014\nbecause a seller who has to remember the other three will eventually not.",
+        "operationId": "record_shipment_admin_orders__order_id__shipment_put",
+        "parameters": [
+          {
+            "name": "order_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Order Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShipmentUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/orders/refund/{item_id}": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Refund Item",
+        "description": "Refund a paid item, releasing it back to the catalogue.\n\nSPEC-056 #1. This used to be `POST /payment/refund/{item_id}` on the public\npayment router with `Depends(verify_admin)` and nothing more. Admin auth is\na cookie the browser attaches by itself, which is exactly the shape CSRF\nexploits \u2014 every other mutating admin action is gated by `verify_csrf_token`\nvia the `protected` router in `routes/admin/__init__.py`, and the one that\nmoves money was the exception. Living here, it inherits that gate.",
+        "operationId": "refund_item_admin_orders_refund__item_id__post",
+        "parameters": [
+          {
+            "name": "item_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Item Id"
+            }
+          },
+          {
+            "name": "reason",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Reason"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/analyze-image/stream": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Analyze Item Image Stream",
+        "description": "Streaming twin of /analyze-image.\n\nEmits Server-Sent Events as each pipeline stage genuinely completes, so the\nclient can show a real progress percentage (and fill in fields early)\ninstead of animating a fake bar. See agent.tools.listing_pipeline for why\nthe stages overlap.",
+        "operationId": "analyze_item_image_stream_admin_analyze_image_stream_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_analyze_item_image_stream_admin_analyze_image_stream_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/analyze-image": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Analyze Item Image",
+        "description": "Analyze uploaded images to generate item details (Name, Description, Condition).\nUses custom Image Analyzer service (Gemini Vision).\n\nNon-streaming fallback for clients that can't read the SSE variant above.",
+        "operationId": "analyze_item_image_admin_analyze_image_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_analyze_item_image_admin_analyze_image_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/market-valuation": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Get Market Valuation",
+        "description": "Get market valuation for an item directly.\nUses custom Market Valuator (NO APIFY - implement your own scraper!).",
+        "operationId": "get_market_valuation_admin_market_valuation_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MarketValuationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/summary": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Admin Summary",
+        "description": "Aggregate counts for the admin dashboard overview.",
+        "operationId": "admin_summary_admin_summary_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/items": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Admin List Items",
+        "description": "List every live item (including sold), newest first. Soft-deleted items are hidden.",
+        "operationId": "admin_list_items_admin_items_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Admin Create Item",
+        "description": "Create a new listing with one or more images.",
+        "operationId": "admin_create_item_admin_items_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_admin_create_item_admin_items_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/items/{item_id}": {
+      "put": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Admin Update Item",
+        "description": "Update a listing's fields and, optionally, its photos.\n\nMultipart rather than JSON because photos ride along with the fields: a\nbrowser cannot send files as JSON, and splitting them across two requests\nwould let an edit half-apply.\n\n`images_order` is a JSON array with one token per photo in display order\n(see `items.sync_item_images`); omitting it leaves the photos untouched.",
+        "operationId": "admin_update_item_admin_items__item_id__put",
+        "parameters": [
+          {
+            "name": "item_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Item Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_admin_update_item_admin_items__item_id__put"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Admin Delete Item",
+        "description": "Delete a listing (and its related orders/conversations).",
+        "operationId": "admin_delete_item_admin_items__item_id__delete",
+        "parameters": [
+          {
+            "name": "item_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Item Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/webhooks/resend": {
+      "post": {
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "Resend Webhook",
+        "description": "Handle Resend inbound-email webhooks (event: email.received).\n\nnegolah.my has no real mailbox yet, so every received email \u2014 including\ninline images and real file attachments \u2014 is forwarded to RESEND_FORWARD_TO\nvia Resend's send API.",
+        "operationId": "resend_webhook_webhooks_resend_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/": {
+      "get": {
+        "summary": "Root",
+        "operationId": "root__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "summary": "Health Check",
+        "operationId": "health_check_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AIToggleRequest": {
+        "properties": {
+          "ai_enabled": {
+            "type": "boolean",
+            "title": "Ai Enabled"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ai_enabled"
+        ],
+        "title": "AIToggleRequest"
+      },
+      "AccountDeleteSchema": {
+        "properties": {
+          "current_password": {
+            "type": "string",
+            "title": "Current Password"
+          }
+        },
+        "type": "object",
+        "required": [
+          "current_password"
+        ],
+        "title": "AccountDeleteSchema"
+      },
+      "Admin2FARequest": {
+        "properties": {
+          "handle": {
+            "type": "string",
+            "title": "Handle"
+          },
+          "code": {
+            "type": "string",
+            "title": "Code"
+          }
+        },
+        "type": "object",
+        "required": [
+          "handle",
+          "code"
+        ],
+        "title": "Admin2FARequest"
+      },
+      "AdminArchiveRequest": {
+        "properties": {
+          "archived": {
+            "type": "boolean",
+            "title": "Archived",
+            "default": true
+          }
+        },
+        "type": "object",
+        "title": "AdminArchiveRequest",
+        "description": "SPEC-063 \u2014 move a conversation out of the console list, or back into it.\n\nSoft state only: nothing in `messages` is touched, so this is reversible and\na transcript can never be lost to a triage gesture."
+      },
+      "AdminLoginRequest": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "title": "Email"
+          },
+          "password": {
+            "type": "string",
+            "title": "Password"
+          }
+        },
+        "type": "object",
+        "required": [
+          "email",
+          "password"
+        ],
+        "title": "AdminLoginRequest"
+      },
+      "AdminMessageRequest": {
+        "properties": {
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "title": "AdminMessageRequest"
+      },
+      "AdminReadStateRequest": {
+        "properties": {
+          "read": {
+            "type": "boolean",
+            "title": "Read",
+            "default": true
+          }
+        },
+        "type": "object",
+        "title": "AdminReadStateRequest",
+        "description": "SPEC-053 \u2014 set or clear a conversation's read watermark.\n\nDefaults to True so the common call (the console opening a thread) can post\nan empty body."
+      },
+      "BanRequest": {
+        "properties": {
+          "is_banned": {
+            "type": "boolean",
+            "title": "Is Banned"
+          }
+        },
+        "type": "object",
+        "required": [
+          "is_banned"
+        ],
+        "title": "BanRequest"
+      },
+      "Body_admin_create_item_admin_items_post": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "condition": {
+            "type": "string",
+            "title": "Condition"
+          },
+          "price": {
+            "type": "number",
+            "title": "Price"
+          },
+          "images": {
+            "items": {
+              "type": "string",
+              "contentMediaType": "application/octet-stream"
+            },
+            "type": "array",
+            "title": "Images"
+          },
+          "min_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Price"
+          },
+          "translations": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Translations"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "description",
+          "condition",
+          "price",
+          "images"
+        ],
+        "title": "Body_admin_create_item_admin_items_post"
+      },
+      "Body_admin_update_item_admin_items__item_id__put": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "condition": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Condition"
+          },
+          "price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price"
+          },
+          "min_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Price"
+          },
+          "translations": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Translations"
+          },
+          "images_order": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Images Order"
+          },
+          "new_images": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "contentMediaType": "application/octet-stream"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "New Images"
+          }
+        },
+        "type": "object",
+        "title": "Body_admin_update_item_admin_items__item_id__put"
+      },
+      "Body_analyze_item_image_admin_analyze_image_post": {
+        "properties": {
+          "images": {
+            "items": {
+              "type": "string",
+              "contentMediaType": "application/octet-stream"
+            },
+            "type": "array",
+            "title": "Images"
+          },
+          "language": {
+            "type": "string",
+            "title": "Language",
+            "default": "en"
+          }
+        },
+        "type": "object",
+        "required": [
+          "images"
+        ],
+        "title": "Body_analyze_item_image_admin_analyze_image_post"
+      },
+      "Body_analyze_item_image_stream_admin_analyze_image_stream_post": {
+        "properties": {
+          "images": {
+            "items": {
+              "type": "string",
+              "contentMediaType": "application/octet-stream"
+            },
+            "type": "array",
+            "title": "Images"
+          },
+          "language": {
+            "type": "string",
+            "title": "Language",
+            "default": "all"
+          }
+        },
+        "type": "object",
+        "required": [
+          "images"
+        ],
+        "title": "Body_analyze_item_image_stream_admin_analyze_image_stream_post"
+      },
+      "Body_update_profile_user__user_id__profile_put": {
+        "properties": {
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "avatar": {
+            "anyOf": [
+              {
+                "type": "string",
+                "contentMediaType": "application/octet-stream"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avatar"
+          }
+        },
+        "type": "object",
+        "title": "Body_update_profile_user__user_id__profile_put"
+      },
+      "Body_upload_user_avatar_admin_users__user_id__avatar_post": {
+        "properties": {
+          "avatar": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "Avatar"
+          }
+        },
+        "type": "object",
+        "required": [
+          "avatar"
+        ],
+        "title": "Body_upload_user_avatar_admin_users__user_id__avatar_post"
+      },
+      "CheckoutRequest": {
+        "properties": {
+          "item_id": {
+            "type": "string",
+            "title": "Item Id"
+          },
+          "user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "item_id"
+        ],
+        "title": "CheckoutRequest"
+      },
+      "EmailUpdateSchema": {
+        "properties": {
+          "new_email": {
+            "type": "string",
+            "title": "New Email"
+          },
+          "current_password": {
+            "type": "string",
+            "title": "Current Password"
+          }
+        },
+        "type": "object",
+        "required": [
+          "new_email",
+          "current_password"
+        ],
+        "title": "EmailUpdateSchema"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "LanguageUpdateSchema": {
+        "properties": {
+          "language": {
+            "type": "string",
+            "title": "Language"
+          }
+        },
+        "type": "object",
+        "required": [
+          "language"
+        ],
+        "title": "LanguageUpdateSchema"
+      },
+      "MarketValuationRequest": {
+        "properties": {
+          "query": {
+            "type": "string",
+            "title": "Query"
+          },
+          "condition": {
+            "type": "string",
+            "title": "Condition",
+            "default": "good"
+          },
+          "category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          }
+        },
+        "type": "object",
+        "required": [
+          "query"
+        ],
+        "title": "MarketValuationRequest"
+      },
+      "OrderStatusUpdate": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "OrderStatusUpdate"
+      },
+      "OrderUpdate": {
+        "properties": {
+          "item_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Item Name"
+          },
+          "amount": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "shipping_address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shipping Address"
+          },
+          "shipping_phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shipping Phone"
+          },
+          "shipping_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shipping Name"
+          },
+          "address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Address"
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone"
+          },
+          "recipient_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recipient Name"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          }
+        },
+        "type": "object",
+        "title": "OrderUpdate"
+      },
+      "PasswordUpdateSchema": {
+        "properties": {
+          "current_password": {
+            "type": "string",
+            "title": "Current Password"
+          },
+          "new_password": {
+            "type": "string",
+            "title": "New Password"
+          }
+        },
+        "type": "object",
+        "required": [
+          "current_password",
+          "new_password"
+        ],
+        "title": "PasswordUpdateSchema"
+      },
+      "ShipmentUpdate": {
+        "properties": {
+          "courier": {
+            "type": "string",
+            "title": "Courier"
+          },
+          "tracking_number": {
+            "type": "string",
+            "title": "Tracking Number"
+          },
+          "tracking_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tracking Url"
+          },
+          "notify": {
+            "type": "boolean",
+            "title": "Notify",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "courier",
+          "tracking_number"
+        ],
+        "title": "ShipmentUpdate",
+        "description": "Postage as the seller records it (SPEC-057).\n\n`tracking_url` is optional because it is usually derivable from the courier;\n`notify` exists so a correction to an already-announced shipment doesn't\nemail the buyer a second time."
+      },
+      "UserProfileUpdateRequest": {
+        "properties": {
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "avatar_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avatar Url"
+          }
+        },
+        "type": "object",
+        "title": "UserProfileUpdateRequest"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}

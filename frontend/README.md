@@ -1,64 +1,59 @@
-# Nuxt Starter Template
+# Nego-Lah Frontend (Nuxt 4 SPA)
 
-[![Nuxt UI](https://img.shields.io/badge/Made%20with-Nuxt%20UI-00DC82?logo=nuxt&labelColor=020420)](https://ui.nuxt.com)
+The client application for **Nego-Lah**, built with **Nuxt 4** in Single Page Application mode (`ssr: false`) and deployed to **Cloudflare Pages**.
 
-Use this template to get started with [Nuxt UI](https://ui.nuxt.com) quickly.
+---
 
-- [Live demo](https://starter-template.nuxt.dev/)
-- [Documentation](https://ui.nuxt.com/docs/getting-started/installation/nuxt)
+## 1. Architecture Highlights
 
-<a href="https://starter-template.nuxt.dev/" target="_blank">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://ui.nuxt.com/assets/templates/nuxt/starter-dark.png">
-    <source media="(prefers-color-scheme: light)" srcset="https://ui.nuxt.com/assets/templates/nuxt/starter-light.png">
-    <img alt="Nuxt Starter Template" src="https://ui.nuxt.com/assets/templates/nuxt/starter-light.png" width="830" height="466">
-  </picture>
-</a>
+- **Single Page Application (`ssr: false`):** Pre-rendered static shell with dynamic client-side hydration, optimized for edge delivery via Cloudflare CDN.
+- **UI & Design System:** Built with **Nuxt UI** (`@nuxt/ui`) components and styled with **TailwindCSS v4**, supporting dark/light mode and accessible color contrast.
+- **Trilingual Localization:** Trilingual message catalogues (`en`, `ms`, `zh`) supporting full interface internationalization and currency formatting.
+- **Universal Turnstile Bot Defense:** Every session maintains active Cloudflare Turnstile verification via `useTurnstileToken()`.
+- **Client-Side Supabase Auth:** User sessions and tokens are managed directly by `@nuxtjs/supabase` in the browser.
 
-> The starter template for Vue is on https://github.com/nuxt-ui-templates/starter-vue.
+---
 
-## Quick Start
+## 2. Directory Structure
 
-```bash [Terminal]
-npm create nuxt@latest -- -t ui
+```text
+frontend/
+├── app/
+│   ├── assets/       # Global CSS and Tailwind v4 theme configuration
+│   ├── components/   # Modular Vue 3 components (hero, admin, chat, items)
+│   ├── composables/  # Reactive hooks (useApi, useTurnstileToken, useNotifications)
+│   ├── layouts/      # Root layout wrappers (default, admin)
+│   ├── locales/      # i18n translation JSON dictionaries (en, ms, zh)
+│   ├── pages/        # File-based routing (chat, items, orders, console)
+│   └── stores/       # Pinia state stores
+├── public/           # Static assets, PWA icons, favicon
+├── tests/            # Vitest unit and component tests
+├── nuxt.config.ts    # Nuxt 4 configuration & runtime env mappings
+└── wrangler.toml     # Cloudflare Pages build & deployment configuration
 ```
 
-## Deploy your own
+---
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-name=starter&repository-url=https%3A%2F%2Fgithub.com%2Fnuxt-ui-templates%2Fstarter&demo-image=https%3A%2F%2Fui.nuxt.com%2Fassets%2Ftemplates%2Fnuxt%2Fstarter-dark.png&demo-url=https%3A%2F%2Fstarter-template.nuxt.dev%2F&demo-title=Nuxt%20Starter%20Template&demo-description=A%20minimal%20template%20to%20get%20started%20with%20Nuxt%20UI.)
-
-## Setup
-
-Make sure to install the dependencies:
+## 3. Development Workflow
 
 ```bash
-pnpm install
+# 1. Install dependencies
+bun install
+
+# 2. Start dev server (http://localhost:3000)
+bun dev
+
+# 3. Run unit & component tests
+bun run test
+
+# 4. Typecheck Vue components
+bun run typecheck
+
+# 5. Lint codebase
+bun run lint
+
+# 6. Generate production static SPA
+bun run generate
 ```
 
-## Development Server
-
-Start the development server on `http://localhost:3000`:
-
-```bash
-pnpm dev
-```
-
-## Production
-
-Build the application for production:
-
-```bash
-pnpm build
-```
-
-Locally preview production build:
-
-```bash
-pnpm preview
-```
-
-Check out the [deployment documentation](https://nuxt.com/docs/getting-started/deployment) for more information.
-
-## Renovate integration
-
-Install [Renovate GitHub app](https://github.com/apps/renovate/installations/select_target) on your repository and you are good to go.
+For platform-wide architecture details, refer to [`docs/architecture/README.md`](../docs/architecture/README.md).

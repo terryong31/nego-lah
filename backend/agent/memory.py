@@ -78,13 +78,23 @@ class ConversationMemory:
         return self._supabase
 
     @staticmethod
-    def _to_public(row: dict) -> dict:
-        """The shape every caller has always received."""
-        return {
+    def _to_public(row: dict, include_tool_calls: bool = False) -> dict:
+        """The shape every caller has always received.
+
+        `tool_calls` is opt-in and absent otherwise, which is what keeps the
+        chat client and the admin console reading exactly what they always did.
+        It has to be threaded through explicitly: this method used to build the
+        dict from three fixed keys, so `_page` selected the trace column and
+        then dropped it on the way out, and SPEC-087 replayed nothing at all.
+        """
+        public = {
             "role": row.get("role"),
             "content": row.get("content"),
             "source": row.get("source", "ai"),
         }
+        if include_tool_calls and row.get("tool_calls"):
+            public["tool_calls"] = row["tool_calls"]
+        return public
 
     def add_message(
         self,
@@ -92,7 +102,8 @@ class ConversationMemory:
         role: str,
         message: str,
         item_id: str = None,
-        source: str = 'ai'
+        source: str = 'ai',
+        tool_calls: list[dict] | None = None,
     ):
         """Append a message to a user's history.
 
@@ -102,6 +113,10 @@ class ConversationMemory:
             message: The message content
             item_id: Optional item context
             source: 'ai' | 'admin' | 'system' | 'human'
+            tool_calls: SPEC-087. Compact trace of the tools this assistant turn
+                called — `[{name, args, id, result}]` — so the transcript replayed
+                to the model shows the tool call that produced the answer, not
+                just the answer.
         """
         # Multimodal turns arrive as a list of content parts; the column is text.
         if isinstance(message, list):
@@ -120,20 +135,33 @@ class ConversationMemory:
                 # filed every message eight hours into the future, where no
                 # read watermark could get past it.
                 'created_at': datetime.now(UTC).isoformat(),
+                **({'tool_calls': tool_calls} if tool_calls else {}),
             }).execute()
         except Exception as e:
+            # A trace is a nice-to-have; the message itself is the record of what
+            # was agreed. If the column is missing (migration not applied yet) or
+            # the payload is rejected, save the turn without it rather than lose
+            # it — SPEC-087.
+            if tool_calls:
+                logger.info(f"[ConversationMemory] Retrying save without tool trace: {e}")
+                self.add_message(user_id, role, message, item_id, source, tool_calls=None)
+                return
             logger.info(f"[ConversationMemory] Error saving message: {e}")
 
-    def _page(self, user_id: str, limit: int, offset: int) -> list[dict]:
+    def _page(self, user_id: str, limit: int, offset: int, include_tool_calls: bool = False) -> list[dict]:
         """One page of a user's messages, newest-anchored, returned oldest-first.
 
         Reads descending so `offset` counts back from the newest message (which
         is how both callers page), then reverses so the caller gets the natural
         reading order.
         """
+        # The tool trace is for the agent's context only (SPEC-087). The chat
+        # client and the admin console read this same page and have no use for
+        # it, so it is opt-in rather than always selected.
+        columns = 'role, content, source, tool_calls' if include_tool_calls else 'role, content, source'
         query = (
             self.supabase.table('messages')
-            .select('role, content, source')
+            .select(columns)
             .eq('user_id', user_id)
             .order('id', desc=True)
         )
@@ -144,12 +172,22 @@ class ConversationMemory:
             query = query.range(offset, offset + 10_000)
 
         rows = query.execute().data or []
-        return [self._to_public(r) for r in reversed(rows)]
+        return [self._to_public(r, include_tool_calls) for r in reversed(rows)]
 
-    def get_history(self, user_id: str, limit: int = DEFAULT_HISTORY_LIMIT, offset: int = 0) -> list[dict]:
-        """Get conversation history for a user, oldest-first."""
+    def get_history(
+        self,
+        user_id: str,
+        limit: int = DEFAULT_HISTORY_LIMIT,
+        offset: int = 0,
+        include_tool_calls: bool = False,
+    ) -> list[dict]:
+        """Get conversation history for a user, oldest-first.
+
+        `include_tool_calls` adds each assistant turn's tool trace (SPEC-087);
+        only the agent's own context rebuild wants it.
+        """
         try:
-            return self._page(user_id, limit, offset)
+            return self._page(user_id, limit, offset, include_tool_calls)
         except Exception as e:
             logger.info(f"[ConversationMemory] Error getting history: {e}")
             return []

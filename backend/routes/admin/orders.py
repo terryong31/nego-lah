@@ -29,6 +29,7 @@ def _notify_buyer_of_shipment(order: dict, delivered: bool = False) -> dict:
 
     result = {"email": False, "chat": False}
     buyer_id = order.get("buyer_id")
+    message = shipment_chat_message(order, delivered=delivered)
 
     try:
         from services.email_service import send_shipment_notice
@@ -37,17 +38,25 @@ def _notify_buyer_of_shipment(order: dict, delivered: bool = False) -> dict:
         logger.error(f"Shipment email failed for order {order.get('id')}: {e}")
 
     try:
+        # SPEC-078: persist FIRST. broadcast_to_chat below is a live,
+        # fire-and-forget push (Supabase Realtime + the SSE broker) that
+        # reaches nobody unless the buyer's browser is on the chat page at
+        # this exact instant — without a row in `messages` the notice is not
+        # delayed, it is simply gone, even though `notified.chat` below still
+        # reports True. Every other caller of broadcast_to_chat for an
+        # assistant-voiced message (e.g. `_send_thank_you`) persists first for
+        # the same reason.
+        from agent.memory import conversation_memory
+        conversation_memory.add_message(
+            buyer_id, "ai", message, item_id=order.get("item_id"), source="ai"
+        )
+
         from payment.fulfillment import broadcast_to_chat
 
         # source="ai" so it lands in the buyer's chat as the seller's own voice
         # AND rings the notification bell — broadcast_to_chat deliberately skips
         # the SSE hop for "human"/"system" messages.
-        broadcast_to_chat(
-            buyer_id,
-            shipment_chat_message(order, delivered=delivered),
-            role="assistant",
-            source="ai",
-        )
+        broadcast_to_chat(buyer_id, message, role="assistant", source="ai")
         result["chat"] = True
     except Exception as e:
         logger.error(f"Shipment chat broadcast failed for order {order.get('id')}: {e}")

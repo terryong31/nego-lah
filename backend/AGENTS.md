@@ -50,7 +50,7 @@ backend/
 
 ## Test-Driven Development (TDD) Contract
 
-1. Always write or update the specification in `/specs/SPEC-XXX-<name>.md` first.
+1. Always write or update the specification in `/docs/specs/SPEC-XXX-<name>.md` first (strictly follow LeanSpec <2,000 tokens to prevent document overload).
 2. Write tests in `backend/tests/` asserting the acceptance criteria.
 3. Run `uv run pytest` to confirm tests fail (Red).
 4. Implement minimal code to pass tests (Green).

@@ -88,6 +88,13 @@ _TEST_ENV = {
     "RESEND_FORWARD_TO": "forward-to@example.com",
     "RESEND_FORWARD_FROM": "noreply@example.com",
     "RESEND_ALLOWED_RECIPIENTS": "support@example.com",
+    # SPEC-074: present-but-empty so a developer's real backend/.env (which now
+    # sets SMTP_HOST to point dev email at Mailpit) cannot flip the whole suite
+    # onto the SMTP transport. Tests that exercise SMTP monkeypatch the module
+    # attribute explicitly; by default the suite always exercises Resend.
+    "SMTP_HOST": "",
+    "SMTP_PORT": "",
+    "SMTP_FROM": "",
     "FRONTEND_URL": "http://localhost:3000",
     "ADMIN_COOKIE_NAME": "admin_sid",
     # Secure=false so httpx's cookiejar will actually round-trip the admin
@@ -311,3 +318,54 @@ def fake_stripe(monkeypatch):
     ):
         monkeypatch.setattr(target, name, MagicMock())
     return stripe
+
+
+@pytest.fixture
+def turn_env(monkeypatch, patch_supabase, fake_supabase):
+    """Everything one `/chat/stream` turn touches, recorded instead of performed.
+
+    Shared because more than one spec is about what a turn writes and in which
+    order (SPEC-060's detached turn, SPEC-070's handoff separator), and a second
+    copy of the recorder would drift from the turn it describes.
+
+    `turn_env(user_id)` returns the ledger: `persisted`, `broadcast`, `queued`
+    and `charged`.
+    """
+    record = {"persisted": [], "broadcast": [], "queued": [], "charged": []}
+
+    def _setup(user_id, *, subscribed=False):
+        async def _verified(request):
+            return user_id
+
+        monkeypatch.setattr("routes.chat.verify_user_token", _verified)
+        (
+            fake_supabase.table.return_value.select.return_value.eq.return_value
+            .execute.return_value
+        ) = make_supabase_result([])
+        patch_supabase("routes.chat", admin=fake_supabase)
+
+        monkeypatch.setattr(
+            "agent.memory.conversation_memory.add_message",
+            lambda uid, role, msg, *a, **k: record["persisted"].append((uid, role, msg)),
+        )
+        monkeypatch.setattr(
+            "payment.fulfillment.broadcast_to_chat",
+            lambda uid, content, role="ai", source="ai": record["broadcast"].append(
+                (uid, content, role, source)
+            ),
+        )
+        monkeypatch.setattr(
+            "services.unread_digest.queue_unread_message",
+            lambda uid, content, item_name=None: record["queued"].append((uid, content)),
+        )
+        monkeypatch.setattr(
+            "notifications.notification_broker.has_subscribers",
+            lambda uid: subscribed,
+        )
+        monkeypatch.setattr(
+            "routes.chat.track_ai_tokens",
+            lambda uid, inp, out: record["charged"].append((uid, inp, out)),
+        )
+        return record
+
+    return _setup

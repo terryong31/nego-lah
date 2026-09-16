@@ -11,7 +11,7 @@
     />
 
     <!-- 1. Top-Left: Orange Arch & Pink Dot (directly above Terry's left shoulder & head) -->
-    <div class="absolute -top-1 sm:-top-3 left-[10%] sm:left-[12%] z-20 pointer-events-none animate-memphis-float">
+    <div class="absolute top-8 sm:top-9 left-[4%] sm:left-[4%] z-1 pointer-events-none animate-memphis-float">
       <svg
         width="60"
         height="60"
@@ -43,7 +43,7 @@
     </div>
 
     <!-- 3. Top-Right: Rotating 8-Point Yellow Sunburst Star (directly above AI Robot's head) -->
-    <div class="absolute top-[4%] sm:top-[6%] right-[12%] sm:right-[15%] z-20 pointer-events-none animate-memphis-spin-slow">
+    <div class="absolute top-[0%] sm:top-[0%] right-[12%] sm:right-[15%] z-1 pointer-events-none animate-memphis-spin-slow">
       <svg
         width="48"
         height="48"
@@ -123,8 +123,38 @@
       </svg>
     </div>
 
-    <!-- Transparent Character Illustration (Zero Background) -->
+    <!-- Transparent Character Illustration (Zero Background) with Dialog Chat Bubbles -->
     <div class="relative z-10 animate-memphis-float">
+      <!-- 1. Lady's Chat Bubble (Asking "Is this still available?") -->
+      <div
+        class="absolute top-[0%] sm:top-[0%] left-0 sm:-left-[0%] z-100 pointer-events-none select-none animate-bubble-in"
+      >
+        <div
+          class="relative bg-white/95 dark:bg-zinc-900/95 backdrop-blur-sm text-zinc-900 dark:text-zinc-100 border border-zinc-200/90 dark:border-zinc-700/90 px-2.5 py-1 sm:px-3.5 sm:py-2 rounded-2xl shadow-xl flex items-center gap-1.5 text-[11px] sm:text-sm tracking-tight"
+        >
+          <span>{{ $t('home.heroBuyerBubble') }}</span>
+          <!-- Tail pointing toward the lady -->
+          <span
+            class="absolute -bottom-1 sm:-bottom-1.5 right-4 sm:right-5 size-2 sm:size-3 bg-white/95 dark:bg-zinc-900/95 border-r border-b border-zinc-200/90 dark:border-zinc-700/90 rotate-45"
+          />
+        </div>
+      </div>
+
+      <!-- 2. AI Robot's Chat Bubble (Replying "Yes, it's available!") -->
+      <div
+        class="absolute top-[10%] sm:top-[10%] right-0 sm:-right-[4%] z-30 pointer-events-none select-none animate-bubble-in [animation-delay:250ms]"
+      >
+        <div
+          class="relative bg-primary text-zinc-950 px-2.5 py-1 sm:px-3.5 sm:py-2 rounded-2xl shadow-xl shadow-primary/25 border border-primary/40 flex items-center gap-1 text-[11px] sm:text-sm tracking-tight"
+        >
+          <span>{{ $t('home.heroAiBubble') }}</span>
+          <!-- Tail pointing toward the AI robot -->
+          <span
+            class="absolute -bottom-1 sm:-bottom-1.5 left-4 sm:left-5 size-2 sm:size-3 bg-primary border-r border-b border-primary/40 rotate-45"
+          />
+        </div>
+      </div>
+
       <img
         src="/images/hero-illustration.png"
         alt="Terry jamming on guitar alongside AI negotiation assistant"

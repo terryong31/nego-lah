@@ -58,68 +58,13 @@
     "terms": "服务条款"
   },
   "home": {
-    "heroTitle1": "看中喜欢的闲置好物？",
-    "heroTitle2": "随时来",
-    "heroBrand": "Nego-lah",
-    "heroGreeting": "看中喜欢的闲置好物？",
-    "heroName": "Nego-lah",
-    "heroTagline": "随时来 Nego-lah",
-    "heroDesc": "精选数码科技、乐器和实用家居闲置。随时和我训练的 AI 议价吧。",
-    "heroPs": "附言：如果你砍价技巧厉害，说不定能拿到意想不到的骨折价 😏",
-    "perkMusic": "精选乐器 & 吉他",
-    "perkTech": "数码科技好物",
-    "perkAi": "实时 AI 侃价",
-    "heroDealCelebration": "砍价成功，火速成交！🎉",
-    "browseStuff": "逛逛我的闲置",
-    "featuredListings": "精选好物",
-    "inputPlaceholder": "输入您的消息...",
-    "dialog": {
-      "m1": "那是 Terry 的 Fender Strat 电吉他，几乎全新。标价 RM320。🎸",
-      "m2": "太棒了，RM240 可以卖吗？",
-      "m3": "真会砍价 😄 RM280 怎么样，对大家都划算。",
-      "m4": "成交！🤝",
-      "m5": "成交！我今天就打包发货。📦"
-    },
-    "demo": {
-      "jump": "看看怎么运作",
-      "titleLead": "它开价 RM320。",
-      "titleAccent": "你",
-      "titleTail": "不会照付。",
-      "desc": "看一场真实的议价。Terry 私下设定底价，代理全天候在底价之上跟你周旋，会三种语言，而且从不透露底价在哪。",
-      "you": "你",
-      "steps": {
-        "offer": {
-          "title": "开你的价",
-          "desc": "凌晨三点也能留言。没有「还在吗？」，没有已读不回，不必等 Terry 睡醒。"
-        },
-        "counter": {
-          "title": "代理还价",
-          "desc": "它读懂物品、成色和市场行情，然后在 Terry 设定的利润范围内据理力争。"
-        },
-        "deal": {
-          "title": "成交握手",
-          "desc": "谈妥后价格直接锁进 Stripe 结账，货款托管到实际发货为止。"
-        }
-      }
-    },
-    "rules": {
-      "badge": "我的规矩",
-      "title": "三件我绝不让步的事",
-      "items": {
-        "grading": {
-          "title": "有划痕我照样拍出来",
-          "desc": "每件商品都标明近全新、良好或一般，配未修图的照片。有磕碰，你付款前就会看到磕碰。"
-        },
-        "escrow": {
-          "title": "你的钱先放在 Stripe",
-          "desc": "款项先托管，发货后才放行。万一同一件卖出两次，第二位买家自动全额退款。"
-        },
-        "local": {
-          "title": "马来西亚定价与配送",
-          "desc": "马币计价，本地快递，全程追踪到家。用中文、English 或 Bahasa Melayu 提问都行，代理用同一种语言回复。"
-        }
-      }
-    },
+    "heroTitle1": "“你好，",
+    "heroTitle2": "这个",
+    "heroBrand": "还在吗？”",
+    "heroDesc": "在 Facebook Marketplace 上，高达 80% 发来“你好，这个还在吗？”的买家最终都会已读不回。Nego-lah 打造全天候 24/7 自动议价并促成交易的 AI 二手市场。",
+    "heroBuyerBubble": "请问这个还在吗？",
+    "heroAiBubble": "在的，还在！",
+    "browseStuff": "试一试 — 登录",
     "deploy": {
       "title": "想让这套系统跑在你的公司里？",
       "desc": "Nego-lah 不是作品集里的模型 demo。它是真实在收真金白银马币的线上系统 — 可以直接接入你自己的网店、你自己的商品和你的利润规则。",
@@ -153,6 +98,16 @@
         }
       },
       "email": "给我发邮件"
+    },
+    "browseStuffAuthed": "进入商店",
+    "pipeline": {
+      "title": "怎么运作",
+      "soon": "录像即将上线",
+      "items": {
+        "listing": "上传",
+        "haggle": "讲价",
+        "delivery": "送货"
+      }
     }
   },
   "auth": {
@@ -287,6 +242,7 @@
     "colItem": "商品名称",
     "colPrice": "价格 (RM)",
     "colStatus": "状态",
+    "colTracking": "物流追踪",
     "colDate": "购买时间",
     "noOrdersYet": "暂无订单",
     "noOrdersDesc": "与我们的 AI 模型讨价还价并达成交易以开始购买！",
@@ -308,7 +264,6 @@
     "nextStep": "下一步：在聊天中提供您的收货信息",
     "orderRef": "订单编号",
     "goToChat": "立即进入聊天",
-    "redirectingChat": "{seconds} 秒后进入聊天填写收货信息",
     "viewOrders": "查看我的订单",
     "backStorefront": "返回商城首页",
     "refundedTitle": "商品已不可购买",
@@ -320,8 +275,6 @@
     "confirmFailed": "支付确认失败。",
     "notConfirmedYet": "我们暂时无法确认您的付款。如果已扣款，系统稍后会记录 — 请查看我的订单，或凭 Stripe 收据联系客服。",
     "notVerified": "我们无法自动核实您的付款。如果已扣款，请凭 Stripe 收据联系客服。",
-    "confirmedTitle": "支付已确认！",
-    "confirmedDesc": "您的订单已成功记录。",
     "confirmFailedTitle": "确认失败",
     "unavailableTitle": "商品已不可购买",
     "unavailableDesc": "有买家在您付款前一刻完成了交易，款项已全额退还给您。",
@@ -546,6 +499,70 @@
     "distribution": {
       "available": "在售",
       "sold": "已售"
+    }
+  },
+  "tour": {
+    "back": "上一步",
+    "next": "下一步",
+    "finish": "完成",
+    "skip": "跳过导览",
+    "progress": "{current} / {total}",
+    "replay": "使用指南",
+    "payDemoLabel": "支付 RM280",
+    "payDemoNote": "由 Stripe 提供保障",
+    "steps": {
+      "welcome": {
+        "title": "这里的卖家是 AI",
+        "body": "Nego-lah 是一个由 AI 代理当卖家的二手市场。它熟悉每一件商品，用马币讨价还价，凌晨三点也在线。一分钟带你看完整个流程。"
+      },
+      "search": {
+        "title": "找点东西",
+        "body": "搜索直接查询实时目录——名称、成色，都能搜。"
+      },
+      "filters": {
+        "title": "在售或已售",
+        "body": "已售出的商品仍然保留，让你看到什么真的卖掉了。"
+      },
+      "price": {
+        "title": "价格会变",
+        "body": "这是要价。砍下来之后，你谈成的价格会跟着你回到这个列表。"
+      },
+      "listing": {
+        "title": "代理知道什么",
+        "body": "照片、成色和描述——代理谈判时依据的正是这份资料卡。它不会编造划痕，也不会隐瞒划痕。"
+      },
+      "buyNow": {
+        "title": "照价买，或者别买",
+        "body": "「立即购买」按较低者收费：标价，或你谈下来的价格。没有优惠码，不用绕弯。"
+      },
+      "negotiate": {
+        "title": "开口还价",
+        "body": "这会就这件商品与代理开启对话。"
+      },
+      "chatPrice": {
+        "title": "盯住这个数字",
+        "body": "顶部会跟踪实时价格。你争取到的每一次让步都会在这里更新——列表页也一样。"
+      },
+      "composer": {
+        "title": "开始讲价",
+        "body": "大胆压价，问问那道划痕。用中文、English 或 Bahasa Melayu 都行——它会用同一种语言回复。它守着一个绝不会告诉你的底价。"
+      },
+      "payCard": {
+        "title": "谈妥了，它就出账",
+        "body": "一旦价格谈定，代理会直接在对话里发出 Stripe 付款卡。只有付款才能锁定商品——谁先付，谁拿走。"
+      },
+      "notifications": {
+        "title": "回复会找到你",
+        "body": "离开对话后，代理或真人回复时这里会出现一个小圆点。未读消息会汇总成一封邮件，而不是二十封。"
+      },
+      "orders": {
+        "title": "每一笔订单都可追踪",
+        "body": "包裹寄出后，状态、快递公司和运单号都会显示在这里。你也可以直接问代理你的东西到哪了。"
+      },
+      "done": {
+        "title": "导览到此结束",
+        "body": "去讲价吧。随时可以从头像下的菜单重看这个导览。"
+      }
     }
   }
 }

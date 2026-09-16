@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isAuthGuarded, loginRedirect, resolveAvatarUrl, safeRedirectPath } from '~/utils/auth'
+import { isAuthGuarded, loginRedirect, resolveAvatarUrl, resolveUserId, safeRedirectPath } from '~/utils/auth'
 
 describe('utils/auth.ts - isAuthGuarded', () => {
   it('returns true for routes with meta.middleware = "auth"', () => {
@@ -149,5 +149,37 @@ describe('utils/auth.ts - resolveAvatarUrl', () => {
     expect(resolveAvatarUrl({
       user_metadata: { custom_avatar_url: '', avatar_url: 'https://lh3.googleusercontent.com/a/p' }
     })).toBe('https://lh3.googleusercontent.com/a/p')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// SPEC-085 — resolveUserId
+//
+// `useSupabaseUser()` holds the JWT payload from `getClaims()`, where the user
+// id is `sub`. Ten call sites read `.id`, which is undefined there and only
+// typechecks because `JwtPayload` declares `[key: string]: any`. The SSE
+// notification stream and the language sync are both gated on that expression,
+// so both were permanently off.
+// ---------------------------------------------------------------------------
+
+describe('resolveUserId', () => {
+  it('reads `sub`, the claim that actually carries the id', () => {
+    expect(resolveUserId({ sub: 'user-1' })).toBe('user-1')
+  })
+
+  it('falls back to `id` for a User-shaped object', () => {
+    // `supabase.auth.getSession()` returns a User, not claims — profile.vue and
+    // orders.vue both pass one in.
+    expect(resolveUserId({ id: 'user-1' })).toBe('user-1')
+  })
+
+  it('prefers `sub` when a value carries both', () => {
+    expect(resolveUserId({ sub: 'from-claims', id: 'from-user' })).toBe('from-claims')
+  })
+
+  it('resolves to null for a signed-out or unrecognised value', () => {
+    expect(resolveUserId(null)).toBeNull()
+    expect(resolveUserId(undefined)).toBeNull()
+    expect(resolveUserId({})).toBeNull()
   })
 })

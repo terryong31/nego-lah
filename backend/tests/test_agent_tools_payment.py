@@ -89,6 +89,17 @@ def _no_existing_payment(monkeypatch):
     monkeypatch.setattr("payment.payment_state.get_pending_payment", lambda uid, iid: None)
 
 
+def _negotiated(monkeypatch, price):
+    """SPEC-089: the price the server itself last committed to.
+
+    Checkout now refuses anything below it — a discount the model invented
+    rather than one `evaluate_offer` authorised. A test that checks out below
+    the listed price has to say which counter got it there, exactly as a real
+    negotiation would have cached one.
+    """
+    monkeypatch.setattr("payment.pricing.active_negotiated_price", lambda uid, iid: price)
+
+
 # ---------------------------------------------------------------------------
 # create_checkout_link
 # ---------------------------------------------------------------------------
@@ -143,6 +154,7 @@ def test_create_checkout_item_lookup_retries_with_context_item_id(
 ):
     context.set_context(user_id="user-1", item_id="context-item-99")
     _no_existing_payment(monkeypatch)
+    _negotiated(monkeypatch, 80.0)
     patch_supabase("connector", admin=fake_supabase)
 
     empty = MagicMock(data=[])
@@ -212,6 +224,7 @@ def test_create_checkout_price_suspiciously_high_rejected(patch_supabase, fake_s
 def test_create_checkout_success(patch_supabase, fake_supabase, fake_stripe, monkeypatch):
     context.set_context(user_id="user-1", item_id=None)
     _no_existing_payment(monkeypatch)
+    _negotiated(monkeypatch, 80.0)
     patch_supabase("connector", admin=fake_supabase)
     _set_item_lookup(fake_supabase, item=ITEM)
 
@@ -245,6 +258,7 @@ def test_create_checkout_success(patch_supabase, fake_supabase, fake_stripe, mon
 def test_create_checkout_stripe_error_returns_message(patch_supabase, fake_supabase, fake_stripe, monkeypatch):
     context.set_context(user_id="user-1", item_id=None)
     _no_existing_payment(monkeypatch)
+    _negotiated(monkeypatch, 80.0)
     patch_supabase("connector", admin=fake_supabase)
     _set_item_lookup(fake_supabase, item=ITEM)
 
@@ -337,6 +351,21 @@ def test_cancel_delete_failure(monkeypatch):
 # ---------------------------------------------------------------------------
 # collect_shipping_info
 # ---------------------------------------------------------------------------
+#
+# SPEC-078: the tool now reads the order's current shipping fields first (an
+# ownership-scoped SELECT) before writing, so a message that only gives the
+# name can merge with a phone/address saved earlier and know whether THIS
+# write completes the set. Every test below stubs both legs of that:
+# `_shipping_existing(...)` for the SELECT, `_shipping_update_result(...)`
+# for the UPDATE.
+
+def _shipping_existing(fake_supabase, data):
+    """select(...).eq('id', ...).eq('buyer_id', ...).execute() -> data."""
+    (
+        fake_supabase.table.return_value.select.return_value
+        .eq.return_value.eq.return_value.execute.return_value
+    ) = MagicMock(data=data)
+
 
 def _shipping_update_result(fake_supabase, data):
     """update(...).eq('id', ...).eq('buyer_id', ...).execute() -> data."""
@@ -344,6 +373,11 @@ def _shipping_update_result(fake_supabase, data):
         fake_supabase.table.return_value.update.return_value
         .eq.return_value.eq.return_value.execute.return_value
     ) = MagicMock(data=data)
+
+
+def _blank_order():
+    """An order with no shipping fields saved yet."""
+    return {"recipient_name": None, "phone": None, "address": None}
 
 
 def test_collect_shipping_fails_closed_without_a_user_in_context(patch_supabase, fake_supabase):
@@ -360,8 +394,20 @@ def test_collect_shipping_fails_closed_without_a_user_in_context(patch_supabase,
     fake_supabase.table.assert_not_called()
 
 
-def test_collect_shipping_success(patch_supabase, fake_supabase):
+def test_collect_shipping_no_fields_provided_is_refused_without_touching_the_db(
+    patch_supabase, fake_supabase
+):
     patch_supabase("connector", admin=fake_supabase)
+
+    result = _collect(order_id="order-1", recipient_name=None, phone=None, address=None)
+
+    assert result.startswith("ERROR:")
+    fake_supabase.table.assert_not_called()
+
+
+def test_collect_shipping_success_when_all_three_arrive_together(patch_supabase, fake_supabase):
+    patch_supabase("connector", admin=fake_supabase)
+    _shipping_existing(fake_supabase, [_blank_order()])
     _shipping_update_result(fake_supabase, [{"id": "order-1"}])
 
     result = _collect(order_id="order-1")
@@ -381,17 +427,63 @@ def test_collect_shipping_success(patch_supabase, fake_supabase):
     fake_supabase.table.return_value.update.return_value.eq.assert_called_once_with("id", "order-1")
 
 
+def test_collect_shipping_partial_name_only_saves_it_and_asks_for_the_rest(
+    patch_supabase, fake_supabase
+):
+    patch_supabase("connector", admin=fake_supabase)
+    _shipping_existing(fake_supabase, [_blank_order()])
+    _shipping_update_result(fake_supabase, [{"id": "order-1"}])
+
+    result = _collect(order_id="order-1", recipient_name="John Tan", phone=None, address=None)
+
+    assert "Shipping information saved" not in result
+    assert "John Tan" not in result  # not echoed back mid-collection, just acknowledged
+    assert "saved" in result.lower()
+    assert "phone" in result.lower()
+    assert "address" in result.lower()
+    # Only the field given this turn is written -- no status flip, no blanking
+    # of columns the buyer hasn't given yet.
+    fake_supabase.table.return_value.update.assert_called_once_with(
+        {"recipient_name": "John Tan"}
+    )
+
+
+def test_collect_shipping_partial_field_merges_with_previously_saved_ones(
+    patch_supabase, fake_supabase
+):
+    """The buyer gave name+phone last turn; this turn is just the address --
+    the update must not re-send (or blank) what's already saved, and the
+    completed set should flip status to confirmed."""
+    patch_supabase("connector", admin=fake_supabase)
+    _shipping_existing(fake_supabase, [{
+        "recipient_name": "John Tan", "phone": "0123456789", "address": None,
+    }])
+    _shipping_update_result(fake_supabase, [{"id": "order-1"}])
+
+    result = _collect(order_id="order-1", recipient_name=None, phone=None, address="123 Main St")
+
+    assert "Shipping information saved" in result
+    assert "John Tan" in result
+    assert "0123456789" in result
+    assert "123 Main St" in result
+    fake_supabase.table.return_value.update.assert_called_once_with(
+        {"address": "123 Main St", "status": "confirmed"}
+    )
+
+
 def test_collect_shipping_order_not_found(patch_supabase, fake_supabase):
     patch_supabase("connector", admin=fake_supabase)
-    _shipping_update_result(fake_supabase, [])
+    _shipping_existing(fake_supabase, [])
 
     result = _collect(order_id="missing-order")
 
     assert result == "Order not found. Please check the order ID."
+    fake_supabase.table.return_value.update.assert_not_called()
 
 
 def test_collect_shipping_exception(patch_supabase, fake_supabase):
     patch_supabase("connector", admin=fake_supabase)
+    _shipping_existing(fake_supabase, [_blank_order()])
     fake_supabase.table.return_value.update.return_value.eq.return_value.eq.return_value.execute.side_effect = (
         Exception("db exploded")
     )
@@ -406,6 +498,10 @@ def test_collect_shipping_scoped_to_authenticated_user(patch_supabase, fake_supa
     import agent.context
     monkeypatch.setattr(agent.context, "get_user_id", lambda: "buyer-user-456")
 
+    select_first_eq = fake_supabase.table.return_value.select.return_value.eq
+    select_second_eq = select_first_eq.return_value.eq
+    select_second_eq.return_value.execute.return_value = MagicMock(data=[_blank_order()])
+
     # When chained: update().eq('id', 'order-1').eq('buyer_id', 'buyer-user-456').execute()
     first_eq = fake_supabase.table.return_value.update.return_value.eq
     second_eq = first_eq.return_value.eq
@@ -414,29 +510,35 @@ def test_collect_shipping_scoped_to_authenticated_user(patch_supabase, fake_supa
     result = _collect(order_id="order-1")
 
     assert "Shipping information saved" in result
+    select_first_eq.assert_called_once_with("id", "order-1")
+    select_second_eq.assert_called_once_with("buyer_id", "buyer-user-456")
     first_eq.assert_called_once_with("id", "order-1")
     second_eq.assert_called_once_with("buyer_id", "buyer-user-456")
 
 
 def test_collect_shipping_access_denied_for_other_user_order(patch_supabase, fake_supabase, monkeypatch):
+    """The ownership check now happens at the SELECT, before any write is
+    attempted at all."""
     patch_supabase("connector", admin=fake_supabase)
     import agent.context
     monkeypatch.setattr(agent.context, "get_user_id", lambda: "attacker-user")
 
-    first_eq = fake_supabase.table.return_value.update.return_value.eq
-    second_eq = first_eq.return_value.eq
-    second_eq.return_value.execute.return_value = MagicMock(data=[])
+    select_first_eq = fake_supabase.table.return_value.select.return_value.eq
+    select_second_eq = select_first_eq.return_value.eq
+    select_second_eq.return_value.execute.return_value = MagicMock(data=[])
 
     result = _collect(order_id="victim-order")
 
     assert result == "Order not found. Please check the order ID."
-    first_eq.assert_called_once_with("id", "victim-order")
-    second_eq.assert_called_once_with("buyer_id", "attacker-user")
+    select_first_eq.assert_called_once_with("id", "victim-order")
+    select_second_eq.assert_called_once_with("buyer_id", "attacker-user")
+    fake_supabase.table.return_value.update.assert_not_called()
 
 
 def test_collect_shipping_masks_pii_in_logs(patch_supabase, fake_supabase, caplog):
     import logging
     patch_supabase("connector", admin=fake_supabase)
+    _shipping_existing(fake_supabase, [_blank_order()])
     _shipping_update_result(fake_supabase, [{"id": "order-1"}])
     with caplog.at_level(logging.INFO):
         _collect(order_id="order-1", phone="0123456789", address="123 Jalan Ampang, KL")

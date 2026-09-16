@@ -102,3 +102,26 @@ export function resolveAvatarUrl(user: AvatarUserLike | null | undefined): strin
   const meta = user?.user_metadata
   return meta?.custom_avatar_url || meta?.avatar_url || undefined
 }
+
+export interface UserIdLike {
+  sub?: string | null
+  id?: string | null
+}
+
+/**
+ * The signed-in user's id, from whichever shape the caller happens to hold.
+ *
+ * `@nuxtjs/supabase` populates `useSupabaseUser()` from `client.auth.getClaims()`,
+ * so that ref is a JWT payload and the id lives on `sub` — `RequiredClaims` is
+ * `{iss, sub, aud, exp, iat, role, aal, session_id}` and there is no `id` on it.
+ * Reading `.id` off it yields `undefined`, and typechecks only because
+ * `JwtPayload` declares `[key: string]: any`. Every guard written as
+ * `if (!user.value?.id)` therefore failed shut: the SSE notification stream never
+ * opened and a language choice was never persisted to the account.
+ *
+ * `id` is still accepted because `supabase.auth.getSession()` hands back a real
+ * `User`, which does carry it — `profile.vue` and `orders.vue` pass one in.
+ */
+export function resolveUserId(user: UserIdLike | null | undefined): string | null {
+  return user?.sub ?? user?.id ?? null
+}

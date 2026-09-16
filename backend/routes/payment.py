@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from admin_session import verify_admin
 from auth_middleware import get_user_id_from_body_or_token, verify_user_token
 from connector import admin_supabase
-from limiter import CHECKOUT_LIMIT, limiter
+from domains.catalog.shipping import normalise_courier, resolve_tracking_url
 from logger import logger
 from payment.buyer import account_email as _buyer_account_email
 from payment.pay import create_checkout_session
@@ -16,7 +16,6 @@ router = APIRouter(prefix="/payment", tags=["Payment"])
 
 
 @router.post("/checkout")
-@limiter.limit(CHECKOUT_LIMIT)
 def checkout(
     request: Request,
     payload: CheckoutRequest,
@@ -183,6 +182,15 @@ def get_user_orders(user_id: str, token_user_id: str = Depends(verify_user_token
 
         item_data = item_response.data[0] if item_response.data else {}
 
+        # SPEC-069: the console has recorded courier + tracking since SPEC-057,
+        # but this route never projected them, so the buyer's only tracking
+        # channel was the shipment email or asking the agent in chat.
+        # `tracking_url` stored at shipment time wins; deriving it is the
+        # fallback for rows written before that column existed, and for an
+        # unrecognised carrier both the lookup and the link come back None.
+        courier = normalise_courier(order.get('courier'))
+        tracking_number = order.get('tracking_number')
+
         orders.append({
             "id": order.get('id'),
             "item_id": item_id,
@@ -192,7 +200,14 @@ def get_user_orders(user_id: str, token_user_id: str = Depends(verify_user_token
             "amount": order.get('amount'),
             "status": order.get('status'),
             "created_at": order.get('created_at'),
-            "stripe_payment_id": order.get('stripe_payment_id')
+            "stripe_payment_id": order.get('stripe_payment_id'),
+            "courier": courier,
+            "tracking_number": tracking_number,
+            "tracking_url": (
+                order.get('tracking_url')
+                or resolve_tracking_url(courier, tracking_number)
+            ),
+            "shipped_at": order.get('shipped_at')
         })
 
     return {"orders": orders}

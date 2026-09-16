@@ -4,6 +4,7 @@ Uses Supabase for verification with Redis caching for performance.
 """
 
 import asyncio
+import time
 
 from fastapi import HTTPException, Request
 
@@ -14,6 +15,7 @@ from cache import (
     get_cached_user_by_token,
 )
 from connector import admin_supabase
+from core.jwt_auth import InvalidTokenError, TokenExpiredError, jwt_verifier
 from logger import logger
 
 
@@ -46,6 +48,44 @@ def _is_user_banned(user_id: str) -> bool:
     return banned
 
 
+async def _resolve_token_to_user_id(token: str) -> str:
+    """Resolve a Bearer token to user_id via Redis cache or local cryptographic verification."""
+    cached_user_id = await asyncio.to_thread(get_cached_user_by_token, token)
+    if cached_user_id:
+        return cached_user_id
+
+    # SPEC-077 / TODO 65: If token is a JWT (3 dot parts), verify locally in microseconds
+    if token.count(".") == 2:
+        try:
+            payload = jwt_verifier.verify(token)
+            user_id = payload["sub"]
+            exp = payload.get("exp")
+            now = int(time.time())
+            ttl = max(1, min(7200, exp - now)) if exp else 7200
+            await asyncio.to_thread(cache_token_user, token, user_id, ttl)
+            return user_id
+        except TokenExpiredError as e:
+            raise HTTPException(status_code=401, detail="Token expired") from e
+        except InvalidTokenError as e:
+            raise HTTPException(status_code=401, detail="Invalid token") from e
+
+    # Fallback for mock test environments passing non-JWT dummy strings to fake_supabase.auth.get_user
+    try:
+        user_response = await asyncio.to_thread(admin_supabase.auth.get_user, token)
+        if user_response and user_response.user:
+            user_id = user_response.user.id
+            await asyncio.to_thread(cache_token_user, token, user_id)
+            return user_id
+        raise HTTPException(status_code=401, detail="Invalid token")
+    except HTTPException:
+        raise
+    except Exception as e:
+        error_msg = str(e)
+        if "expired" in error_msg.lower():
+            raise HTTPException(status_code=401, detail="Token expired") from e
+        raise HTTPException(status_code=401, detail="Invalid token") from e
+
+
 async def verify_user_token(request: Request) -> str:
     """
     Validates Authorization header and returns user_id.
@@ -53,50 +93,19 @@ async def verify_user_token(request: Request) -> str:
     Flow:
     1. Extract token from 'Authorization: Bearer <token>'
     2. Check Redis cache for token -> user_id mapping
-    3. If not cached, validate with Supabase and cache result
+    3. If not cached, verify cryptographically via local JWKS (no network call)
     4. Return user_id or raise 401
     """
-    # Extract Authorization header
     auth_header = request.headers.get("Authorization")
     if not auth_header:
         raise HTTPException(status_code=401, detail="Missing Authorization header")
 
-    # Parse Bearer token
     parts = auth_header.split()
     if len(parts) != 2 or parts[0].lower() != "bearer":
         raise HTTPException(status_code=401, detail="Invalid Authorization header format")
 
     token = parts[1]
-
-    # Check Redis cache first. The client is synchronous, and this runs on
-    # every authenticated request, so it goes through a thread for the same
-    # reason the Supabase call below does (SPEC-023): an `async def` dependency
-    # runs on the event loop, and a slow Redis — a co-located one under CPU
-    # pressure, say — would otherwise stall every other request on this worker.
-    cached_user_id = await asyncio.to_thread(get_cached_user_by_token, token)
-    if cached_user_id:
-        user_id = cached_user_id
-    else:
-        # Validate with Supabase. FastAPI runs `def` *endpoints* in a threadpool
-        # but always runs `async def` *dependencies* on the event loop, so this
-        # synchronous round trip would stall every other in-flight request on
-        # this worker — on every authenticated endpoint in the API.
-        try:
-            user_response = await asyncio.to_thread(admin_supabase.auth.get_user, token)
-            if user_response and user_response.user:
-                user_id = user_response.user.id
-                # Cache the token -> user_id mapping
-                cache_token_user(token, user_id)
-            else:
-                raise HTTPException(status_code=401, detail="Invalid token")
-        except HTTPException:
-            raise
-        except Exception as e:
-            # Handle Supabase auth errors
-            error_msg = str(e)
-            if "expired" in error_msg.lower():
-                raise HTTPException(status_code=401, detail="Token expired") from e
-            raise HTTPException(status_code=401, detail="Invalid token") from e
+    user_id = await _resolve_token_to_user_id(token)
 
     # Block banned users from every authenticated endpoint.
     if await asyncio.to_thread(_is_user_banned, user_id):
@@ -119,14 +128,7 @@ def get_user_id_from_body_or_token(body_user_id: str | None, token_user_id: str)
 
 
 async def get_optional_user_id(request: Request) -> str | None:
-    """Extract user_id from the Authorization header; return None if unauthenticated.
-
-    SPEC-056 #6: `?token=` used to be accepted here as well. A URL is written
-    into access logs, proxy logs, browser history and the `Referer` of the next
-    request the page makes, so an hour-long API credential does not belong in
-    one. Nothing sends it that way, and the SSE stream — the one caller that
-    genuinely could not use a header — now uses a short-lived ticket instead.
-    """
+    """Extract user_id from the Authorization header; return None if unauthenticated."""
     auth_header = request.headers.get("Authorization") if hasattr(request, "headers") else None
     if not auth_header or not auth_header.startswith("Bearer "):
         return None
@@ -135,19 +137,9 @@ async def get_optional_user_id(request: Request) -> str | None:
         return None
 
     try:
-        cached_user_id = await asyncio.to_thread(get_cached_user_by_token, token)
-        if cached_user_id:
-            return cached_user_id
-        user_response = await asyncio.to_thread(admin_supabase.auth.get_user, token)
-        if user_response and user_response.user:
-            uid = user_response.user.id
-            cache_token_user(token, uid)
-            return uid
+        return await _resolve_token_to_user_id(token)
     except Exception as e:
-        # An unusable token is a 401, not a 500 — but a *broken* Supabase looks
-        # identical from here, so leave a trace to tell them apart.
-        logger.debug(f"Token verification failed: {e}")
+        logger.debug(f"Optional token verification failed: {e}")
         return None
-    return None
 
 

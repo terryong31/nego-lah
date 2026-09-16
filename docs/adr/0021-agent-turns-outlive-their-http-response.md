@@ -87,6 +87,6 @@ task on `GeneratorExit`. The cancellation frequently arrives *while* the
 generator is being awaited, so by the time the cleanup runs, the agent has
 already been torn down — there is nothing left to hand off.
 
-See `specs/SPEC-060-detached-chat-turn.md`, and
-`specs/SPEC-061-buyer-unread-watermark.md` for the buyer-side badge that makes
+See `docs/specs/SPEC-060-detached-chat-turn.md`, and
+`docs/specs/SPEC-061-buyer-unread-watermark.md` for the buyer-side badge that makes
 the delivered reply visible on their next visit.

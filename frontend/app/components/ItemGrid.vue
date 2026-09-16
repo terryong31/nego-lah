@@ -16,7 +16,7 @@ defineProps<{
 </script>
 
 <template>
-  <div>
+  <div data-tour="items-grid">
     <!-- Loading State -->
     <div
       v-if="loading"

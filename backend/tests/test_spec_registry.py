@@ -11,7 +11,7 @@ does.
 import pathlib
 import re
 
-SPECS_DIR = pathlib.Path(__file__).resolve().parents[2] / "specs"
+SPECS_DIR = pathlib.Path(__file__).resolve().parents[2] / "docs" / "specs"
 
 SPEC_FILES = sorted(
     p for p in SPECS_DIR.glob("SPEC-*.md")

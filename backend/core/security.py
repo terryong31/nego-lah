@@ -54,10 +54,11 @@ async def verify_turnstile(
     }
 
     # Include remote IP if request context is provided
-    if request and hasattr(request, "client") and request.client and request.client.host:
-        client_ip = request.headers.get("X-Forwarded-For", request.client.host).split(",")[0].strip()
-        if client_ip:
-            data["remoteip"] = client_ip
+    if request:
+        from core.ip import get_client_ip
+        ip = get_client_ip(request)
+        if ip and ip != "unknown":
+            data["remoteip"] = ip
 
     try:
         async with httpx.AsyncClient(timeout=4.0) as client:

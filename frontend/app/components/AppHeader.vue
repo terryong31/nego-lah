@@ -8,6 +8,7 @@ const route = useRoute()
 const toast = useToast()
 const { t } = useI18n()
 const { hasUnread, clearUnread } = useNotifications()
+const tour = useOnboardingTour()
 
 // Hide the header Login button while on the auth pages
 const isAuthPage = computed(() =>
@@ -42,6 +43,13 @@ const dropdownItems = computed(() => {
         label: t('header.profileSettings'),
         icon: 'i-lucide-settings',
         onSelect: () => router.push('/profile')
+      },
+      {
+        label: t('tour.replay'),
+        icon: 'i-lucide-compass',
+        onSelect: () => {
+          void tour.start()
+        }
       }
     ],
     [
@@ -89,24 +97,36 @@ const dropdownItems = computed(() => {
               :ui="{ item: 'items-center' }"
             >
               <UChip
+                data-tour="header-user"
                 :show="hasUnread"
                 color="primary"
                 inset
               >
                 <div class="flex items-center gap-1.5 cursor-pointer">
-                  <UUser
-                    :name="`Hello, ${user.user_metadata?.display_name || user.email || 'there'}`"
-                    :avatar="{
-                      src: resolveAvatarUrl(user),
-                      alt: user.email || '',
-                      loading: 'lazy'
-                    }"
-                    :ui="{ avatar: 'group-hover/user:scale-100 group-has-focus-visible/user:scale-100' }"
+                  <!-- Mobile viewport: show UAvatar only -->
+                  <UAvatar
+                    class="sm:hidden"
+                    :src="resolveAvatarUrl(user)"
+                    :alt="user.email || ''"
+                    loading="lazy"
                   />
-                  <UIcon
-                    name="i-lucide-chevron-down"
-                    class="size-4 text-muted shrink-0"
-                  />
+
+                  <!-- Desktop viewport: show greeting + avatar + chevron -->
+                  <div class="hidden sm:flex items-center gap-1.5">
+                    <UUser
+                      :name="`Hello, ${user.user_metadata?.display_name || user.email || 'there'}`"
+                      :avatar="{
+                        src: resolveAvatarUrl(user),
+                        alt: user.email || '',
+                        loading: 'lazy'
+                      }"
+                      :ui="{ avatar: 'group-hover/user:scale-100 group-has-focus-visible/user:scale-100' }"
+                    />
+                    <UIcon
+                      name="i-lucide-chevron-down"
+                      class="size-4 text-muted shrink-0"
+                    />
+                  </div>
                 </div>
               </UChip>
 

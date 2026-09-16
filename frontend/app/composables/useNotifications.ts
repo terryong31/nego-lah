@@ -1,3 +1,4 @@
+import { resolveUserId } from '~/utils/auth'
 // --- Session-wide stream state -------------------------------------------
 // The notification stream belongs to the browser session, not to whichever
 // component happens to be mounted. `AppHeader` re-mounts on every layout change
@@ -13,8 +14,35 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 let connecting: Promise<void> | null = null
 let authListenerBound = false
 let visibilityListenerBound = false
+let livenessTimer: ReturnType<typeof setInterval> | null = null
 let routeWatchScope: ReturnType<typeof effectScope> | null = null
 let stamping: Promise<void> | null = null
+
+// --- Reconnect backoff ----------------------------------------------------
+// Every failure path in `openStream` used to end in a bare `return`, so one
+// transient failure was permanent: the dev API restarting under `--reload`, a
+// 502, a token that expired between the session read and the call. The stream
+// dropped, the retry landed while the server was still booting, the mint failed
+// — and that buyer had no notifications for the rest of the page's life. No
+// toast, no chip, nothing until a reload, while `GET /chat/unread` went on
+// answering correctly for anyone who refreshed, which is exactly what makes it
+// look like a badge bug rather than a dead socket.
+//
+// The first retry is quick because most of these are a server coming back up;
+// the ceiling is there so a genuinely unreachable API is not hammered.
+const EVENT_SOURCE_CLOSED = 2
+const RECONNECT_MIN_MS = 1000
+
+// How often to check that the stream we think we have is a stream we still
+// have. Every reconnect above is driven by an event — `onerror`, a rejected
+// fetch — and none of them can fire for a connection that goes away quietly:
+// a frozen tab, a socket closed underneath us, an error the browser swallowed.
+// The server saw those subscriptions end. The client never heard. So something
+// has to actually look, and this is the only path that does not depend on being
+// told.
+const LIVENESS_CHECK_MS = 15000
+const RECONNECT_MAX_MS = 30000
+let reconnectDelay = RECONNECT_MIN_MS
 
 // --- Route matching ------------------------------------------------------
 // Cloudflare Pages serves this SPA from the directory form of a route, so a
@@ -28,6 +56,28 @@ function isChatPath(path: string | undefined): boolean {
     return false
   }
   return path.split('?')[0]!.split('#')[0]!.replace(/\/+$/, '') === '/chat'
+}
+
+// Vite replaces this module on every edit, and the replacement starts with
+// `eventSource = null` — so the stream the previous copy opened is orphaned:
+// still connected, still holding one of the browser's six HTTP/1.1 sockets to
+// the API, with nothing left that can close it. A handful of edits and new
+// streams queue behind the dead ones until their 30-second tickets expire in
+// the queue, which arrives as a 401 and reads exactly like a broken badge.
+// Only dev pays this cost, and only dev can fix it.
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    eventSource?.close()
+    eventSource = null
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer)
+      reconnectTimer = null
+    }
+    if (livenessTimer) {
+      clearInterval(livenessTimer)
+      livenessTimer = null
+    }
+  })
 }
 
 export function useNotifications() {
@@ -163,8 +213,17 @@ export function useNotifications() {
     }
     // Already streaming, or a connect is mid-flight: nothing to do. Without
     // this guard every caller (each mount, each auth event) opened a duplicate.
+    //
+    // A CLOSED handle is not a connection, though. `onerror` normally clears it,
+    // but a tab the OS froze and thawed can come back holding a dead
+    // `EventSource` with no error event ever fired — and then this guard would
+    // refuse every reconnect for the rest of the session on the strength of an
+    // object that will never deliver anything again.
     if (eventSource) {
-      return
+      if (eventSource.readyState !== EVENT_SOURCE_CLOSED) {
+        return
+      }
+      disconnect()
     }
     if (connecting) {
       return connecting
@@ -176,9 +235,36 @@ export function useNotifications() {
     return connecting
   }
 
+  /**
+   * Try again later, unless there is nothing to try for.
+   *
+   * Never gives up while the buyer is signed in: the alternative is a session
+   * that silently stops being told anything.
+   */
+  function scheduleReconnect() {
+    if (reconnectTimer || eventSource || !resolveUserId(user.value)) {
+      return
+    }
+    const delay = reconnectDelay
+    reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX_MS)
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null
+      // Re-checked, not assumed: the buyer can sign out between scheduling this
+      // and it firing, and a stream opened for someone who left is worse than
+      // no stream at all.
+      if (!resolveUserId(user.value)) {
+        return
+      }
+      void connect()
+    }, delay)
+  }
+
   async function openStream() {
     const token = await accessToken()
     if (!token) {
+      // Signed in but no session in hand yet — the auth listener will call back,
+      // and this covers the case where it doesn't.
+      scheduleReconnect()
       return
     }
 
@@ -197,6 +283,7 @@ export function useNotifications() {
       ticket = minted.ticket
     } catch (err) {
       console.error('Could not mint a notification stream ticket:', err)
+      scheduleReconnect()
       return
     }
 
@@ -249,12 +336,18 @@ export function useNotifications() {
         }
       })
 
+      // A stream that actually opened is proof the API is reachable, so the
+      // next failure starts its backoff from scratch.
+      eventSource.addEventListener('open', () => {
+        reconnectDelay = RECONNECT_MIN_MS
+      })
+
       eventSource.onerror = () => {
+        // `EventSource` retries the URL by itself, and the ticket in it is
+        // single-use — so its own attempt is guaranteed a 401. Close it and
+        // come back with a fresh ticket instead.
         disconnect()
-        // Retry connection after 5 seconds if user is still logged in
-        if (user.value?.id) {
-          reconnectTimer = setTimeout(connect, 5000)
-        }
+        scheduleReconnect()
       }
 
       // Catch up on whatever arrived while this session had no stream at all.
@@ -263,6 +356,7 @@ export function useNotifications() {
       void hydrate()
     } catch (err) {
       console.error('Failed to establish notification stream:', err)
+      scheduleReconnect()
     }
   }
 
@@ -298,19 +392,32 @@ export function useNotifications() {
     })
   }
 
-  // Re-connect when user auth state changes
+  // Connect when there is someone to connect for. Deliberately one-way: tearing
+  // the stream down is the sign-out listener's job below, and it is the only
+  // thing that can tell an actual sign-out from this ref reading null for a
+  // moment.
   watch(
-    () => user.value?.id,
+    () => resolveUserId(user.value),
     (uid) => {
       if (uid) {
         connect()
-      } else {
-        disconnect()
-        clearUnread({ stamp: false })
       }
     },
     { immediate: true }
   )
+
+  // The one path that is not waiting to be told something. Anything else here
+  // reacts to an event; a stream can end without producing one.
+  if (import.meta.client && !livenessTimer) {
+    livenessTimer = setInterval(() => {
+      if (!resolveUserId(user.value)) {
+        return
+      }
+      if (!eventSource || eventSource.readyState === EVENT_SOURCE_CLOSED) {
+        void connect()
+      }
+    }, LIVENESS_CHECK_MS)
+  }
 
   // A tab the buyer left and came back to has missed everything that happened
   // while it was hidden — including its own stream dropping. Re-ask.
@@ -336,12 +443,25 @@ export function useNotifications() {
   if (import.meta.client && !authListenerBound) {
     authListenerBound = true
     try {
-      supabase.auth.onAuthStateChange((_event, session) => {
-        if (session?.user) {
-          connect()
-        } else {
+      supabase.auth.onAuthStateChange((event, session) => {
+        // Only an actual sign-out takes the stream down.
+        //
+        // Supabase emits plenty of events carrying no session — a refresh in
+        // flight, a re-read on navigation — and this used to read every one of
+        // them as "the buyer is gone" and close a perfectly healthy stream.
+        // Measured on the live stack, that landed about four seconds before
+        // each send, because navigating INTO the conversation is what provoked
+        // the event: the agent's reply two seconds later then had nowhere to
+        // go, no error was raised, and nothing on the client had any reason to
+        // reconnect. Which is exactly the shape of "no toast, no chip, and a
+        // reload fixes it".
+        if (event === 'SIGNED_OUT') {
           disconnect()
           clearUnread({ stamp: false })
+          return
+        }
+        if (session?.user) {
+          connect()
         }
       })
     } catch {

@@ -53,6 +53,15 @@ class NotificationBroker:
 
     def __init__(self):
         self._subscribers: dict[str, set[asyncio.Queue]] = defaultdict(set)
+        # The local queue set and the Redis channel it stands for have to move
+        # together. Both mutators await in the middle of doing so, and a reload
+        # overlaps them by design — the new page's stream subscribes while the
+        # old page's is still tearing down. Interleaved, an unsubscribe that
+        # started first could take the channel away from a stream that had
+        # already replaced it, leaving a live SSE connection attached to a
+        # channel nobody publishes to any more: no error, no disconnect, nothing
+        # for the client to react to, and no notification ever again.
+        self._membership = asyncio.Lock()
         self._redis = None
         self._pubsub = None
         self._listener: asyncio.Task | None = None
@@ -146,14 +155,15 @@ class NotificationBroker:
     async def subscribe(self, user_id: str) -> asyncio.Queue:
         """Register a new subscriber queue for a user."""
         queue: asyncio.Queue = asyncio.Queue(maxsize=MAX_QUEUED_EVENTS)
-        first_for_user = not self._subscribers[user_id]
-        self._subscribers[user_id].add(queue)
+        async with self._membership:
+            first_for_user = not self._subscribers[user_id]
+            self._subscribers[user_id].add(queue)
 
-        if first_for_user and self.distributed:
-            try:
-                await self._pubsub.subscribe(channel_for(user_id))
-            except Exception as e:
-                logger.warning(f"⚠️ Could not subscribe to {channel_for(user_id)}: {e}")
+            if first_for_user and self.distributed:
+                try:
+                    await self._pubsub.subscribe(channel_for(user_id))
+                except Exception as e:
+                    logger.warning(f"⚠️ Could not subscribe to {channel_for(user_id)}: {e}")
 
         logger.info(
             f"🔔 User {user_id} subscribed to notification stream "
@@ -163,14 +173,15 @@ class NotificationBroker:
 
     async def unsubscribe(self, user_id: str, queue: asyncio.Queue):
         """Remove a subscriber queue when its client disconnects."""
-        queues = self._subscribers.get(user_id)
-        if queues is not None:
-            queues.discard(queue)
-            if not queues:
-                del self._subscribers[user_id]
-                if self.distributed:
-                    with contextlib.suppress(Exception):
-                        await self._pubsub.unsubscribe(channel_for(user_id))
+        async with self._membership:
+            queues = self._subscribers.get(user_id)
+            if queues is not None:
+                queues.discard(queue)
+                if not queues:
+                    del self._subscribers[user_id]
+                    if self.distributed:
+                        with contextlib.suppress(Exception):
+                            await self._pubsub.unsubscribe(channel_for(user_id))
         logger.info(f"🔕 User {user_id} unsubscribed from notification stream")
 
     def has_subscribers(self, user_id: str) -> bool:

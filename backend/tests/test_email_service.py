@@ -387,3 +387,118 @@ def test_shipment_template_renders_without_a_courier_or_tracking_number():
     })
     assert "Casio VX-4" in html
     assert "Open chat" in html
+
+
+# ---------------------------------------------------------------------------
+# SPEC-074 — local dev mail routes to Mailpit over SMTP; prod Resend untouched
+# ---------------------------------------------------------------------------
+
+SMTP_ORDER = {
+    "id": "order-123",
+    "item_name": "Mechanical Keyboard",
+    "amount": 150.0,
+}
+
+
+def _smtp_sink(mock_smtp_cls):
+    """The message the patched smtplib.SMTP captured via send_message."""
+    return mock_smtp_cls.return_value.__enter__.return_value.send_message.call_args[0][0]
+
+
+def test_smtp_host_routes_mail_over_smtp_and_never_touches_resend(monkeypatch):
+    monkeypatch.setattr(email_service, "SMTP_HOST", "localhost")
+    monkeypatch.setattr(email_service, "SMTP_PORT", 1025)
+    with patch("httpx.Client") as mock_client_cls, patch("smtplib.SMTP") as mock_smtp_cls:
+        mock_client_cls.side_effect = AssertionError("SMTP_HOST is set but the Resend path was taken")
+
+        assert email_service.send_purchase_receipt("buyer@example.com", SMTP_ORDER) is True
+
+        mock_smtp_cls.assert_called_once_with("localhost", 1025, timeout=10.0)
+        sent = _smtp_sink(mock_smtp_cls)
+        assert sent["To"] == "buyer@example.com"
+        assert "Payment confirmed — Mechanical Keyboard" in sent["Subject"]
+        assert "RM150.00" in sent.get_content()
+
+
+def test_smtp_from_header_follows_the_fallback_chain(monkeypatch):
+    monkeypatch.setattr(email_service, "SMTP_HOST", "localhost")
+    monkeypatch.setattr(email_service, "SMTP_PORT", 1025)
+
+    monkeypatch.setattr(email_service, "SMTP_FROM", "Nego-Lah Dev <dev@negolah.my>")
+    with patch("smtplib.SMTP") as mock_smtp_cls:
+        email_service.send_purchase_receipt("buyer@example.com", SMTP_ORDER)
+        assert _smtp_sink(mock_smtp_cls)["From"] == "Nego-Lah Dev <dev@negolah.my>"
+
+    monkeypatch.setattr(email_service, "SMTP_FROM", None)
+    monkeypatch.setattr(email_service, "RESEND_FORWARD_FROM", None)
+    with patch("smtplib.SMTP") as mock_smtp_cls:
+        email_service.send_purchase_receipt("buyer@example.com", SMTP_ORDER)
+        assert _smtp_sink(mock_smtp_cls)["From"] == "Nego-Lah <noreply@negolah.my>"
+
+
+def test_smtp_failure_is_swallowed_not_raised(monkeypatch):
+    monkeypatch.setattr(email_service, "SMTP_HOST", "localhost")
+    monkeypatch.setattr(email_service, "SMTP_PORT", 1025)
+    with patch("smtplib.SMTP") as mock_smtp_cls:
+        server = mock_smtp_cls.return_value.__enter__.return_value
+        server.send_message.side_effect = ConnectionRefusedError("Mailpit is down")
+
+        assert email_service.send_purchase_receipt("buyer@example.com", SMTP_ORDER) is False
+
+
+def test_no_smtp_host_keeps_the_resend_path(monkeypatch):
+    """Production never sets SMTP_HOST — its sends must keep going to Resend."""
+    monkeypatch.setattr(email_service, "SMTP_HOST", None)
+    with patch("httpx.Client") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_client.post.return_value = mock_response
+        mock_client_cls.return_value.__enter__.return_value = mock_client
+
+        assert email_service.send_purchase_receipt("buyer@example.com", SMTP_ORDER) is True
+        assert mock_client.post.called
+
+
+# ---------------------------------------------------------------------------
+# SPEC-074 Phase 2 — dev Resend is retired; Resend keeps one verified sender
+# ---------------------------------------------------------------------------
+
+def test_resend_sends_from_the_verified_domain_sender_only(monkeypatch):
+    monkeypatch.setattr(email_service, "RESEND_FORWARD_FROM", "Nego-Lah <receipts@negolah.my>")
+    with patch("httpx.Client") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_client.post.return_value = mock_response
+        mock_client_cls.return_value.__enter__.return_value = mock_client
+
+        assert email_service.send_purchase_receipt("buyer@example.com", SMTP_ORDER) is True
+        payload = mock_client.post.call_args.kwargs.get("json")
+        assert payload["from"] == "Nego-Lah <receipts@negolah.my>"
+
+
+def test_resend_without_a_sender_fails_closed(monkeypatch):
+    """No verified sender configured → refuse to send. The old behaviour of
+    retrying through the onboarding@resend.dev sandbox address is gone."""
+    monkeypatch.setattr(email_service, "RESEND_FORWARD_FROM", None)
+    with patch("httpx.Client") as mock_client_cls:
+        mock_client_cls.side_effect = AssertionError("must not attempt any send without a sender")
+        assert email_service.send_purchase_receipt("buyer@example.com", SMTP_ORDER) is False
+
+
+def test_admin_alerts_go_to_admin_notify_email(monkeypatch):
+    """The admin inbox is an ops concern, not a Resend one (SPEC-074 Phase 2)."""
+    monkeypatch.setattr(email_service, "ADMIN_NOTIFY_EMAIL", "ops@example.com")
+    with patch("httpx.Client") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_client.post.return_value = mock_response
+        mock_client_cls.return_value.__enter__.return_value = mock_client
+
+        email_service.send_seller_sale_alert(None, {**SMTP_ORDER, "buyer_email": "buyer@example.com"})
+        assert mock_client.post.call_args.kwargs["json"]["to"] == ["ops@example.com"]
+
+        email_service.send_human_transfer_alert(user_id="u1", reason="wants a human")
+        assert mock_client.post.call_args.kwargs["json"]["to"] == ["ops@example.com"]

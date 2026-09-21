@@ -7,7 +7,6 @@ on:
       - 'README.md'
       - 'docs/**'
       - 'specs/**'
-      - 'supabase/**'
       - '.claude/**'
       - '.gitignore'
       - 'TODO.md'
@@ -17,7 +16,6 @@ on:
       - 'README.md'
       - 'docs/**'
       - 'specs/**'
-      - 'supabase/**'
       - '.claude/**'
       - '.gitignore'
       - 'TODO.md'
@@ -36,6 +34,7 @@ jobs:
     outputs:
       frontend: ${{ steps.filter.outputs.frontend }}
       backend: ${{ steps.filter.outputs.backend }}
+      migrations: ${{ steps.filter.outputs.migrations }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -51,6 +50,8 @@ jobs:
               - 'docker-compose.yml'
               - 'Caddyfile'
               - '.github/workflows/deploy.yml'
+            migrations:
+              - 'supabase/migrations/**'
 
   backend-ci:
     name: Backend CI (ruff, pytest & pip-audit)
@@ -92,6 +93,88 @@ jobs:
         run: |
           cd backend
           uv run pip-audit
+
+  migrations-check:
+    name: Validate Supabase migrations
+    needs: [changes]
+    if: needs.changes.outputs.migrations == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # Full history: the append-only rule is a diff against the merge base.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # Deliberately stdlib-only and credential-free. This job runs on pull
+      # requests, including from forks, so it must never be able to reach the
+      # production database — it reads filenames and a diff, nothing else.
+      - name: Validate names, versions and append-only history
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          cd backend
+          if git -C .. cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+            git -C .. diff --name-status "${BASE_SHA}...HEAD" -- supabase/migrations \
+              | python scripts/validate_migrations.py --diff-from-stdin
+          else
+            echo "No resolvable base commit (${BASE_SHA}) — validating the directory only."
+            python scripts/validate_migrations.py
+          fi
+
+  migrate:
+    name: Apply Supabase migrations (production)
+    needs: [changes, migrations-check]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.migrations == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Declared so a required-reviewer rule can be added in repo settings without
+    # editing this workflow. With no rules configured it changes nothing.
+    environment: production
+    # Global, not per-ref: two runs must never apply migrations to one database
+    # at the same time, and cancelling one mid-transaction is worse than queueing.
+    concurrency:
+      group: supabase-migrate-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+          enable-cache: true
+          cache-dependency-glob: "backend/uv.lock"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          cd backend
+          uv sync --frozen
+
+      - name: Install Infisical CLI
+        run: |
+          curl -1sLf 'https://artifacts-cli.infisical.com/setup.deb.sh' | sudo -E bash
+          sudo apt-get update && sudo apt-get install -y infisical
+
+      # Idempotent: every applied version is recorded in
+      # `supabase_migrations.schema_migrations` and skipped on the next run, so a
+      # re-run of this job is a no-op rather than a second application.
+      - name: Apply pending migrations
+        env:
+          INFISICAL_TOKEN: ${{ secrets.INFISICAL_TOKEN }}
+        run: |
+          cd backend
+          infisical run --env=prod --path=/Backend -- uv run python scripts/run_migrations.py
 
   frontend-lint:
     name: Frontend Lint & Typecheck
@@ -249,8 +332,18 @@ jobs:
 
   deploy-backend:
     name: Deploy backend to Lightsail
-    needs: [changes, build-backend]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.backend == 'true'
+    needs: [changes, build-backend, migrate]
+    # `always()` because most pushes change no schema, which SKIPS `migrate` —
+    # and a skipped dependency would otherwise skip this job too. It also
+    # defeats the implicit "all needs succeeded" check, so `build-backend` has
+    # to be asserted by hand. A migration that FAILED blocks the deploy: the
+    # running code is the version that matches the old schema.
+    if: >-
+      always() &&
+      github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+      needs.changes.outputs.backend == 'true' &&
+      needs.build-backend.result == 'success' &&
+      needs.migrate.result != 'failure' && needs.migrate.result != 'cancelled'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

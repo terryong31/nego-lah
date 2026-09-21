@@ -105,10 +105,34 @@ description = "Apply Supabase migrations to staging database"
 dir = "backend"
 run = "infisical run --env=dev --path=/Backend -- uv run python scripts/run_migrations.py"
 
+# SPEC-096: production migrations are applied by the `migrate` job in
+# .github/workflows/deploy.yml when a change to supabase/migrations/ merges to
+# main — BEFORE the backend that depends on the new schema is deployed. This
+# task is the break-glass path for when the pipeline cannot run; using it
+# routinely puts the schema ahead of what any reviewer has seen.
 [tasks."db:migrate:prod"]
-description = "Apply Supabase migrations to production database"
+description = "BREAK-GLASS: apply Supabase migrations to production by hand (CI normally does this)"
 dir = "backend"
 run = "infisical run --env=prod --path=/Backend -- uv run python scripts/run_migrations.py"
+
+# SPEC-098. Read-only: reports whether any account's chat history exists ONLY in
+# the retired `conversations` table. Run this against staging AND production and
+# read the output BEFORE merging the retirement migration. Exits 1 if anything
+# needs a human.
+[tasks."db:verify:conversations"]
+description = "SPEC-098: read-only check that public.conversations is safe to retire (staging)"
+dir = "backend"
+run = "infisical run --env=dev --path=/Backend -- uv run python scripts/verify_conversations_retirement.py"
+
+[tasks."db:verify:conversations:prod"]
+description = "SPEC-098: read-only check that public.conversations is safe to retire (production)"
+dir = "backend"
+run = "infisical run --env=prod --path=/Backend -- uv run python scripts/verify_conversations_retirement.py"
+
+[tasks."db:validate"]
+description = "SPEC-096: check migration filenames and version uniqueness (what CI runs on a PR)"
+dir = "backend"
+run = "uv run python scripts/validate_migrations.py"
 
 # SPEC-074 Phase 2: the dev variant of this task was retired — dev no longer
 # carries RESEND_API_KEY (mail goes to Mailpit), so there is nothing for the

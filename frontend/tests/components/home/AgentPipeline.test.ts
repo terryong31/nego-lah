@@ -98,13 +98,47 @@ describe('components/home/AgentPipeline.vue', () => {
     expect(shown[0]!.attributes('poster')).toContain('delivery.jpg')
   })
 
-  it('fetches nothing for a step that has not been reached', async () => {
+  it('warms the current step and the next one, never all three', async () => {
+    // SPEC-099. The fetch used to start when a step became ACTIVE, which is the
+    // same instant `play()` was called — so the visitor watched the request
+    // happen. Step 0 is now warmed a viewport early and step 1 alongside it, so
+    // stepping forward does not stall the way the first frame did. Step 2 stays
+    // untouched: warming everything up front is the SPEC-045 egress bug again.
     const wrapper = await mountSuspended(AgentPipeline)
 
-    // Only the first step has a <source>; the other two are inert elements.
-    const sources = wrapper.findAll('video source')
-    expect(sources).toHaveLength(1)
-    expect(sources[0]!.attributes('src')).toContain('/videos/how-it-works/listing.mp4')
+    const srcs = wrapper.findAll('video source').map(s => s.attributes('src'))
+    expect(srcs).toHaveLength(2)
+    expect(srcs.some(s => s?.includes('listing.mp4'))).toBe(true)
+    expect(srcs.some(s => s?.includes('haggle.mp4'))).toBe(true)
+    expect(srcs.some(s => s?.includes('delivery.mp4'))).toBe(false)
+  })
+
+  it('tells the browser to actually buffer a warmed step', async () => {
+    // A <source> with preload="none" is the stall with extra steps: the browser
+    // is entitled to fetch nothing until play() is called.
+    const wrapper = await mountSuspended(AgentPipeline)
+
+    const videos = wrapper.findAll('video')
+    expect(videos[0]!.attributes('preload')).toBe('auto')
+    expect(videos[1]!.attributes('preload')).toBe('auto')
+  })
+
+  it('leaves an unwarmed step inert — no source, no preload', async () => {
+    const wrapper = await mountSuspended(AgentPipeline)
+
+    const third = wrapper.findAll('video')[2]!
+    expect(third.attributes('preload')).toBe('none')
+    expect(third.find('source').exists()).toBe(false)
+  })
+
+  it('warms the last step only once the one before it is reached', async () => {
+    const wrapper = await mountSuspended(AgentPipeline)
+
+    wrapper.findComponent({ name: 'UStepper' }).vm.$emit('update:modelValue', 1)
+    await flushPromises()
+
+    const srcs = wrapper.findAll('video source').map(s => s.attributes('src'))
+    expect(srcs.some(s => s?.includes('delivery.mp4'))).toBe(true)
   })
 
   it('keeps a video attached once its step has been visited', async () => {

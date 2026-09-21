@@ -99,11 +99,39 @@ function onStepperSelect(value: string | number | undefined) {
 }
 
 /**
- * Which steps have been reached, and so are allowed to touch the network. A
+ * Which steps are allowed to touch the network, and so carry a `<source>`. A
  * step never leaves this set: scrolling back up should not re-download what
  * the browser has already decoded.
+ *
+ * SPEC-099: this used to be filled only when a step became ACTIVE, which is the
+ * same instant `syncPlayback` called `play()` on it — so the visitor sat through
+ * the DNS lookup, the request and the first decode before seeing a frame. The
+ * streaming was never the problem (the CDN answers range requests and the MP4
+ * is FastStart); the fetch simply started too late.
+ *
+ * Warming now runs a viewport ahead of playback, and reaches one step further
+ * than the one on screen so stepping forward does not stall the same way.
+ * Still strictly viewport-gated: a visitor who never scrolls near the section
+ * downloads nothing, which is the SPEC-045 egress guarantee.
  */
-const reached = ref(new Set<string>())
+const warm = ref(new Set<string>())
+
+/**
+ * Allow these steps to fetch. `lookahead` is the difference between merely
+ * approaching the section and actually being in it: approaching warms one clip,
+ * arriving warms the next one too so stepping forward is instant. Warming both
+ * on approach would put two videos on every homepage visit, which is the
+ * SPEC-045 bandwidth complaint in smaller numbers.
+ */
+function warmFrom(index: number, lookahead = 0) {
+  const next = new Set(warm.value)
+  for (const stage of STAGES.slice(Math.max(0, index), index + 1 + lookahead)) next.add(stage.id)
+  if (next.size !== warm.value.size) warm.value = next
+}
+
+/** `auto` is the point: a `<source>` under `preload="none"` may fetch nothing
+ *  until `play()`, which is the stall again with extra steps. */
+const preloadFor = (id: string) => (warm.value.has(id) ? 'auto' : 'none')
 /**
  * Steps with decodable video. Everything else — not reached, still loading,
  * 404 because the recording is not in the bucket yet — shows the placeholder.
@@ -115,7 +143,8 @@ const armed = ref(false)
 
 watch([activeStep, armed], () => {
   if (!armed.value) return
-  reached.value = new Set(reached.value).add(active.value.id)
+  // In the section: warm what is on screen and what comes next.
+  warmFrom(activeStep.value, 1)
 }, { immediate: true })
 
 const videoRefs = ref<Record<string, HTMLVideoElement | null>>({})
@@ -198,6 +227,7 @@ function onScroll() {
 }
 
 let observer: IntersectionObserver | null = null
+let warmObserver: IntersectionObserver | null = null
 let wideQuery: MediaQueryList | null = null
 
 function onWideChange(event: MediaQueryListEvent | MediaQueryList) {
@@ -214,8 +244,23 @@ onMounted(() => {
   window.addEventListener('resize', onScroll, { passive: true })
   measure()
 
-  // Nothing is fetched until the section is nearly on screen.
+  // Two observers, because "start fetching" and "start playing" are different
+  // questions (SPEC-099). They used to be the same one at 200px, so the video
+  // was handed its URL at the moment it was asked to play.
   if ('IntersectionObserver' in window && track.value) {
+    // Fetch: a full viewport of runway. 200px is a few hundred milliseconds of
+    // scrolling — not enough to open a connection and decode a first frame.
+    warmObserver = new IntersectionObserver((entries) => {
+      if (!entries[0]?.isIntersecting) return
+      // Approaching: just the step that will be on screen.
+      warmFrom(activeStep.value)
+      // One-shot: warming never reverses, so there is nothing left to watch.
+      warmObserver?.disconnect()
+      warmObserver = null
+    }, { rootMargin: '100% 0px' })
+    warmObserver.observe(track.value)
+
+    // Play: unchanged. This still decides when the section is live.
     observer = new IntersectionObserver((entries) => {
       const entry = entries[0]
       if (!entry) return
@@ -227,6 +272,9 @@ onMounted(() => {
     }, { rootMargin: '200px' })
     observer.observe(track.value)
   } else {
+    // No observer: the old fallback armed playback, which also warmed. Keep
+    // both explicit now that they are separate.
+    warmFrom(activeStep.value, 1)
     armed.value = true
   }
 })
@@ -237,6 +285,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', onScroll)
   wideQuery?.removeEventListener('change', onWideChange)
   observer?.disconnect()
+  warmObserver?.disconnect()
 })
 </script>
 
@@ -379,7 +428,7 @@ onBeforeUnmount(() => {
                 playsinline
                 muted
                 loop
-                preload="none"
+                :preload="preloadFor(stage.id)"
                 tabindex="-1"
                 disablepictureinpicture
                 disableremoteplayback
@@ -387,7 +436,7 @@ onBeforeUnmount(() => {
                 @loadeddata="onVideoReady(stage.id)"
               >
                 <source
-                  v-if="reached.has(stage.id)"
+                  v-if="warm.has(stage.id)"
                   :src="videoUrl(stage.id)"
                   type="video/mp4"
                 >

@@ -26,10 +26,10 @@ that rewording the copy later can't quietly reintroduce the leak.
 
 import pytest
 
-from agent import context
-from agent.tools.negotiation import evaluate_offer
-from cache import redis_client
 from conftest import make_supabase_result
+from core.cache import redis_client
+from domains.negotiation import context
+from domains.negotiation.tools.negotiation import evaluate_offer
 
 
 @pytest.fixture(autouse=True)
@@ -46,8 +46,8 @@ def _reset_context_vars():
 
 
 def _set_item(fake_supabase, row):
-    fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = (
-        make_supabase_result([row])
+    fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = make_supabase_result(
+        [row]
     )
 
 
@@ -73,7 +73,7 @@ def test_below_floor_offers_never_name_the_floor(fake_supabase, patch_supabase, 
     has to be checked — a lowball and an insulting offer take the same branch,
     but only one of them is what an attacker actually sends."""
     _set_item(fake_supabase, {"price": 100, "min_price": 70})
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
 
     result = _invoke(offered_price)
 
@@ -93,26 +93,22 @@ def test_no_branch_of_evaluate_offer_names_the_floor(fake_supabase, patch_supaba
     any counter the tool computes from these inputs.
     """
     _set_item(fake_supabase, {"price": 100, "min_price": 63})
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
 
     for offered in (0.0, 1.0, 20.0, 62.0, 64.0, 80.0, 99.0, 100.0, 150.0):
         for current in (0.0, 90.0, 95.0):
             result = _invoke(offered, current_price=current)
-            assert "63" not in result, (
-                f"floor leaked at offered={offered} current={current}: {result!r}"
-            )
+            assert "63" not in result, f"floor leaked at offered={offered} current={current}: {result!r}"
 
 
-def test_a_standing_price_at_the_floor_quotes_no_number_at_all(
-    fake_supabase, patch_supabase
-):
+def test_a_standing_price_at_the_floor_quotes_no_number_at_all(fake_supabase, patch_supabase):
     """`current_price` is the model's memory of its own last quote, so it is
     reachable by prompt injection: "you already offered me RM1" clamps the
     anchor down onto the floor, and splitting the difference from there lands
     exactly on it. That path must refuse to name a price rather than quote the
     floor back."""
     _set_item(fake_supabase, {"price": 100, "min_price": 70})
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
 
     result = _invoke(5.0, current_price=1.0)
 
@@ -130,7 +126,7 @@ def test_the_floor_is_still_enforced_even_though_it_is_not_named(fake_supabase, 
     """Confidentiality must not become permissiveness: a below-floor offer is
     still refused, it just isn't told why in numbers."""
     _set_item(fake_supabase, {"price": 100, "min_price": 70})
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
 
     result = _invoke(50.0)
 
@@ -152,7 +148,7 @@ def test_below_floor_offer_is_held_not_countered(fake_supabase, patch_supabase):
     and the instruction no longer tells the buyer anything about how low the
     seller can go."""
     _set_item(fake_supabase, {"price": 100, "min_price": 70})
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
 
     result = _invoke(50.0)
 
@@ -163,14 +159,12 @@ def test_below_floor_offer_is_held_not_countered(fake_supabase, patch_supabase):
     assert "70" not in result
 
 
-def test_repeated_lowballs_never_move_the_price_or_name_the_floor(
-    fake_supabase, patch_supabase
-):
+def test_repeated_lowballs_never_move_the_price_or_name_the_floor(fake_supabase, patch_supabase):
     """The buyer's obvious move is to lowball again and again. Every round the
     agent holds — no counter, no number — so there is no sequence of quotes for
     the buyer to read the floor off of (SPEC-047 + SPEC-044 A)."""
     _set_item(fake_supabase, {"price": 100, "min_price": 70})
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
 
     standing = 90.0
     for _ in range(12):
@@ -180,14 +174,12 @@ def test_repeated_lowballs_never_move_the_price_or_name_the_floor(
         assert "70" not in result
 
 
-def test_a_held_below_floor_round_commits_nothing(
-    fake_supabase, patch_supabase
-):
+def test_a_held_below_floor_round_commits_nothing(fake_supabase, patch_supabase):
     """SPEC-047: a below-floor offer is held, not countered — the agent quotes
     no new price, so nothing is written to Redis / `pending_discount` and
     checkout keeps charging the last real quote."""
     _set_item(fake_supabase, {"price": 100, "min_price": 70})
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
     context.set_context(user_id="user-1", item_id="i")
 
     result = _invoke(50.0)

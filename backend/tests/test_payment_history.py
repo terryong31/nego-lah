@@ -11,7 +11,7 @@ patch `payment.payment_history.admin_supabase` (module-level binding) via the
 # but conftest fixtures are auto-discovered by pytest -- we still need the
 # helper function itself, which is defined in backend/conftest.py.
 from conftest import make_supabase_result
-from payment.payment_history import (
+from domains.billing.payment_history import (
     get_all_transactions,
     get_sales_summary,
     get_transaction_by_item,
@@ -24,26 +24,24 @@ def test_get_all_transactions_returns_data(fake_supabase, patch_supabase):
         {"id": "t1", "item_id": "i1", "amount": 100, "status": "completed"},
         {"id": "t2", "item_id": "i2", "amount": 50, "status": "refunded"},
     ]
-    fake_supabase.table.return_value.select.return_value.order.return_value.execute.return_value = (
-        make_supabase_result(rows)
+    fake_supabase.table.return_value.select.return_value.order.return_value.execute.return_value = make_supabase_result(
+        rows
     )
-    patch_supabase("payment.payment_history", admin=fake_supabase)
+    patch_supabase("domains.billing.payment_history", admin=fake_supabase)
 
     result = get_all_transactions()
 
     assert result == rows
     fake_supabase.table.assert_called_with("transactions")
     fake_supabase.table.return_value.select.assert_called_with("*")
-    fake_supabase.table.return_value.select.return_value.order.assert_called_with(
-        "created_at", desc=True
-    )
+    fake_supabase.table.return_value.select.return_value.order.assert_called_with("created_at", desc=True)
 
 
 def test_get_all_transactions_empty(fake_supabase, patch_supabase):
-    fake_supabase.table.return_value.select.return_value.order.return_value.execute.return_value = (
-        make_supabase_result([])
+    fake_supabase.table.return_value.select.return_value.order.return_value.execute.return_value = make_supabase_result(
+        []
     )
-    patch_supabase("payment.payment_history", admin=fake_supabase)
+    patch_supabase("domains.billing.payment_history", admin=fake_supabase)
 
     result = get_all_transactions()
 
@@ -52,10 +50,10 @@ def test_get_all_transactions_empty(fake_supabase, patch_supabase):
 
 def test_get_transaction_by_item_found(fake_supabase, patch_supabase):
     row = {"id": "t1", "item_id": "i1", "amount": 100, "status": "completed"}
-    fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = (
-        make_supabase_result([row])
+    fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = make_supabase_result(
+        [row]
     )
-    patch_supabase("payment.payment_history", admin=fake_supabase)
+    patch_supabase("domains.billing.payment_history", admin=fake_supabase)
 
     result = get_transaction_by_item("i1")
 
@@ -64,10 +62,8 @@ def test_get_transaction_by_item_found(fake_supabase, patch_supabase):
 
 
 def test_get_transaction_by_item_not_found(fake_supabase, patch_supabase):
-    fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = (
-        make_supabase_result([])
-    )
-    patch_supabase("payment.payment_history", admin=fake_supabase)
+    fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = make_supabase_result([])
+    patch_supabase("domains.billing.payment_history", admin=fake_supabase)
 
     result = get_transaction_by_item("missing-item")
 
@@ -76,10 +72,10 @@ def test_get_transaction_by_item_not_found(fake_supabase, patch_supabase):
 
 def test_get_transactions_by_status(fake_supabase, patch_supabase):
     rows = [{"id": "t3", "item_id": "i3", "amount": 75, "status": "pending"}]
-    fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = (
-        make_supabase_result(rows)
+    fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = make_supabase_result(
+        rows
     )
-    patch_supabase("payment.payment_history", admin=fake_supabase)
+    patch_supabase("domains.billing.payment_history", admin=fake_supabase)
 
     result = get_transactions_by_status("pending")
 
@@ -88,10 +84,8 @@ def test_get_transactions_by_status(fake_supabase, patch_supabase):
 
 
 def test_get_transactions_by_status_empty(fake_supabase, patch_supabase):
-    fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = (
-        make_supabase_result([])
-    )
-    patch_supabase("payment.payment_history", admin=fake_supabase)
+    fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = make_supabase_result([])
+    patch_supabase("domains.billing.payment_history", admin=fake_supabase)
 
     result = get_transactions_by_status("refunded")
 
@@ -117,7 +111,7 @@ def test_get_sales_summary_math_with_refunds(fake_supabase, patch_supabase):
         return chained
 
     fake_supabase.table.return_value.select.return_value.eq.side_effect = eq_side_effect
-    patch_supabase("payment.payment_history", admin=fake_supabase)
+    patch_supabase("domains.billing.payment_history", admin=fake_supabase)
 
     summary = get_sales_summary()
 
@@ -137,7 +131,7 @@ def test_get_sales_summary_no_completed_transactions(fake_supabase, patch_supaba
         return chained
 
     fake_supabase.table.return_value.select.return_value.eq.side_effect = eq_side_effect
-    patch_supabase("payment.payment_history", admin=fake_supabase)
+    patch_supabase("domains.billing.payment_history", admin=fake_supabase)
 
     summary = get_sales_summary()
 
@@ -166,7 +160,7 @@ def test_get_sales_summary_handles_string_amounts(fake_supabase, patch_supabase)
         return chained
 
     fake_supabase.table.return_value.select.return_value.eq.side_effect = eq_side_effect
-    patch_supabase("payment.payment_history", admin=fake_supabase)
+    patch_supabase("domains.billing.payment_history", admin=fake_supabase)
 
     summary = get_sales_summary()
 
@@ -191,7 +185,7 @@ def test_get_sales_summary_missing_amount_defaults_to_zero(fake_supabase, patch_
         return chained
 
     fake_supabase.table.return_value.select.return_value.eq.side_effect = eq_side_effect
-    patch_supabase("payment.payment_history", admin=fake_supabase)
+    patch_supabase("domains.billing.payment_history", admin=fake_supabase)
 
     summary = get_sales_summary()
 
@@ -215,7 +209,7 @@ def test_get_sales_summary_null_data_defaults_to_empty_list(fake_supabase, patch
         return chained
 
     fake_supabase.table.return_value.select.return_value.eq.side_effect = eq_side_effect
-    patch_supabase("payment.payment_history", admin=fake_supabase)
+    patch_supabase("domains.billing.payment_history", admin=fake_supabase)
 
     summary = get_sales_summary()
 

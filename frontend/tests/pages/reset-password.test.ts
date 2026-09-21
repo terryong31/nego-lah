@@ -2,20 +2,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mockNuxtImport, mountSuspended } from '@nuxt/test-utils/runtime'
 import { flushPromises } from '@vue/test-utils'
 import ResetPasswordPage from '~/pages/reset-password.vue'
+import { ref } from 'vue'
+import { makeAuthStub } from '../helpers/auth'
 
-const { updateUserMock } = vi.hoisted(() => ({
-  updateUserMock: vi.fn()
-}))
+const userRef = ref<{ id: string } | null>({ id: 'user-1' })
+const authStub = makeAuthStub(userRef)
 
 const { toastAddMock } = vi.hoisted(() => ({
   toastAddMock: vi.fn()
 }))
 
-mockNuxtImport('useSupabaseClient', () => () => ({
-  auth: {
-    updateUser: updateUserMock
-  }
-}))
+mockNuxtImport('useAuth', () => () => authStub)
 
 mockNuxtImport('useToast', () => () => ({
   add: toastAddMock
@@ -45,7 +42,9 @@ async function fillAndSubmit(
 
 describe('pages/reset-password.vue', () => {
   beforeEach(() => {
-    updateUserMock.mockReset().mockResolvedValue({ error: null })
+    userRef.value = { id: 'user-1' }
+    authStub.resetPassword.mockReset().mockResolvedValue({ updated: true })
+    authStub.logout.mockReset().mockResolvedValue(undefined)
     toastAddMock.mockReset()
   })
 
@@ -62,7 +61,7 @@ describe('pages/reset-password.vue', () => {
 
     await fillAndSubmit(wrapper, 'short', 'short')
 
-    expect(updateUserMock).not.toHaveBeenCalled()
+    expect(authStub.resetPassword).not.toHaveBeenCalled()
     expect(wrapper.text()).toContain('Must be at least 8 characters')
   })
 
@@ -71,7 +70,7 @@ describe('pages/reset-password.vue', () => {
 
     await fillAndSubmit(wrapper, 'password123', 'differentPass1')
 
-    expect(updateUserMock).not.toHaveBeenCalled()
+    expect(authStub.resetPassword).not.toHaveBeenCalled()
     expect(wrapper.text()).toContain('Passwords don\'t match')
   })
 
@@ -82,7 +81,9 @@ describe('pages/reset-password.vue', () => {
 
       await fillAndSubmit(wrapper, 'password123')
 
-      expect(updateUserMock).toHaveBeenCalledWith({ password: 'password123' })
+      expect(authStub.resetPassword).toHaveBeenCalledWith('password123')
+      // The password changed, so every session for the account goes with it.
+      expect(authStub.logout).toHaveBeenCalledTimes(1)
       expect(toastAddMock).toHaveBeenCalledWith({
         title: 'Password updated',
         description: 'You can now log in with your new password.',
@@ -94,7 +95,7 @@ describe('pages/reset-password.vue', () => {
 
   describe('submission failure', () => {
     it('shows an "Update failed" toast with the Supabase error message and does not redirect', async () => {
-      updateUserMock.mockResolvedValue({ error: new Error('Auth session missing') })
+      authStub.resetPassword.mockRejectedValue(new Error('Auth session missing'))
       const wrapper = await mountSuspended(ResetPasswordPage)
       const pushSpy = spyOnRouterPush(wrapper)
 
@@ -109,7 +110,7 @@ describe('pages/reset-password.vue', () => {
     })
 
     it('falls back to a generic message when the thrown error is not an Error instance', async () => {
-      updateUserMock.mockRejectedValue('boom')
+      authStub.resetPassword.mockRejectedValue('boom')
       const wrapper = await mountSuspended(ResetPasswordPage)
       const pushSpy = spyOnRouterPush(wrapper)
 

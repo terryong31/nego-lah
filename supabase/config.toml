@@ -41,14 +41,20 @@ public = true
 [auth]
 enabled = true
 site_url = "http://localhost:3000"
+# SPEC-093: the auth callback lives on the API, not in the SPA — the backend
+# redeems the link and sets the session cookie, then 302s into the app. Supabase
+# refuses any `redirect_to` that is not listed here, so the API host has to be.
 additional_redirect_urls = [
   "http://localhost:3000",
   "http://localhost:3000/**",
   "http://127.0.0.1:3000/**",
+  "http://localhost:8000/auth/callback",
+  "http://127.0.0.1:8000/auth/callback",
   "https://negolah.my",
   "https://negolah.my/**",
   "https://www.negolah.my",
   "https://www.negolah.my/**",
+  "https://api.negolah.my/auth/callback",
 ]
 jwt_expiry = 3600
 enable_refresh_token_rotation = true
@@ -86,12 +92,13 @@ project_id = "umtsegjkgpfefjvhyysh"
 
 [remotes.prod.auth]
 # Production auth never redirects to a dev origin. Only the real domain and its
-# www host, plus the wildcard for post-login return paths (/confirm, saved
-# redirect cookie, OAuth).
+# www host, plus the API's auth callback — which is where every email link and
+# every OAuth round trip actually lands since SPEC-093.
 site_url = "https://negolah.my"
 additional_redirect_urls = [
   "https://negolah.my",
   "https://negolah.my/**",
   "https://www.negolah.my",
   "https://www.negolah.my/**",
+  "https://api.negolah.my/auth/callback",
 ]

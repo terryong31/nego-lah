@@ -8,7 +8,7 @@ required field is missing.
 import pytest
 from pydantic import ValidationError
 
-from schemas import (
+from core.schemas import (
     AccountDeleteSchema,
     Admin2FARequest,
     AdminLoginRequest,
@@ -30,6 +30,7 @@ from schemas import (
 # ============================================
 # ITEMS
 # ============================================
+
 
 def test_create_item_schema_full():
     s = CreateItemSchema(
@@ -78,6 +79,7 @@ def test_image_reorder_request_missing_field_raises():
 # CHAT
 # ============================================
 
+
 def test_chat_request_full():
     s = ChatRequest(user_id="u1", message="hello", item_id="item-1")
     assert s.user_id == "u1"
@@ -94,6 +96,7 @@ def test_chat_request_optional_item_id_defaults_none():
 # PAYMENT
 # ============================================
 
+
 def test_checkout_request_full():
     s = CheckoutRequest(item_id="item-1", user_id="u1")
     assert s.item_id == "item-1"
@@ -108,6 +111,7 @@ def test_checkout_request_user_id_optional():
 # ============================================
 # USER ACCOUNT
 # ============================================
+
 
 def test_password_update_schema():
     s = PasswordUpdateSchema(current_password="old", new_password="new")
@@ -142,6 +146,7 @@ def test_account_delete_schema_requires_the_current_password():
 # ============================================
 # ADMIN
 # ============================================
+
 
 def test_admin_login_request():
     s = AdminLoginRequest(email="admin@example.com", password="secret")
@@ -252,6 +257,7 @@ def test_order_update_frontend_alias_field_names():
 # ============================================
 # MARKET VALUATION
 # ============================================
+
 
 def test_market_valuation_request_defaults():
     s = MarketValuationRequest(query="iPhone 12")

@@ -16,11 +16,12 @@ rather than patching payment.fulfillment (which would have no effect here).
 
 import stripe
 
-from payment import webhooks
+from domains.billing import webhooks
 
 # ---------------------------------------------------------------------------
 # verify_webhook
 # ---------------------------------------------------------------------------
+
 
 def test_verify_webhook_success_returns_event(fake_stripe):
     fake_event = {"id": "evt_123", "type": "checkout.session.completed"}
@@ -55,6 +56,7 @@ def test_verify_webhook_bad_signature_returns_none(fake_stripe):
 # ---------------------------------------------------------------------------
 # handle_checkout_completed
 # ---------------------------------------------------------------------------
+
 
 def _session_event(session_overrides=None):
     """A real Stripe Event, not a dict.
@@ -101,9 +103,11 @@ def test_handle_checkout_completed_metadata_on_session(monkeypatch):
 
     monkeypatch.setattr(webhooks, "fulfill_purchase", fake_fulfill_purchase)
 
-    event = _session_event({
-        "metadata": {"item_id": "item-1", "user_id": "user-1", "item_name": "Widget"},
-    })
+    event = _session_event(
+        {
+            "metadata": {"item_id": "item-1", "user_id": "user-1", "item_name": "Widget"},
+        }
+    )
 
     result = webhooks.handle_checkout_completed(event)
 
@@ -132,10 +136,12 @@ def test_handle_checkout_completed_metadata_via_payment_link_fallback(monkeypatc
 
     monkeypatch.setattr(webhooks, "fulfill_purchase", fake_fulfill_purchase)
 
-    event = _session_event({
-        "metadata": {},
-        "payment_link": "plink_abc",
-    })
+    event = _session_event(
+        {
+            "metadata": {},
+            "payment_link": "plink_abc",
+        }
+    )
 
     result = webhooks.handle_checkout_completed(event)
 
@@ -188,10 +194,12 @@ def test_handle_checkout_completed_payment_link_lookup_raises_falls_through_to_m
 
     monkeypatch.setattr(webhooks, "fulfill_purchase", fake_fulfill_purchase)
 
-    event = _session_event({
-        "metadata": {},
-        "payment_link": "plink_broken",
-    })
+    event = _session_event(
+        {
+            "metadata": {},
+            "payment_link": "plink_broken",
+        }
+    )
 
     result = webhooks.handle_checkout_completed(event)
 
@@ -206,10 +214,12 @@ def test_handle_checkout_completed_payment_link_metadata_none_falls_through(monk
 
     monkeypatch.setattr(webhooks, "fulfill_purchase", lambda **kwargs: {"status": "success"})
 
-    event = _session_event({
-        "metadata": {},
-        "payment_link": "plink_empty",
-    })
+    event = _session_event(
+        {
+            "metadata": {},
+            "payment_link": "plink_empty",
+        }
+    )
 
     result = webhooks.handle_checkout_completed(event)
 
@@ -220,9 +230,11 @@ def test_handle_checkout_completed_missing_user_id_only(monkeypatch, fake_stripe
     """item_id present but user_id missing -> still treated as missing_metadata."""
     monkeypatch.setattr(webhooks, "fulfill_purchase", lambda **kwargs: {"status": "success"})
 
-    event = _session_event({
-        "metadata": {"item_id": "item-3"},
-    })
+    event = _session_event(
+        {
+            "metadata": {"item_id": "item-3"},
+        }
+    )
 
     result = webhooks.handle_checkout_completed(event)
 
@@ -240,10 +252,12 @@ def test_handle_checkout_completed_defaults_item_name_and_buyer_email(monkeypatc
 
     monkeypatch.setattr(webhooks, "fulfill_purchase", fake_fulfill_purchase)
 
-    event = _session_event({
-        "metadata": {"item_id": "item-4", "user_id": "user-4"},
-        "customer_details": None,
-    })
+    event = _session_event(
+        {
+            "metadata": {"item_id": "item-4", "user_id": "user-4"},
+            "customer_details": None,
+        }
+    )
 
     result = webhooks.handle_checkout_completed(event)
 
@@ -262,10 +276,12 @@ def test_handle_checkout_completed_amount_total_missing_defaults_to_zero(monkeyp
 
     monkeypatch.setattr(webhooks, "fulfill_purchase", fake_fulfill_purchase)
 
-    event = _session_event({
-        "metadata": {"item_id": "item-5", "user_id": "user-5"},
-        "amount_total": None,
-    })
+    event = _session_event(
+        {
+            "metadata": {"item_id": "item-5", "user_id": "user-5"},
+            "amount_total": None,
+        }
+    )
 
     result = webhooks.handle_checkout_completed(event)
 
@@ -279,9 +295,11 @@ def test_handle_checkout_completed_returns_fulfill_purchase_result_verbatim(monk
     fulfillment_result = {"status": "error", "error": "item_unavailable", "retry": True}
     monkeypatch.setattr(webhooks, "fulfill_purchase", lambda **kwargs: fulfillment_result)
 
-    event = _session_event({
-        "metadata": {"item_id": "item-6", "user_id": "user-6"},
-    })
+    event = _session_event(
+        {
+            "metadata": {"item_id": "item-6", "user_id": "user-6"},
+        }
+    )
 
     result = webhooks.handle_checkout_completed(event)
 

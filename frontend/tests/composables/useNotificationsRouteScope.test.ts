@@ -15,6 +15,7 @@ import { defineComponent, reactive, ref } from 'vue'
 import { flushPromises } from '@vue/test-utils'
 import { mockNuxtImport, mountSuspended } from '@nuxt/test-utils/runtime'
 import { useNotifications } from '../../app/composables/useNotifications'
+import { makeAuthStub } from '../helpers/auth'
 
 const userRef = ref<Record<string, unknown> | null>(null)
 const toastAddMock = vi.fn()
@@ -23,19 +24,15 @@ const toastAddMock = vi.fn()
 // verbatim. The tests drive this object to reproduce both shapes.
 const routeMock = reactive({ path: '/' })
 
-// SPEC-056 #6: the stream is authorised by a short-lived ticket minted over a
-// header-authenticated POST, never by the access token in the URL.
+// SPEC-093: the stream is authorised by the session cookie, which the browser
+// attaches to a `withCredentials` EventSource. The URL carries nothing.
 const fetchMock = vi.fn()
 
-mockNuxtImport('useSupabaseUser', () => () => userRef)
+const authStub = makeAuthStub(userRef)
+
+mockNuxtImport('useAuth', () => () => authStub)
 mockNuxtImport('useRoute', () => () => routeMock)
 mockNuxtImport('useToast', () => () => ({ add: toastAddMock }))
-mockNuxtImport('useSupabaseClient', () => () => ({
-  auth: {
-    getSession: () => Promise.resolve({ data: { session: { access_token: 'jwt-token' } } }),
-    onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => {} } } })
-  }
-}))
 
 // Every constructed EventSource, so a test can count how many streams the
 // composable actually opened and push events through them.
@@ -81,9 +78,6 @@ const unreadResponse = { count: 0, has_unread: false }
 // global directly — same approach as tests/composables/useApi.test.ts.
 function installFetchStub() {
   fetchMock.mockReset().mockImplementation((url: string) => {
-    if (String(url).includes('/chat/notifications/ticket')) {
-      return Promise.resolve({ ticket: 'ticket-abc', expires_in: 30 })
-    }
     if (String(url).includes('/chat/unread')) {
       return Promise.resolve(unreadResponse)
     }
@@ -114,7 +108,8 @@ const Host = defineComponent({
 
 describe('useNotifications route scope', () => {
   beforeEach(() => {
-    userRef.value = null
+    // Someone has to be signed in for a watermark to belong to anyone.
+    userRef.value = { id: 'buyer-1' }
     routeMock.path = '/'
     setTabHidden(false)
     toastAddMock.mockClear()

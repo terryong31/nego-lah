@@ -34,7 +34,7 @@ watch(() => route.query.keyword, (newVal) => {
 // SPEC-069: the storefront is where a buyer lands after signing in, so it is
 // where the tour introduces itself -- once, and never again unless replayed
 // from the user menu.
-const user = useSupabaseUser()
+const { user } = useAuth()
 const tour = useOnboardingTour()
 
 onMounted(() => {

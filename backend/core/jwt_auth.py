@@ -16,7 +16,7 @@ from typing import Any
 
 import jwt
 
-from env import SUPABASE_URL
+from core.env import SUPABASE_URL
 
 
 class TokenExpiredError(Exception):

@@ -24,11 +24,11 @@ from unittest.mock import MagicMock
 
 import stripe as real_stripe
 
-import payment.fulfillment as fulfillment
-import payment.payment_history as payment_history
-import payment.payment_state as payment_state
-import payment.webhooks as webhooks
-import routes.payment as routes_payment
+import domains.billing.fulfillment as fulfillment
+import domains.billing.payment_history as payment_history
+import domains.billing.payment_state as payment_state
+import domains.billing.routes as routes_payment
+import domains.billing.webhooks as webhooks
 from conftest import make_supabase_result
 
 
@@ -64,20 +64,24 @@ def _make_stripe_session(
 # POST /payment/checkout
 # ---------------------------------------------------------------------------
 
+
 async def test_checkout_success(client, auth_user, patch_supabase, fake_supabase, monkeypatch):
     auth_user("buyer-1")
     item_row = {"id": "item-1", "name": "Widget", "price": "100.00", "status": "available"}
     fake_supabase.table.return_value.select.return_value.eq.return_value.is_.return_value.execute.return_value = (
         make_supabase_result([item_row])
     )
-    patch_supabase("routes.payment", admin=fake_supabase)
+    patch_supabase("domains.billing.routes", admin=fake_supabase)
 
     captured = {}
 
     def fake_create_checkout_session(item_name, price_cents, item_id, user_id=None, customer_email=None):
         captured.update(
-            item_name=item_name, price_cents=price_cents, item_id=item_id,
-            user_id=user_id, customer_email=customer_email,
+            item_name=item_name,
+            price_cents=price_cents,
+            item_id=item_id,
+            user_id=user_id,
+            customer_email=customer_email,
         )
         return "https://checkout.stripe.com/xyz"
 
@@ -103,7 +107,7 @@ async def test_checkout_item_not_found_404(client, auth_user, patch_supabase, fa
     fake_supabase.table.return_value.select.return_value.eq.return_value.is_.return_value.execute.return_value = (
         make_supabase_result([])
     )
-    patch_supabase("routes.payment", admin=fake_supabase)
+    patch_supabase("domains.billing.routes", admin=fake_supabase)
 
     response = await client.post("/payment/checkout", json={"item_id": "does-not-exist"})
 
@@ -117,7 +121,7 @@ async def test_checkout_item_not_available_409(client, auth_user, patch_supabase
     fake_supabase.table.return_value.select.return_value.eq.return_value.is_.return_value.execute.return_value = (
         make_supabase_result([item_row])
     )
-    patch_supabase("routes.payment", admin=fake_supabase)
+    patch_supabase("domains.billing.routes", admin=fake_supabase)
 
     response = await client.post("/payment/checkout", json={"item_id": "item-1"})
 
@@ -127,24 +131,20 @@ async def test_checkout_item_not_available_409(client, auth_user, patch_supabase
 
 async def test_checkout_user_id_mismatch_is_403(client, auth_user, patch_supabase, fake_supabase):
     auth_user("buyer-1")
-    patch_supabase("routes.payment", admin=fake_supabase)
+    patch_supabase("domains.billing.routes", admin=fake_supabase)
 
-    response = await client.post(
-        "/payment/checkout", json={"item_id": "item-1", "user_id": "someone-else"}
-    )
+    response = await client.post("/payment/checkout", json={"item_id": "item-1", "user_id": "someone-else"})
 
     assert response.status_code == 403
 
 
-async def test_checkout_generic_exception_returns_500(
-    client, auth_user, patch_supabase, fake_supabase
-):
+async def test_checkout_generic_exception_returns_500(client, auth_user, patch_supabase, fake_supabase):
     auth_user("buyer-1")
     item_row = {"id": "item-1", "name": "Widget", "price": "not-a-number", "status": "available"}
     fake_supabase.table.return_value.select.return_value.eq.return_value.is_.return_value.execute.return_value = (
         make_supabase_result([item_row])
     )
-    patch_supabase("routes.payment", admin=fake_supabase)
+    patch_supabase("domains.billing.routes", admin=fake_supabase)
 
     response = await client.post("/payment/checkout", json={"item_id": "item-1"})
 
@@ -164,7 +164,7 @@ async def test_checkout_price_cents_rounds_to_nearest_cent(
     fake_supabase.table.return_value.select.return_value.eq.return_value.is_.return_value.execute.return_value = (
         make_supabase_result([item_row])
     )
-    patch_supabase("routes.payment", admin=fake_supabase)
+    patch_supabase("domains.billing.routes", admin=fake_supabase)
 
     captured = {}
 
@@ -183,11 +183,12 @@ async def test_checkout_price_cents_rounds_to_nearest_cent(
 
 # --- SPEC-047: Buy Now honours the negotiated price -------------------------
 
+
 async def _run_checkout(client, monkeypatch, fake_supabase, patch_supabase, item_row):
     fake_supabase.table.return_value.select.return_value.eq.return_value.is_.return_value.execute.return_value = (
         make_supabase_result([item_row])
     )
-    patch_supabase("routes.payment", admin=fake_supabase)
+    patch_supabase("domains.billing.routes", admin=fake_supabase)
     captured = {}
 
     def fake_create_checkout_session(item_name, price_cents, item_id, user_id=None, customer_email=None):
@@ -204,7 +205,8 @@ async def test_checkout_charges_the_negotiated_price_when_the_buyer_has_one(
     client, auth_user, patch_supabase, fake_supabase, monkeypatch
 ):
     auth_user("buyer-1")
-    from cache import redis_client
+    from core.cache import redis_client
+
     redis_client.setex("negotiated_price:buyer-1:item-1", 3600, "900.0")
 
     item_row = {"id": "item-1", "name": "Widget", "price": "1000.00", "min_price": "650.00", "status": "available"}
@@ -231,7 +233,8 @@ async def test_checkout_clamps_a_below_floor_negotiated_price_up_to_the_floor(
     """`evaluate_offer` never commits below the floor, but checkout is the money
     path — it clamps defensively rather than trusting that on faith."""
     auth_user("buyer-1")
-    from cache import redis_client
+    from core.cache import redis_client
+
     redis_client.setex("negotiated_price:buyer-1:item-1", 3600, "500.0")
 
     item_row = {"id": "item-1", "name": "Widget", "price": "1000.00", "min_price": "650.00", "status": "available"}
@@ -249,7 +252,7 @@ async def test_checkout_passes_the_buyer_account_email_to_stripe(
     fake_supabase.table.return_value.select.return_value.eq.return_value.is_.return_value.execute.return_value = (
         make_supabase_result([item_row])
     )
-    patch_supabase("routes.payment", admin=fake_supabase)
+    patch_supabase("domains.billing.routes", admin=fake_supabase)
     captured = {}
 
     def fake_create_checkout_session(item_name, price_cents, item_id, user_id=None, customer_email=None):
@@ -274,11 +277,10 @@ async def test_checkout_requires_auth(client):
 # GET /payment/active/{user_id}
 # ---------------------------------------------------------------------------
 
+
 async def test_get_active_payments_success(client, auth_user, monkeypatch):
     auth_user("buyer-1")
-    monkeypatch.setattr(
-        payment_state, "get_active_payments_for_user", lambda user_id: ["https://pay.example/1"]
-    )
+    monkeypatch.setattr(payment_state, "get_active_payments_for_user", lambda user_id: ["https://pay.example/1"])
 
     response = await client.get("/payment/active/buyer-1")
 
@@ -311,6 +313,7 @@ async def test_get_active_payments_exception_returns_500(client, auth_user, monk
 # ---------------------------------------------------------------------------
 # POST /payment/webhook/stripe
 # ---------------------------------------------------------------------------
+
 
 async def test_webhook_bad_signature_returns_400(client, monkeypatch):
     monkeypatch.setattr(webhooks, "verify_webhook", lambda payload, sig: None)
@@ -451,11 +454,10 @@ async def test_webhook_ignored_event_type_does_not_call_handler(client, monkeypa
 # GET /payment/transactions (admin)
 # ---------------------------------------------------------------------------
 
+
 async def test_get_transactions_success(client, admin_user, monkeypatch):
     admin_user()
-    monkeypatch.setattr(
-        payment_history, "get_all_transactions", lambda: [{"id": "t1", "amount": 50}]
-    )
+    monkeypatch.setattr(payment_history, "get_all_transactions", lambda: [{"id": "t1", "amount": 50}])
     monkeypatch.setattr(
         payment_history,
         "get_sales_summary",
@@ -485,11 +487,9 @@ async def test_get_transactions_requires_admin(client):
 # leftover registration would silently reopen the hole.
 # ---------------------------------------------------------------------------
 
+
 async def test_payment_router_exposes_no_refund_route(app):
-    refund_routes = [
-        r for r in app.routes
-        if getattr(r, "path", "").startswith("/payment/refund")
-    ]
+    refund_routes = [r for r in app.routes if getattr(r, "path", "").startswith("/payment/refund")]
     assert refund_routes == []
 
 
@@ -497,9 +497,8 @@ async def test_payment_router_exposes_no_refund_route(app):
 # GET /payment/orders/user/{user_id}
 # ---------------------------------------------------------------------------
 
-async def test_get_user_orders_success_with_item_join(
-    client, auth_user, patch_supabase, fake_supabase
-):
+
+async def test_get_user_orders_success_with_item_join(client, auth_user, patch_supabase, fake_supabase):
     auth_user("buyer-1")
 
     orders_mock = MagicMock()
@@ -522,8 +521,8 @@ async def test_get_user_orders_success_with_item_join(
         "tracking_url": None,
         "shipped_at": None,
     }
-    orders_mock.select.return_value.eq.return_value.order.return_value.execute.return_value = (
-        make_supabase_result([order_row])
+    orders_mock.select.return_value.eq.return_value.order.return_value.execute.return_value = make_supabase_result(
+        [order_row]
     )
     item_row = {
         "name": "Widget",
@@ -531,11 +530,9 @@ async def test_get_user_orders_success_with_item_join(
         "image_path": "img.jpg",
         "condition": "new",
     }
-    items_mock.select.return_value.eq.return_value.execute.return_value = make_supabase_result(
-        [item_row]
-    )
+    items_mock.select.return_value.eq.return_value.execute.return_value = make_supabase_result([item_row])
 
-    patch_supabase("routes.payment", admin=fake_supabase)
+    patch_supabase("domains.billing.routes", admin=fake_supabase)
 
     response = await client.get("/payment/orders/user/buyer-1")
 
@@ -562,9 +559,7 @@ async def test_get_user_orders_success_with_item_join(
     items_mock.select.return_value.eq.assert_any_call("id", "item-1")
 
 
-async def test_get_user_orders_item_lookup_missing_falls_back(
-    client, auth_user, patch_supabase, fake_supabase
-):
+async def test_get_user_orders_item_lookup_missing_falls_back(client, auth_user, patch_supabase, fake_supabase):
     auth_user("buyer-1")
 
     orders_mock = MagicMock()
@@ -583,12 +578,12 @@ async def test_get_user_orders_item_lookup_missing_falls_back(
         "created_at": "2026-01-02T00:00:00Z",
         "stripe_payment_id": "pi_2",
     }
-    orders_mock.select.return_value.eq.return_value.order.return_value.execute.return_value = (
-        make_supabase_result([order_row])
+    orders_mock.select.return_value.eq.return_value.order.return_value.execute.return_value = make_supabase_result(
+        [order_row]
     )
     items_mock.select.return_value.eq.return_value.execute.return_value = make_supabase_result([])
 
-    patch_supabase("routes.payment", admin=fake_supabase)
+    patch_supabase("domains.billing.routes", admin=fake_supabase)
 
     response = await client.get("/payment/orders/user/buyer-1")
 
@@ -600,14 +595,12 @@ async def test_get_user_orders_item_lookup_missing_falls_back(
     assert body["item_condition"] is None
 
 
-async def test_get_user_orders_empty_returns_empty_list(
-    client, auth_user, patch_supabase, fake_supabase
-):
+async def test_get_user_orders_empty_returns_empty_list(client, auth_user, patch_supabase, fake_supabase):
     auth_user("buyer-1")
     fake_supabase.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
         make_supabase_result([])
     )
-    patch_supabase("routes.payment", admin=fake_supabase)
+    patch_supabase("domains.billing.routes", admin=fake_supabase)
 
     response = await client.get("/payment/orders/user/buyer-1")
 
@@ -623,20 +616,18 @@ async def _user_orders_with(order_row, client, patch_supabase, fake_supabase):
         "orders": orders_mock,
         "items": items_mock,
     }[name]
-    orders_mock.select.return_value.eq.return_value.order.return_value.execute.return_value = (
-        make_supabase_result([order_row])
+    orders_mock.select.return_value.eq.return_value.order.return_value.execute.return_value = make_supabase_result(
+        [order_row]
     )
     items_mock.select.return_value.eq.return_value.execute.return_value = make_supabase_result([])
-    patch_supabase("routes.payment", admin=fake_supabase)
+    patch_supabase("domains.billing.routes", admin=fake_supabase)
 
     response = await client.get("/payment/orders/user/buyer-1")
     assert response.status_code == 200
     return response.json()["orders"][0]
 
 
-async def test_get_user_orders_exposes_shipment_to_the_buyer(
-    client, auth_user, patch_supabase, fake_supabase
-):
+async def test_get_user_orders_exposes_shipment_to_the_buyer(client, auth_user, patch_supabase, fake_supabase):
     """SPEC-069: the console records a shipment, and the buyer can finally see it.
 
     Fails pre-fix: the route projected a fixed set of columns and dropped
@@ -670,9 +661,7 @@ async def test_get_user_orders_exposes_shipment_to_the_buyer(
     assert body["shipped_at"] == "2026-01-04T00:00:00Z"
 
 
-async def test_get_user_orders_derives_tracking_url_when_absent(
-    client, auth_user, patch_supabase, fake_supabase
-):
+async def test_get_user_orders_derives_tracking_url_when_absent(client, auth_user, patch_supabase, fake_supabase):
     """A row written before tracking_url existed still gets a link."""
     auth_user("buyer-1")
 
@@ -700,9 +689,7 @@ async def test_get_user_orders_derives_tracking_url_when_absent(
     assert body["tracking_url"] == "https://www.jtexpress.my/tracking?billcode=630999888777"
 
 
-async def test_get_user_orders_unknown_courier_offers_no_link(
-    client, auth_user, patch_supabase, fake_supabase
-):
+async def test_get_user_orders_unknown_courier_offers_no_link(client, auth_user, patch_supabase, fake_supabase):
     """An unrecognised carrier is still recorded -- it just has no URL."""
     auth_user("buyer-1")
 
@@ -730,9 +717,7 @@ async def test_get_user_orders_unknown_courier_offers_no_link(
     assert body["tracking_url"] is None
 
 
-async def test_get_user_orders_unshipped_reports_nulls(
-    client, auth_user, patch_supabase, fake_supabase
-):
+async def test_get_user_orders_unshipped_reports_nulls(client, auth_user, patch_supabase, fake_supabase):
     """Not every order has shipped; the fields are present and empty, not absent."""
     auth_user("buyer-1")
 
@@ -763,7 +748,7 @@ async def test_get_user_orders_unshipped_reports_nulls(
 
 async def test_get_user_orders_mismatch_is_403(client, auth_user, patch_supabase, fake_supabase):
     auth_user("buyer-1")
-    patch_supabase("routes.payment", admin=fake_supabase)
+    patch_supabase("domains.billing.routes", admin=fake_supabase)
 
     response = await client.get("/payment/orders/user/someone-else")
 
@@ -774,6 +759,7 @@ async def test_get_user_orders_mismatch_is_403(client, auth_user, patch_supabase
 # POST /payment/confirm-payment
 # ---------------------------------------------------------------------------
 
+
 async def test_confirm_payment_no_session_no_item_id_400(client, auth_user):
     auth_user("buyer-1")
 
@@ -783,14 +769,12 @@ async def test_confirm_payment_no_session_no_item_id_400(client, auth_user):
     assert response.json()["detail"] == "item_id is required"
 
 
-async def test_confirm_payment_no_session_item_already_sold(
-    client, auth_user, patch_supabase, fake_supabase
-):
+async def test_confirm_payment_no_session_item_already_sold(client, auth_user, patch_supabase, fake_supabase):
     auth_user("buyer-1")
-    fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = (
-        make_supabase_result([{"status": "sold"}])
+    fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = make_supabase_result(
+        [{"status": "sold"}]
     )
-    patch_supabase("routes.payment", admin=fake_supabase)
+    patch_supabase("domains.billing.routes", admin=fake_supabase)
 
     response = await client.post("/payment/confirm-payment", params={"item_id": "item-1"})
 
@@ -798,14 +782,12 @@ async def test_confirm_payment_no_session_item_already_sold(
     assert response.json() == {"status": "already_sold", "message": "Item already marked as sold"}
 
 
-async def test_confirm_payment_no_session_item_pending(
-    client, auth_user, patch_supabase, fake_supabase
-):
+async def test_confirm_payment_no_session_item_pending(client, auth_user, patch_supabase, fake_supabase):
     auth_user("buyer-1")
-    fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = (
-        make_supabase_result([{"status": "available"}])
+    fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = make_supabase_result(
+        [{"status": "available"}]
     )
-    patch_supabase("routes.payment", admin=fake_supabase)
+    patch_supabase("domains.billing.routes", admin=fake_supabase)
 
     response = await client.post("/payment/confirm-payment", params={"item_id": "item-1"})
 
@@ -817,10 +799,8 @@ async def test_confirm_payment_no_session_item_lookup_empty_is_pending(
     client, auth_user, patch_supabase, fake_supabase
 ):
     auth_user("buyer-1")
-    fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = (
-        make_supabase_result([])
-    )
-    patch_supabase("routes.payment", admin=fake_supabase)
+    fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = make_supabase_result([])
+    patch_supabase("domains.billing.routes", admin=fake_supabase)
 
     response = await client.post("/payment/confirm-payment", params={"item_id": "item-1"})
 
@@ -834,9 +814,7 @@ async def test_confirm_payment_invalid_stripe_session_400(client, auth_user, fak
         "No such checkout session", None
     )
 
-    response = await client.post(
-        "/payment/confirm-payment", params={"session_id": "cs_bad"}
-    )
+    response = await client.post("/payment/confirm-payment", params={"session_id": "cs_bad"})
 
     assert response.status_code == 400
     assert response.json()["detail"] == "Invalid Stripe session"
@@ -847,9 +825,7 @@ async def test_confirm_payment_not_paid_400(client, auth_user, fake_stripe):
     session = _make_stripe_session(payment_status="unpaid")
     fake_stripe.checkout.Session.retrieve.return_value = session
 
-    response = await client.post(
-        "/payment/confirm-payment", params={"session_id": "cs_1"}
-    )
+    response = await client.post("/payment/confirm-payment", params={"session_id": "cs_1"})
 
     assert response.status_code == 400
     assert response.json()["detail"] == "Payment not completed"
@@ -857,14 +833,10 @@ async def test_confirm_payment_not_paid_400(client, auth_user, fake_stripe):
 
 async def test_confirm_payment_buyer_mismatch_403(client, auth_user, fake_stripe):
     auth_user("buyer-1")
-    session = _make_stripe_session(
-        payment_status="paid", metadata={"item_id": "item-1", "user_id": "someone-else"}
-    )
+    session = _make_stripe_session(payment_status="paid", metadata={"item_id": "item-1", "user_id": "someone-else"})
     fake_stripe.checkout.Session.retrieve.return_value = session
 
-    response = await client.post(
-        "/payment/confirm-payment", params={"session_id": "cs_1"}
-    )
+    response = await client.post("/payment/confirm-payment", params={"session_id": "cs_1"})
 
     assert response.status_code == 403
     assert response.json()["detail"] == "Session does not belong to this user"
@@ -875,17 +847,13 @@ async def test_confirm_payment_missing_item_id_after_metadata_400(client, auth_u
     session = _make_stripe_session(payment_status="paid", metadata={})
     fake_stripe.checkout.Session.retrieve.return_value = session
 
-    response = await client.post(
-        "/payment/confirm-payment", params={"session_id": "cs_1"}
-    )
+    response = await client.post("/payment/confirm-payment", params={"session_id": "cs_1"})
 
     assert response.status_code == 400
     assert response.json()["detail"] == "item_id is required"
 
 
-async def test_confirm_payment_fulfilled_returns_success(
-    client, auth_user, fake_stripe, monkeypatch
-):
+async def test_confirm_payment_fulfilled_returns_success(client, auth_user, fake_stripe, monkeypatch):
     auth_user("buyer-1")
     session = _make_stripe_session(
         payment_status="paid",
@@ -904,9 +872,7 @@ async def test_confirm_payment_fulfilled_returns_success(
 
     monkeypatch.setattr(fulfillment, "fulfill_purchase", fake_fulfill_purchase)
 
-    response = await client.post(
-        "/payment/confirm-payment", params={"session_id": "cs_1"}
-    )
+    response = await client.post("/payment/confirm-payment", params={"session_id": "cs_1"})
 
     assert response.status_code == 200
     assert response.json() == {
@@ -922,13 +888,9 @@ async def test_confirm_payment_fulfilled_returns_success(
     assert captured["buyer_email"] == "buyer@example.com"
 
 
-async def test_confirm_payment_duplicate_returns_already_sold(
-    client, auth_user, fake_stripe, monkeypatch
-):
+async def test_confirm_payment_duplicate_returns_already_sold(client, auth_user, fake_stripe, monkeypatch):
     auth_user("buyer-1")
-    session = _make_stripe_session(
-        payment_status="paid", metadata={"item_id": "item-1", "user_id": "buyer-1"}
-    )
+    session = _make_stripe_session(payment_status="paid", metadata={"item_id": "item-1", "user_id": "buyer-1"})
     fake_stripe.checkout.Session.retrieve.return_value = session
     monkeypatch.setattr(
         fulfillment,
@@ -936,21 +898,15 @@ async def test_confirm_payment_duplicate_returns_already_sold(
         lambda **kwargs: {"status": "duplicate", "order_id": "order-1"},
     )
 
-    response = await client.post(
-        "/payment/confirm-payment", params={"session_id": "cs_1"}
-    )
+    response = await client.post("/payment/confirm-payment", params={"session_id": "cs_1"})
 
     assert response.status_code == 200
     assert response.json()["status"] == "already_sold"
 
 
-async def test_confirm_payment_race_lost_returns_refunded(
-    client, auth_user, fake_stripe, monkeypatch
-):
+async def test_confirm_payment_race_lost_returns_refunded(client, auth_user, fake_stripe, monkeypatch):
     auth_user("buyer-1")
-    session = _make_stripe_session(
-        payment_status="paid", metadata={"item_id": "item-1", "user_id": "buyer-1"}
-    )
+    session = _make_stripe_session(payment_status="paid", metadata={"item_id": "item-1", "user_id": "buyer-1"})
     fake_stripe.checkout.Session.retrieve.return_value = session
     monkeypatch.setattr(
         fulfillment,
@@ -958,21 +914,15 @@ async def test_confirm_payment_race_lost_returns_refunded(
         lambda **kwargs: {"status": "race_lost", "order_id": "order-1"},
     )
 
-    response = await client.post(
-        "/payment/confirm-payment", params={"session_id": "cs_1"}
-    )
+    response = await client.post("/payment/confirm-payment", params={"session_id": "cs_1"})
 
     assert response.status_code == 200
     assert response.json()["status"] == "refunded"
 
 
-async def test_confirm_payment_unknown_fulfillment_status_500(
-    client, auth_user, fake_stripe, monkeypatch
-):
+async def test_confirm_payment_unknown_fulfillment_status_500(client, auth_user, fake_stripe, monkeypatch):
     auth_user("buyer-1")
-    session = _make_stripe_session(
-        payment_status="paid", metadata={"item_id": "item-1", "user_id": "buyer-1"}
-    )
+    session = _make_stripe_session(payment_status="paid", metadata={"item_id": "item-1", "user_id": "buyer-1"})
     fake_stripe.checkout.Session.retrieve.return_value = session
     monkeypatch.setattr(
         fulfillment,
@@ -980,23 +930,17 @@ async def test_confirm_payment_unknown_fulfillment_status_500(
         lambda **kwargs: {"status": "error", "error": "order_upsert_failed"},
     )
 
-    response = await client.post(
-        "/payment/confirm-payment", params={"session_id": "cs_1"}
-    )
+    response = await client.post("/payment/confirm-payment", params={"session_id": "cs_1"})
 
     assert response.status_code == 500
     assert response.json()["detail"] == "Could not confirm payment"
 
 
-async def test_confirm_payment_item_id_falls_back_to_query_param(
-    client, auth_user, fake_stripe, monkeypatch
-):
+async def test_confirm_payment_item_id_falls_back_to_query_param(client, auth_user, fake_stripe, monkeypatch):
     """metadata has no item_id, but the query param supplies it -- covers the
     `metadata.get('item_id') or item_id` fallback branch."""
     auth_user("buyer-1")
-    session = _make_stripe_session(
-        payment_status="paid", metadata={"user_id": "buyer-1"}
-    )
+    session = _make_stripe_session(payment_status="paid", metadata={"user_id": "buyer-1"})
     fake_stripe.checkout.Session.retrieve.return_value = session
 
     captured = {}

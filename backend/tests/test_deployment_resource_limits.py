@@ -45,9 +45,7 @@ def _mem_bytes(value: str) -> int:
 @pytest.mark.parametrize("service", ["caddy", "backend", "redis"])
 def test_every_service_declares_a_memory_limit(services, service):
     """One unbounded container can OOM the box and take the other two down."""
-    assert "mem_limit" in services[service], (
-        f"{service} has no mem_limit — it can consume the whole host"
-    )
+    assert "mem_limit" in services[service], f"{service} has no mem_limit — it can consume the whole host"
     assert _mem_bytes(services[service]["mem_limit"]) > 0
 
 
@@ -56,9 +54,7 @@ def test_memory_limits_leave_headroom_for_the_host(services):
     the kernel, sshd and the Docker daemon still need somewhere to live."""
     total = sum(_mem_bytes(services[s]["mem_limit"]) for s in ("caddy", "backend", "redis"))
     box = 2 * 1024**3
-    assert total < box * 0.85, (
-        f"limits total {total / 1024**3:.2f} GB of a 2 GB box — too little headroom"
-    )
+    assert total < box * 0.85, f"limits total {total / 1024**3:.2f} GB of a 2 GB box — too little headroom"
 
 
 @pytest.mark.parametrize("service", ["caddy", "redis"])
@@ -94,6 +90,4 @@ def test_worker_count_is_pinned_explicitly(services):
 
     assert concurrency, "WEB_CONCURRENCY is not set explicitly for the backend"
     workers = int(str(concurrency[0]).split("=", 1)[1])
-    assert 1 <= workers <= 2, (
-        f"{workers} workers on a documented 1–2 vCPU host is oversubscribed"
-    )
+    assert 1 <= workers <= 2, f"{workers} workers on a documented 1–2 vCPU host is oversubscribed"

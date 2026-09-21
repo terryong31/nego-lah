@@ -25,7 +25,7 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 from svix.webhooks import WebhookVerificationError
 
-import routes.webhooks as webhooks_module
+import domains.webhooks.routes as webhooks_module
 
 RESEND_WEBHOOK_URL = "/webhooks/resend"
 
@@ -84,6 +84,7 @@ def _install_fake_async_client(monkeypatch, *, get_effect=None, post_effect=None
                 if isinstance(item, Exception):
                     raise item
                 return item
+
             return _iter_effect
         if isinstance(effect, Exception):
             return effect
@@ -118,22 +119,18 @@ def _make_response(*, json_data=None, content=b"", raise_error=None):
 
 def _build_raw_email_bytes():
     """A multipart email with:
-      - one real attachment with actual content (should be forwarded)
-      - one real attachment with empty content (get_payload(decode=True) is
-        falsy -> must be skipped, covers the `if not content: continue` branch)
-      - one inline attachment (already embedded in the html -> must be skipped)
+    - one real attachment with actual content (should be forwarded)
+    - one real attachment with empty content (get_payload(decode=True) is
+      falsy -> must be skipped, covers the `if not content: continue` branch)
+    - one inline attachment (already embedded in the html -> must be skipped)
     """
     msg = email.message.EmailMessage(policy=email_policy.default)
     msg["Subject"] = "Test"
     msg["From"] = "a@b.com"
     msg["To"] = "support@example.com"
     msg.set_content("hello body")
-    msg.add_attachment(
-        b"filedata123", maintype="application", subtype="octet-stream", filename="doc.pdf"
-    )
-    msg.add_attachment(
-        b"", maintype="application", subtype="octet-stream", filename="empty.bin"
-    )
+    msg.add_attachment(b"filedata123", maintype="application", subtype="octet-stream", filename="doc.pdf")
+    msg.add_attachment(b"", maintype="application", subtype="octet-stream", filename="empty.bin")
     msg.add_attachment(
         b"imgdata456",
         maintype="image",
@@ -149,12 +146,11 @@ def _build_raw_email_bytes():
 # Signature verification failures
 # ---------------------------------------------------------------------------
 
+
 async def test_invalid_signature_returns_400(client, monkeypatch):
     _install_fake_webhook(monkeypatch, side_effect=WebhookVerificationError("bad sig"))
 
-    response = await client.post(
-        RESEND_WEBHOOK_URL, content=b'{"type": "email.received"}', headers=_webhook_headers()
-    )
+    response = await client.post(RESEND_WEBHOOK_URL, content=b'{"type": "email.received"}', headers=_webhook_headers())
 
     assert response.status_code == 400
     assert response.json() == {"detail": "Invalid webhook signature"}
@@ -165,9 +161,7 @@ async def test_invalid_signature_value_error_returns_400(client, monkeypatch):
     WebhookVerificationError — the route explicitly catches both."""
     _install_fake_webhook(monkeypatch, side_effect=ValueError("malformed header"))
 
-    response = await client.post(
-        RESEND_WEBHOOK_URL, content=b'{"type": "email.received"}', headers=_webhook_headers()
-    )
+    response = await client.post(RESEND_WEBHOOK_URL, content=b'{"type": "email.received"}', headers=_webhook_headers())
 
     assert response.status_code == 400
     assert response.json() == {"detail": "Invalid webhook signature"}
@@ -176,6 +170,7 @@ async def test_invalid_signature_value_error_returns_400(client, monkeypatch):
 # ---------------------------------------------------------------------------
 # Event-type / recipient filtering
 # ---------------------------------------------------------------------------
+
 
 async def test_non_email_received_event_is_ignored(client, monkeypatch):
     _install_fake_webhook(monkeypatch)
@@ -199,15 +194,17 @@ async def test_recipient_not_in_allowlist_is_ignored(client, monkeypatch):
 
     response = await client.post(
         RESEND_WEBHOOK_URL,
-        content=json.dumps({
-            "type": "email.received",
-            "data": {
-                "from": "sender@example.com",
-                "subject": "Hi",
-                "email_id": "email_1",
-                "to": ["random@negolah.my"],
-            },
-        }).encode(),
+        content=json.dumps(
+            {
+                "type": "email.received",
+                "data": {
+                    "from": "sender@example.com",
+                    "subject": "Hi",
+                    "email_id": "email_1",
+                    "to": ["random@negolah.my"],
+                },
+            }
+        ).encode(),
         headers=_webhook_headers(),
     )
 
@@ -222,15 +219,17 @@ async def test_missing_to_field_is_ignored(client, monkeypatch):
 
     response = await client.post(
         RESEND_WEBHOOK_URL,
-        content=json.dumps({
-            "type": "email.received",
-            "data": {
-                "from": "sender@example.com",
-                "subject": "Hi",
-                "email_id": "email_1",
-                # no "to" key at all
-            },
-        }).encode(),
+        content=json.dumps(
+            {
+                "type": "email.received",
+                "data": {
+                    "from": "sender@example.com",
+                    "subject": "Hi",
+                    "email_id": "email_1",
+                    # no "to" key at all
+                },
+            }
+        ).encode(),
         headers=_webhook_headers(),
     )
 
@@ -241,6 +240,7 @@ async def test_missing_to_field_is_ignored(client, monkeypatch):
 # ---------------------------------------------------------------------------
 # Happy path forwarding
 # ---------------------------------------------------------------------------
+
 
 async def test_happy_path_forwarding_no_attachments(client, monkeypatch):
     _install_fake_webhook(monkeypatch)
@@ -255,21 +255,21 @@ async def test_happy_path_forwarding_no_attachments(client, monkeypatch):
     )
     send_resp = _make_response(json_data={"id": "sent_1"})
 
-    client_instance = _install_fake_async_client(
-        monkeypatch, get_effect=[fetch_resp], post_effect=[send_resp]
-    )
+    client_instance = _install_fake_async_client(monkeypatch, get_effect=[fetch_resp], post_effect=[send_resp])
 
     response = await client.post(
         RESEND_WEBHOOK_URL,
-        content=json.dumps({
-            "type": "email.received",
-            "data": {
-                "from": "sender@example.com",
-                "subject": "Need help",
-                "email_id": "email_42",
-                "to": ["support@example.com"],
-            },
-        }).encode(),
+        content=json.dumps(
+            {
+                "type": "email.received",
+                "data": {
+                    "from": "sender@example.com",
+                    "subject": "Need help",
+                    "email_id": "email_42",
+                    "to": ["support@example.com"],
+                },
+            }
+        ).encode(),
         headers=_webhook_headers(),
     )
 
@@ -300,26 +300,24 @@ async def test_happy_path_forwarding_no_attachments(client, monkeypatch):
 async def test_happy_path_falls_back_to_pre_wrapped_text_when_no_html(client, monkeypatch):
     _install_fake_webhook(monkeypatch)
 
-    fetch_resp = _make_response(
-        json_data={"html": None, "text": "just plain text", "attachments": [], "raw": {}}
-    )
+    fetch_resp = _make_response(json_data={"html": None, "text": "just plain text", "attachments": [], "raw": {}})
     send_resp = _make_response(json_data={"id": "sent_2"})
 
-    client_instance = _install_fake_async_client(
-        monkeypatch, get_effect=[fetch_resp], post_effect=[send_resp]
-    )
+    client_instance = _install_fake_async_client(monkeypatch, get_effect=[fetch_resp], post_effect=[send_resp])
 
     response = await client.post(
         RESEND_WEBHOOK_URL,
-        content=json.dumps({
-            "type": "email.received",
-            "data": {
-                "from": "sender@example.com",
-                "subject": "Plain text mail",
-                "email_id": "email_99",
-                "to": ["support@example.com"],
-            },
-        }).encode(),
+        content=json.dumps(
+            {
+                "type": "email.received",
+                "data": {
+                    "from": "sender@example.com",
+                    "subject": "Plain text mail",
+                    "email_id": "email_99",
+                    "to": ["support@example.com"],
+                },
+            }
+        ).encode(),
         headers=_webhook_headers(),
     )
 
@@ -336,26 +334,24 @@ async def test_happy_path_multiple_allowed_recipients_tagged_together(client, mo
     )
     _install_fake_webhook(monkeypatch)
 
-    fetch_resp = _make_response(
-        json_data={"html": "<p>hi</p>", "text": "hi", "attachments": [], "raw": {}}
-    )
+    fetch_resp = _make_response(json_data={"html": "<p>hi</p>", "text": "hi", "attachments": [], "raw": {}})
     send_resp = _make_response(json_data={"id": "sent_3"})
 
-    client_instance = _install_fake_async_client(
-        monkeypatch, get_effect=[fetch_resp], post_effect=[send_resp]
-    )
+    client_instance = _install_fake_async_client(monkeypatch, get_effect=[fetch_resp], post_effect=[send_resp])
 
     response = await client.post(
         RESEND_WEBHOOK_URL,
-        content=json.dumps({
-            "type": "email.received",
-            "data": {
-                "from": "sender@example.com",
-                "subject": "Broadcast",
-                "email_id": "email_7",
-                "to": ["support@example.com", "admin@example.com", "random@negolah.my"],
-            },
-        }).encode(),
+        content=json.dumps(
+            {
+                "type": "email.received",
+                "data": {
+                    "from": "sender@example.com",
+                    "subject": "Broadcast",
+                    "email_id": "email_7",
+                    "to": ["support@example.com", "admin@example.com", "random@negolah.my"],
+                },
+            }
+        ).encode(),
         headers=_webhook_headers(),
     )
 
@@ -390,15 +386,17 @@ async def test_happy_path_with_real_and_inline_attachments(client, monkeypatch):
 
     response = await client.post(
         RESEND_WEBHOOK_URL,
-        content=json.dumps({
-            "type": "email.received",
-            "data": {
-                "from": "sender@example.com",
-                "subject": "With attachment",
-                "email_id": "email_5",
-                "to": ["support@example.com"],
-            },
-        }).encode(),
+        content=json.dumps(
+            {
+                "type": "email.received",
+                "data": {
+                    "from": "sender@example.com",
+                    "subject": "With attachment",
+                    "email_id": "email_5",
+                    "to": ["support@example.com"],
+                },
+            }
+        ).encode(),
         headers=_webhook_headers(),
     )
 
@@ -417,6 +415,7 @@ async def test_happy_path_with_real_and_inline_attachments(client, monkeypatch):
     assert attachment["content_type"] == "application/octet-stream"
 
     import base64
+
     assert base64.b64decode(attachment["content"]) == b"filedata123"
 
 
@@ -435,21 +434,21 @@ async def test_no_download_url_skips_raw_fetch_even_with_real_attachments(client
     )
     send_resp = _make_response(json_data={"id": "sent_5"})
 
-    client_instance = _install_fake_async_client(
-        monkeypatch, get_effect=[fetch_resp], post_effect=[send_resp]
-    )
+    client_instance = _install_fake_async_client(monkeypatch, get_effect=[fetch_resp], post_effect=[send_resp])
 
     response = await client.post(
         RESEND_WEBHOOK_URL,
-        content=json.dumps({
-            "type": "email.received",
-            "data": {
-                "from": "sender@example.com",
-                "subject": "No raw url",
-                "email_id": "email_6",
-                "to": ["support@example.com"],
-            },
-        }).encode(),
+        content=json.dumps(
+            {
+                "type": "email.received",
+                "data": {
+                    "from": "sender@example.com",
+                    "subject": "No raw url",
+                    "email_id": "email_6",
+                    "to": ["support@example.com"],
+                },
+            }
+        ).encode(),
         headers=_webhook_headers(),
     )
 
@@ -463,28 +462,27 @@ async def test_no_download_url_skips_raw_fetch_even_with_real_attachments(client
 # Forwarding failure -> 503
 # ---------------------------------------------------------------------------
 
+
 def _received_event(email_id: str, subject: str = "Boom") -> bytes:
-    return json.dumps({
-        "type": "email.received",
-        "data": {
-            "from": "sender@example.com",
-            "subject": subject,
-            "email_id": email_id,
-            "to": ["support@example.com"],
-        },
-    }).encode()
+    return json.dumps(
+        {
+            "type": "email.received",
+            "data": {
+                "from": "sender@example.com",
+                "subject": subject,
+                "email_id": email_id,
+                "to": ["support@example.com"],
+            },
+        }
+    ).encode()
 
 
 async def test_httpx_error_on_fetch_returns_503(client, monkeypatch):
     _install_fake_webhook(monkeypatch)
 
-    _install_fake_async_client(
-        monkeypatch, get_effect=[httpx.HTTPError("network exploded")]
-    )
+    _install_fake_async_client(monkeypatch, get_effect=[httpx.HTTPError("network exploded")])
 
-    response = await client.post(
-        RESEND_WEBHOOK_URL, content=_received_event("email_err"), headers=_webhook_headers()
-    )
+    response = await client.post(RESEND_WEBHOOK_URL, content=_received_event("email_err"), headers=_webhook_headers())
 
     assert response.status_code == 503
     assert response.json() == {"detail": "Forwarding failed, retry"}
@@ -495,16 +493,12 @@ async def test_httpx_error_on_fetch_raise_for_status_returns_503(client, monkeyp
     _install_fake_webhook(monkeypatch)
 
     bad_fetch_resp = _make_response(
-        raise_error=httpx.HTTPStatusError(
-            "500 error", request=MagicMock(), response=MagicMock(status_code=500)
-        )
+        raise_error=httpx.HTTPStatusError("500 error", request=MagicMock(), response=MagicMock(status_code=500))
     )
 
     _install_fake_async_client(monkeypatch, get_effect=[bad_fetch_resp])
 
-    response = await client.post(
-        RESEND_WEBHOOK_URL, content=_received_event("email_err2"), headers=_webhook_headers()
-    )
+    response = await client.post(RESEND_WEBHOOK_URL, content=_received_event("email_err2"), headers=_webhook_headers())
 
     assert response.status_code == 503
     assert response.json() == {"detail": "Forwarding failed, retry"}
@@ -513,9 +507,7 @@ async def test_httpx_error_on_fetch_raise_for_status_returns_503(client, monkeyp
 async def test_httpx_error_on_send_returns_503(client, monkeypatch):
     _install_fake_webhook(monkeypatch)
 
-    fetch_resp = _make_response(
-        json_data={"html": "<p>hi</p>", "text": "hi", "attachments": [], "raw": {}}
-    )
+    fetch_resp = _make_response(json_data={"html": "<p>hi</p>", "text": "hi", "attachments": [], "raw": {}})
 
     _install_fake_async_client(
         monkeypatch,
@@ -523,9 +515,7 @@ async def test_httpx_error_on_send_returns_503(client, monkeypatch):
         post_effect=[httpx.HTTPError("send failed")],
     )
 
-    response = await client.post(
-        RESEND_WEBHOOK_URL, content=_received_event("email_err3"), headers=_webhook_headers()
-    )
+    response = await client.post(RESEND_WEBHOOK_URL, content=_received_event("email_err3"), headers=_webhook_headers())
 
     assert response.status_code == 503
     assert response.json() == {"detail": "Forwarding failed, retry"}

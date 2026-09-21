@@ -51,7 +51,7 @@ class _Query:
 class _Client:
     """Answers `items` with the scenario's listing, every other table with nothing.
 
-    `agent/tools/negotiation.py` does `from connector import admin_supabase`
+    `domains/negotiation/tools/negotiation.py` does `from core.connector import admin_supabase`
     inside the function, so there is no module attribute to patch — the seam is
     `connector.admin_supabase` itself, which every tool shares. Scoping by table
     name keeps an orders or checkout scenario from being handed a pocket
@@ -93,11 +93,13 @@ def scenario_item(item: dict):
         # Function-local `from connector import ...` resolves at call time, so
         # patching the module attribute catches negotiation.py, payment.py and
         # items.py.
-        patch("connector.admin_supabase", client),
-        patch("connector.user_supabase", client),
-        # orders.py binds `admin_supabase` at MODULE level, so it holds its own
-        # reference and patching `connector` does not reach it.
-        patch("agent.tools.orders.admin_supabase", client),
-        patch("agent.bot.get_item_details_for_context", lambda _item_id: row),
+        patch("core.connector.admin_supabase", client),
+        patch("core.connector.user_supabase", client),
+        # The domain services bind their clients at MODULE level, so they hold
+        # their own references and patching `core.connector` does not reach them.
+        patch("domains.catalog.services.admin_supabase", client),
+        patch("domains.catalog.services.user_supabase", client),
+        patch("domains.billing.services.admin_supabase", client),
+        patch("domains.negotiation.bot.get_item_details_for_context", lambda _item_id: row),
     ):
         yield row

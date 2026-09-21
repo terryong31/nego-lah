@@ -19,11 +19,12 @@ import contextlib
 import json
 import time
 
-import routes.items as routes_items
+import domains.catalog.routes as routes_items
 
 # ---------------------------------------------------------------------------
 # GET /items
 # ---------------------------------------------------------------------------
+
 
 async def test_get_all_items_no_keyword_returns_public_shape(client, monkeypatch):
     raw_items = [
@@ -116,6 +117,7 @@ async def test_get_all_items_with_keyword_forwards_it(client, monkeypatch):
 # GET /items/featured  (must not be shadowed by /{item_id})
 # ---------------------------------------------------------------------------
 
+
 async def test_get_featured_not_shadowed_by_item_id_route(client, monkeypatch):
     # If '/featured' were captured by '/{item_id}' this would hit
     # get_item_by_id (which does a Supabase lookup for id='featured') instead
@@ -170,6 +172,7 @@ async def test_get_featured_custom_limit(client, monkeypatch):
 # GET /items/{item_id}
 # ---------------------------------------------------------------------------
 
+
 async def test_get_item_by_id_found(client, patch_supabase, fake_supabase):
     from conftest import make_supabase_result as _make_supabase_result
 
@@ -181,7 +184,7 @@ async def test_get_item_by_id_found(client, patch_supabase, fake_supabase):
     fake_supabase.table.return_value.select.return_value.eq.return_value.is_.return_value.execute.return_value = (
         _make_supabase_result([row])
     )
-    patch_supabase("connector", user=fake_supabase)
+    patch_supabase("core.connector", user=fake_supabase)
 
     response = await client.get("/items/item-123")
 
@@ -207,7 +210,7 @@ async def test_get_item_by_id_preserves_translations(client, patch_supabase, fak
     fake_supabase.table.return_value.select.return_value.eq.return_value.is_.return_value.execute.return_value = (
         _make_supabase_result([row])
     )
-    patch_supabase("connector", user=fake_supabase)
+    patch_supabase("core.connector", user=fake_supabase)
 
     response = await client.get("/items/item-tr")
 
@@ -222,7 +225,7 @@ async def test_get_item_by_id_not_found_empty_data(client, patch_supabase, fake_
     fake_supabase.table.return_value.select.return_value.eq.return_value.is_.return_value.execute.return_value = (
         _make_supabase_result([])
     )
-    patch_supabase("connector", user=fake_supabase)
+    patch_supabase("core.connector", user=fake_supabase)
 
     response = await client.get("/items/does-not-exist")
 
@@ -238,7 +241,7 @@ async def test_get_item_by_id_not_found_none_data(client, patch_supabase, fake_s
     # to exercise the `if response.data and ...` falsy branch either way.
     result.data = None
     fake_supabase.table.return_value.select.return_value.eq.return_value.is_.return_value.execute.return_value = result
-    patch_supabase("connector", user=fake_supabase)
+    patch_supabase("core.connector", user=fake_supabase)
 
     response = await client.get("/items/whatever-id")
 
@@ -254,7 +257,7 @@ async def test_get_item_by_id_soft_deleted_is_404(client, patch_supabase, fake_s
     fake_supabase.table.return_value.select.return_value.eq.return_value.is_.return_value.execute.return_value = (
         _make_supabase_result([])
     )
-    patch_supabase("connector", user=fake_supabase)
+    patch_supabase("core.connector", user=fake_supabase)
 
     response = await client.get("/items/soft-deleted-item")
 
@@ -270,7 +273,7 @@ async def test_get_item_by_id_malformed_id_lookup_exception_is_404_not_500(clien
     fake_supabase.table.return_value.select.return_value.eq.return_value.is_.return_value.execute.side_effect = (
         Exception("invalid input syntax for type uuid")
     )
-    patch_supabase("connector", user=fake_supabase)
+    patch_supabase("core.connector", user=fake_supabase)
 
     response = await client.get("/items/undefined")
 
@@ -284,7 +287,7 @@ async def test_get_item_by_id_uses_eq_id_filter(client, patch_supabase, fake_sup
     fake_supabase.table.return_value.select.return_value.eq.return_value.is_.return_value.execute.return_value = (
         _make_supabase_result([{"id": "abc", "name": "Thing", "image_path": None}])
     )
-    patch_supabase("connector", user=fake_supabase)
+    patch_supabase("core.connector", user=fake_supabase)
 
     response = await client.get("/items/abc")
 
@@ -295,6 +298,7 @@ async def test_get_item_by_id_uses_eq_id_filter(client, patch_supabase, fake_sup
 # ---------------------------------------------------------------------------
 # _to_public helper — direct unit tests for the image_path normalization logic
 # ---------------------------------------------------------------------------
+
 
 def test_to_public_dict_image_path():
     row = {"id": "1", "image_path": json.dumps({"a.jpg": "url-a", "b.jpg": "url-b"})}
@@ -348,6 +352,7 @@ def test_to_public_empty_string_image_path():
 # serialises every concurrent visitor behind one another.
 # ---------------------------------------------------------------------------
 
+
 @contextlib.asynccontextmanager
 async def _loop_ticks():
     counter = {"ticks": 0}
@@ -398,20 +403,15 @@ async def test_featured_items_do_not_block_the_event_loop(client, monkeypatch):
     assert counter["ticks"] > 5
 
 
-async def test_single_item_lookup_does_not_block_the_event_loop(
-    client, patch_supabase, fake_supabase
-):
+async def test_single_item_lookup_does_not_block_the_event_loop(client, patch_supabase, fake_supabase):
     from conftest import make_supabase_result
 
     def slow_execute():
         time.sleep(0.2)
         return make_supabase_result([ROW])
 
-    (
-        fake_supabase.table.return_value.select.return_value.eq.return_value
-        .is_.return_value.execute
-    ) = slow_execute
-    patch_supabase("connector", user=fake_supabase)
+    (fake_supabase.table.return_value.select.return_value.eq.return_value.is_.return_value.execute) = slow_execute
+    patch_supabase("core.connector", user=fake_supabase)
 
     async with _loop_ticks() as counter:
         response = await client.get("/items/item-1")

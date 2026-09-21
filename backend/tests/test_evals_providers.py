@@ -14,8 +14,8 @@ under the CLOUD prompt — a configuration production never runs.
 
 import pytest
 
-import agent.bot as bot
-from agent.llm_factory import (
+import domains.negotiation.bot as bot
+from domains.negotiation.llm_factory import (
     PROVIDER_CLOUD,
     PROVIDER_LOCAL,
     cloud_provider_info,
@@ -27,6 +27,7 @@ from evals.providers import CHOICES, CLOUD, LOCAL, is_self_hosted, pinned_provid
 # ---------------------------------------------------------------------------
 # S1 — name -> engine
 # ---------------------------------------------------------------------------
+
 
 def test_resolve_local():
     assert resolve_provider(LOCAL).provider == PROVIDER_LOCAL
@@ -50,6 +51,7 @@ def test_choices_are_what_the_cli_offers():
 # S2 — the whole SPEC-081 stack follows the pin, not just the model
 # ---------------------------------------------------------------------------
 
+
 def test_pinning_local_selects_the_local_prompt_and_temperature():
     with pinned_provider(resolve_provider(LOCAL)):
         info = current_provider.get()
@@ -67,6 +69,7 @@ def test_pinning_cloud_selects_the_cloud_prompt_and_temperature():
 # ---------------------------------------------------------------------------
 # S3 — the pin is scoped, not sticky
 # ---------------------------------------------------------------------------
+
 
 def test_pin_restores_the_previous_provider():
     token = current_provider.set(cloud_provider_info())
@@ -90,6 +93,7 @@ def test_pin_restores_even_when_the_run_raises():
 # S5 — cost reporting tells a self-hosted run from an unpriced one
 # ---------------------------------------------------------------------------
 
+
 def test_self_hosted_is_recognised():
     assert is_self_hosted(resolve_provider(LOCAL)) is True
     assert is_self_hosted(resolve_provider(CLOUD)) is False
@@ -99,11 +103,12 @@ def test_self_hosted_is_recognised():
 # S5 — the rename that broke the harness
 # ---------------------------------------------------------------------------
 
+
 def test_the_name_the_runner_imports_still_exists():
     """`runner.main()` imported `_gemini_model`, which no longer existed. The
     import is inside the function, so collection passed and the harness only
     failed when someone actually ran it."""
-    from agent.llm_factory import _gemini_model_name
+    from domains.negotiation.llm_factory import _gemini_model_name
 
     assert isinstance(_gemini_model_name(), str)
 

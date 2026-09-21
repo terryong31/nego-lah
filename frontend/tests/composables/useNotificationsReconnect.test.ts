@@ -16,6 +16,7 @@ import { defineComponent, reactive, ref } from 'vue'
 import { flushPromises } from '@vue/test-utils'
 import { mockNuxtImport, mountSuspended } from '@nuxt/test-utils/runtime'
 import { useNotifications } from '../../app/composables/useNotifications'
+import { makeAuthStub } from '../helpers/auth'
 
 const userRef = ref<Record<string, unknown> | null>(null)
 const toastAddMock = vi.fn()
@@ -24,25 +25,15 @@ const toastAddMock = vi.fn()
 // verbatim. The tests drive this object to reproduce both shapes.
 const routeMock = reactive({ path: '/' })
 
-// SPEC-056 #6: the stream is authorised by a short-lived ticket minted over a
-// header-authenticated POST, never by the access token in the URL.
+// SPEC-093: the stream is authorised by the session cookie, which the browser
+// attaches to a `withCredentials` EventSource. The URL carries nothing.
 const fetchMock = vi.fn()
 
-mockNuxtImport('useSupabaseUser', () => () => userRef)
+const authStub = makeAuthStub(userRef)
+
+mockNuxtImport('useAuth', () => () => authStub)
 mockNuxtImport('useRoute', () => () => routeMock)
 mockNuxtImport('useToast', () => () => ({ add: toastAddMock }))
-// Captured so a test can fire real Supabase auth events at the composable.
-let authCallback: ((event: string, session: unknown) => void) | null = null
-
-mockNuxtImport('useSupabaseClient', () => () => ({
-  auth: {
-    getSession: () => Promise.resolve({ data: { session: { access_token: 'jwt-token' } } }),
-    onAuthStateChange: (cb: (event: string, session: unknown) => void) => {
-      authCallback = cb
-      return { data: { subscription: { unsubscribe: () => {} } } }
-    }
-  }
-}))
 
 // Every constructed EventSource, so a test can count how many streams the
 // composable actually opened and push events through them.
@@ -91,9 +82,6 @@ const unreadResponse = { count: 0, has_unread: false }
 // global directly — same approach as tests/composables/useApi.test.ts.
 function installFetchStub() {
   fetchMock.mockReset().mockImplementation((url: string) => {
-    if (String(url).includes('/chat/notifications/ticket')) {
-      return Promise.resolve({ ticket: 'ticket-abc', expires_in: 30 })
-    }
     if (String(url).includes('/chat/unread')) {
       return Promise.resolve(unreadResponse)
     }
@@ -155,16 +143,20 @@ describe('useNotifications stream recovery', () => {
     wrapper.unmount()
   })
 
-  it('comes back after a ticket mint that failed', async () => {
-    // The dev API restarting under `--reload` is enough: the stream drops, the
-    // retry lands while the server is still booting, and the mint fails.
+  it('comes back after a connection that could not be opened', async () => {
+    // The dev API restarting under `--reload` is enough: the stream drops and
+    // the retry lands while the server is still booting.
     const wrapper = await mountSuspended(Host)
 
     vi.useFakeTimers()
-    fetchMock.mockRejectedValueOnce(new Error('502 while the API restarts'))
-    userRef.value = { sub: 'user-1' }
+    const realEventSource = (window as unknown as Record<string, unknown>).EventSource
+    ;(window as unknown as Record<string, unknown>).EventSource = function ThrowingEventSource() {
+      ;(window as unknown as Record<string, unknown>).EventSource = realEventSource
+      throw new Error('502 while the API restarts')
+    }
+    userRef.value = { id: 'user-1' }
     await vi.advanceTimersByTimeAsync(0)
-    expect(streams, 'the mint failed, so nothing opened yet').toHaveLength(0)
+    expect(streams, 'the connection threw, so nothing opened yet').toHaveLength(0)
 
     await vi.advanceTimersByTimeAsync(5_000)
 
@@ -194,22 +186,27 @@ describe('useNotifications stream recovery', () => {
     wrapper.unmount()
   })
 
-  it('keeps the stream through an auth event whose session is momentarily null', async () => {
-    // Supabase emits plenty of events with no session attached — a refresh in
-    // flight, a re-read on navigation. Treating every one of them as "the user
-    // is gone" tore down a healthy stream at exactly the moment the buyer was
-    // navigating INTO the conversation, which is the moment before the agent
+  it('does not churn the stream when the session is merely re-read', async () => {
+    // `@nuxtjs/supabase` emitted an event for every token refresh and every
+    // navigation re-read, most of them carrying no session. Treating those as
+    // "the user is gone" tore down a healthy stream at exactly the moment the
+    // buyer was navigating INTO the conversation — the moment before the agent
     // answers them. Measured on the live stack: the stream died ~4s before each
     // send and the reply, 2s later, had nowhere to go.
+    //
+    // SPEC-093 removed the event stream entirely; what is watched now is who
+    // the server says is signed in, so a re-read that resolves to the same
+    // person is not an event at all. This is that property.
     const wrapper = await mountSuspended(Host)
-    userRef.value = { sub: 'user-5' }
+    userRef.value = { id: 'user-5' }
     await flushPromises()
     expect(streams).toHaveLength(1)
 
-    authCallback?.('TOKEN_REFRESHED', null)
+    userRef.value = { id: 'user-5', email: 're-read@example.com' }
     await flushPromises()
 
-    expect(streams[0]!.closed, 'a null session is not a sign-out').toBe(false)
+    expect(streams[0]!.closed, 'the same user is not a sign-out').toBe(false)
+    expect(streams).toHaveLength(1)
 
     wrapper.vm.disconnect()
     wrapper.unmount()
@@ -217,11 +214,11 @@ describe('useNotifications stream recovery', () => {
 
   it('closes the stream when the buyer actually signs out', async () => {
     const wrapper = await mountSuspended(Host)
-    userRef.value = { sub: 'user-6' }
+    userRef.value = { id: 'user-6' }
     await flushPromises()
     expect(streams).toHaveLength(1)
 
-    authCallback?.('SIGNED_OUT', null)
+    userRef.value = null
     await flushPromises()
 
     expect(streams[0]!.closed).toBe(true)
@@ -230,16 +227,21 @@ describe('useNotifications stream recovery', () => {
   })
 
   it('gives up once the buyer has signed out', async () => {
+    // The retry loop never gives up while someone is signed in — the
+    // alternative is a session that silently stops being told anything. Signing
+    // out is the one thing that ends it, and it has to end it for good.
     const wrapper = await mountSuspended(Host)
 
     vi.useFakeTimers()
-    fetchMock.mockRejectedValueOnce(new Error('502'))
     userRef.value = { sub: 'user-2' }
     await vi.advanceTimersByTimeAsync(0)
+    const opened = streams.length
+
     userRef.value = null
     await vi.advanceTimersByTimeAsync(30_000)
 
-    expect(streams).toHaveLength(0)
+    expect(streams, 'nothing reopened after the sign-out').toHaveLength(opened)
+    expect(streams.every(s => s.closed)).toBe(true)
 
     wrapper.unmount()
   })
@@ -248,11 +250,15 @@ describe('useNotifications stream recovery', () => {
 // ---------------------------------------------------------------------------
 // SPEC-085 — the stream was gated on a claim that does not exist
 //
-// `useSupabaseUser()` holds the JWT payload from `getClaims()`, where the id is
+// `useSupabaseUser()` held the JWT payload from `getClaims()`, where the id is
 // `sub`. Every guard in this composable read `user.value?.id`, which is
 // `undefined` there — so `connect()` returned early every time and the stream
 // never opened in production. These tests mocked the user as `{ id }`, which is
 // exactly why they passed against it.
+//
+// The session no longer comes from a JWT (SPEC-093), so `id` is what the app
+// produces — but `resolveUserId` still accepts both spellings, and this is the
+// test that keeps the other half of it honest.
 // ---------------------------------------------------------------------------
 
 describe('useNotifications: the user id comes from the `sub` claim (SPEC-085)', () => {

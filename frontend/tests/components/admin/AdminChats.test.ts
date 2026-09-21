@@ -194,7 +194,7 @@ describe('components/admin/AdminChats.vue', () => {
     }))
   })
 
-  it('a "new_message" broadcast from the typing channel appends a message and re-renders', async () => {
+  it('a "new_message" event from the chat stream appends a message and re-renders', async () => {
     callMock.mockImplementationOnce(() => Promise.resolve([makeChat({ user_id: 'u1', display_name: 'Alice' })]))
 
     const wrapper = await mountSuspended(AdminChats)
@@ -208,13 +208,13 @@ describe('components/admin/AdminChats.vue', () => {
     const joinCall = typingState.join.mock.calls[0]!
     const onMessage = joinCall[1].onMessage as (payload: unknown) => void
 
-    onMessage({ role: 'ai', content: 'Live update!', source: 'ai' })
+    onMessage({ role: 'ai', message: 'Live update!', source: 'ai' })
     await flushPromises()
 
     expect(wrapper.text()).toContain('Live update!')
   })
 
-  it('a "new_message" broadcast with no content is ignored', async () => {
+  it('a "new_message" event with no text is ignored', async () => {
     callMock.mockImplementationOnce(() => Promise.resolve([makeChat({ user_id: 'u1', display_name: 'Alice' })]))
 
     const wrapper = await mountSuspended(AdminChats)
@@ -356,7 +356,7 @@ describe('components/admin/AdminChats.vue', () => {
     await flushPromises()
 
     const onMessage = typingState.join.mock.calls[0]![1].onMessage as (payload: unknown) => void
-    onMessage({ role: 'ai', content: 'This is a duplicated message', source: 'admin' })
+    onMessage({ role: 'ai', message: 'This is a duplicated message', source: 'admin' })
     await flushPromises()
 
     const copies = wrapper.text().split('This is a duplicated message').length - 1
@@ -735,7 +735,7 @@ describe('components/admin/AdminChats.vue', () => {
     })
 
     const onMessage = typingState.join.mock.calls[0]![1].onMessage as (payload: unknown) => void
-    onMessage({ role: 'system', content: '--- The AI has transferred the chat to Terry (human seller) who will take over shortly ---', source: 'system' })
+    onMessage({ role: 'system', message: '--- The AI has transferred the chat to Terry (human seller) who will take over shortly ---', source: 'system' })
     await flushPromises()
 
     expect(callMock).toHaveBeenCalledWith('/users/u1/ai')

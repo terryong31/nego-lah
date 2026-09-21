@@ -3,8 +3,8 @@ import sys
 
 from pythonjsonlogger import jsonlogger
 
-from logger import logger as module_logger
-from logger import setup_logger
+from core.logger import logger as module_logger
+from core.logger import setup_logger
 
 
 def _clear_logger(name):

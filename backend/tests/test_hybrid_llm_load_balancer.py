@@ -23,7 +23,7 @@ import pytest
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_openai import ChatOpenAI
 
-from agent.llm_factory import (
+from domains.negotiation.llm_factory import (
     LEASE_TTL_SECONDS,
     LOCAL_LLM_LEASE_KEY,
     PROVIDER_CLOUD,
@@ -40,7 +40,7 @@ from agent.llm_factory import (
 def _clean_lease():
     """Guarantee no lease leaks between tests (the autouse Redis flush in
     conftest runs after, but the ContextVar needs its own reset)."""
-    from cache import redis_client
+    from core.cache import redis_client
 
     redis_client.delete(LOCAL_LLM_LEASE_KEY)
     token = current_provider.set(None)
@@ -52,10 +52,11 @@ def _clean_lease():
 @pytest.fixture
 def tunnel_up(monkeypatch):
     """Report the Apple M5 tunnel as healthy without any HTTP traffic."""
+
     async def _healthy(timeout=1.5):
         return True
 
-    monkeypatch.setattr("agent.llm_factory.is_local_llm_available", _healthy)
+    monkeypatch.setattr("domains.negotiation.llm_factory.is_local_llm_available", _healthy)
 
 
 @pytest.fixture
@@ -63,7 +64,7 @@ def tunnel_down(monkeypatch):
     async def _unhealthy(timeout=1.5):
         return False
 
-    monkeypatch.setattr("agent.llm_factory.is_local_llm_available", _unhealthy)
+    monkeypatch.setattr("domains.negotiation.llm_factory.is_local_llm_available", _unhealthy)
 
 
 @pytest.fixture
@@ -79,9 +80,10 @@ def local_env(monkeypatch):
 # Atomic Redis concurrency lease
 # ---------------------------------------------------------------------------
 
+
 def test_acquire_lease_sets_key_with_ttl():
     """First acquirer wins and the key carries the deadlock-breaking TTL."""
-    from cache import redis_client
+    from core.cache import redis_client
 
     token = try_acquire_local_llm_lease()
     assert token is not None
@@ -100,7 +102,8 @@ def test_release_lease_allows_reacquisition():
     assert token is not None
     release_local_llm_lease(token)
 
-    from cache import redis_client
+    from core.cache import redis_client
+
     assert redis_client.get(LOCAL_LLM_LEASE_KEY) is None
     assert try_acquire_local_llm_lease() is not None
 
@@ -109,6 +112,7 @@ def test_lease_acquisition_survives_redis_outage(monkeypatch):
     """A dead Redis must not take the chat endpoint down with it: we fail
     CLOSED on the local model (overflow to Gemini) rather than risk two
     concurrent generations saturating the laptop's GPU."""
+
     class BrokenRedis:
         def set(self, *a, **kw):
             raise ConnectionError("redis down")
@@ -119,7 +123,7 @@ def test_lease_acquisition_survives_redis_outage(monkeypatch):
         def delete(self, *a, **kw):
             raise ConnectionError("redis down")
 
-    monkeypatch.setattr("agent.llm_factory.redis_client", BrokenRedis())
+    monkeypatch.setattr("domains.negotiation.llm_factory.redis_client", BrokenRedis())
 
     assert try_acquire_local_llm_lease() is None
     release_local_llm_lease("some-token")  # must not raise
@@ -129,9 +133,10 @@ def test_lease_acquisition_survives_redis_outage(monkeypatch):
 # Scenario 1 — idle local dispatch
 # ---------------------------------------------------------------------------
 
+
 async def test_scenario_1_idle_dispatches_to_local_qwen(local_env, tunnel_up):
     """Healthy tunnel + no lease => the turn runs on the Apple M5."""
-    from cache import redis_client
+    from core.cache import redis_client
 
     async with hybrid_llm_session() as info:
         assert info.provider == PROVIDER_LOCAL
@@ -147,6 +152,7 @@ async def test_scenario_1_idle_dispatches_to_local_qwen(local_env, tunnel_up):
 # ---------------------------------------------------------------------------
 # Scenario 2 — busy cloud overflow, zero wait
 # ---------------------------------------------------------------------------
+
 
 async def test_scenario_2_busy_overflows_to_gemini(local_env, tunnel_up):
     """A lease already held by another turn pushes this one straight to Gemini."""
@@ -169,7 +175,7 @@ async def test_scenario_2_overflow_makes_no_http_call_to_the_tunnel(local_env, m
         probe_calls.append(timeout)
         return True
 
-    monkeypatch.setattr("agent.llm_factory.is_local_llm_available", _probe)
+    monkeypatch.setattr("domains.negotiation.llm_factory.is_local_llm_available", _probe)
     assert try_acquire_local_llm_lease() is not None
 
     async with hybrid_llm_session() as info:
@@ -182,7 +188,7 @@ async def test_scenario_2_overflow_makes_no_http_call_to_the_tunnel(local_env, m
 
 async def test_overflow_when_tunnel_is_down(local_env, tunnel_down):
     """Scenario: laptop asleep / tunnel down => Gemini, and no lease taken."""
-    from cache import redis_client
+    from core.cache import redis_client
 
     async with hybrid_llm_session() as info:
         assert info.provider == PROVIDER_CLOUD
@@ -192,7 +198,7 @@ async def test_overflow_when_tunnel_is_down(local_env, tunnel_down):
 
 async def test_forced_gemini_provider_never_takes_the_lease(local_env, tunnel_up, monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "gemini")
-    from cache import redis_client
+    from core.cache import redis_client
 
     async with hybrid_llm_session() as info:
         assert info.provider == PROVIDER_CLOUD
@@ -203,8 +209,9 @@ async def test_forced_gemini_provider_never_takes_the_lease(local_env, tunnel_up
 # Scenario 3 — lease release on completion and on failure
 # ---------------------------------------------------------------------------
 
+
 async def test_scenario_3_lease_released_after_normal_completion(local_env, tunnel_up):
-    from cache import redis_client
+    from core.cache import redis_client
 
     async with hybrid_llm_session() as info:
         assert info.provider == PROVIDER_LOCAL
@@ -216,7 +223,7 @@ async def test_scenario_3_lease_released_after_normal_completion(local_env, tunn
 
 async def test_scenario_3_lease_released_when_the_turn_raises(local_env, tunnel_up):
     """A crashing generation must not wedge the laptop out of rotation."""
-    from cache import redis_client
+    from core.cache import redis_client
 
     with pytest.raises(RuntimeError, match="boom"):
         async with hybrid_llm_session():
@@ -234,6 +241,7 @@ async def test_provider_context_is_reset_after_the_session(local_env, tunnel_up)
 # ---------------------------------------------------------------------------
 # Scenario 4 — multi-worker concurrency
 # ---------------------------------------------------------------------------
+
 
 async def test_scenario_4_exactly_one_of_four_concurrent_turns_goes_local(local_env, tunnel_up):
     """Four simultaneous buyers: one gets the M5, three overflow instantly.
@@ -283,8 +291,8 @@ def stub_local_turn(monkeypatch):
     The two passes are covered in `test_agent_decide.py` / `test_agent_speak.py`;
     what matters here is only which path a pinned provider takes.
     """
-    import agent.bot as bot
-    from agent.decide import TurnDecision
+    import domains.negotiation.bot as bot
+    from domains.negotiation.decide import TurnDecision
 
     async def _no_tool(_brief):
         return TurnDecision(tool=None)
@@ -297,9 +305,7 @@ def stub_local_turn(monkeypatch):
     monkeypatch.setattr(bot, "speaker_model", lambda: _Speaker())
 
 
-async def test_scenario_5_both_providers_read_the_same_history(
-    local_env, tunnel_up, stub_local_turn, monkeypatch
-):
+async def test_scenario_5_both_providers_read_the_same_history(local_env, tunnel_up, stub_local_turn, monkeypatch):
     """Provider selection is transport, not conversation state.
 
     SPEC-091 gives the two engines different turn architectures — the local one
@@ -308,7 +314,7 @@ async def test_scenario_5_both_providers_read_the_same_history(
     that both read the same transcript: a buyer who overflows to Gemini
     mid-negotiation cannot land in a conversation that has forgotten anything.
     """
-    import agent.bot as bot
+    import domains.negotiation.bot as bot
 
     seen = []
 
@@ -344,11 +350,9 @@ async def test_scenario_5_both_providers_read_the_same_history(
     assert [m.content for m in captured[0][:2]] == [row["content"] for row in HISTORY_ROWS]
 
 
-async def test_scenario_5_local_turn_never_touches_the_react_agent(
-    local_env, tunnel_up, stub_local_turn, monkeypatch
-):
+async def test_scenario_5_local_turn_never_touches_the_react_agent(local_env, tunnel_up, stub_local_turn, monkeypatch):
     """SPEC-091: a pinned-local turn runs the two-pass path, not the ReAct loop."""
-    import agent.bot as bot
+    import domains.negotiation.bot as bot
 
     monkeypatch.setattr(bot, "fetch_history", lambda user_id: list(HISTORY_ROWS))
     monkeypatch.setattr(bot.conversation_memory, "add_message", lambda *a, **kw: None)
@@ -367,11 +371,12 @@ async def test_scenario_5_local_turn_never_touches_the_react_agent(
 # Scenario 6 — deadlock prevention via TTL
 # ---------------------------------------------------------------------------
 
+
 def test_scenario_6_lease_expires_after_ttl_when_holder_dies(monkeypatch):
     """A worker killed mid-generation never runs its `finally`. The 45s TTL is
     what stops the laptop being permanently marked busy."""
-    import cache
-    from cache import redis_client
+    import core.cache as cache
+    from core.cache import redis_client
 
     fake_now = [1_000_000.0]
     monkeypatch.setattr(cache.time, "time", lambda: fake_now[0])
@@ -398,10 +403,11 @@ def test_lease_ttl_matches_spec():
 # Tight tunnel timeout
 # ---------------------------------------------------------------------------
 
+
 def test_local_model_uses_fast_connect_timeout(local_env, monkeypatch):
     """A downed tunnel must fail over in ~2s, not hang the buyer. The read
     timeout stays generous so long prefill on a 35B model isn't killed."""
-    monkeypatch.setattr("agent.llm_factory.is_local_llm_available_sync", lambda timeout=1.5: True)
+    monkeypatch.setattr("domains.negotiation.llm_factory.is_local_llm_available_sync", lambda timeout=1.5: True)
 
     model = get_chat_model(temperature=0.7, force_provider="local")
     timeout = model.client._client.timeout
@@ -413,6 +419,7 @@ def test_local_model_uses_fast_connect_timeout(local_env, monkeypatch):
 # ---------------------------------------------------------------------------
 # Provider attribution metadata
 # ---------------------------------------------------------------------------
+
 
 async def test_provider_metadata_shape_local(local_env, tunnel_up):
     async with hybrid_llm_session() as info:
@@ -430,12 +437,10 @@ async def test_provider_metadata_shape_cloud(local_env, tunnel_down):
         assert meta["hardware"]
 
 
-async def test_bot_chat_stream_emits_provider_metadata_first(
-    local_env, tunnel_up, stub_local_turn, monkeypatch
-):
+async def test_bot_chat_stream_emits_provider_metadata_first(local_env, tunnel_up, stub_local_turn, monkeypatch):
     """`chat_stream` announces the provider before any token so the UI can show
     the attribution chip while the answer is still generating."""
-    import agent.bot as bot
+    import domains.negotiation.bot as bot
 
     # A pinned-local provider takes the SPEC-091 decide-then-speak path, not the
     # ReAct agent, so `stub_local_turn` is what makes this turn inert. Stubbing
@@ -457,11 +462,12 @@ async def test_bot_chat_stream_emits_provider_metadata_first(
 # Dynamic model selection (no frozen singletons)
 # ---------------------------------------------------------------------------
 
+
 def test_customer_agent_model_is_resolved_per_turn(local_env, monkeypatch):
     """The compiled graph is cached, but the model behind it is not: flipping
     the pinned provider between turns must flip the model actually used."""
-    import agent.bot as bot
-    from agent.llm_factory import ProviderInfo
+    import domains.negotiation.bot as bot
+    from domains.negotiation.llm_factory import ProviderInfo
 
     resolve = bot._select_customer_model
 
@@ -491,7 +497,7 @@ def test_customer_agent_model_is_resolved_per_turn(local_env, monkeypatch):
 def test_bot_has_no_frozen_model_singleton():
     """SPEC-020 removes the module-level `_model` cache that pinned the whole
     process to whichever provider happened to be up at first import."""
-    import agent.bot as bot
+    import domains.negotiation.bot as bot
 
     assert not hasattr(bot, "_model"), "agent.bot._model singleton should be gone"
 
@@ -499,8 +505,8 @@ def test_bot_has_no_frozen_model_singleton():
 def test_sub_agents_have_no_import_time_model():
     """The sub-agents used to construct a model (and fire a health probe) at
     import time, freezing the provider for the life of the process."""
-    from agent.sub_agents import item_agent as item_mod
-    from agent.sub_agents import stripe_agent as stripe_mod
+    from domains.negotiation.sub_agents import item_agent as item_mod
+    from domains.negotiation.sub_agents import stripe_agent as stripe_mod
 
     assert not hasattr(item_mod, "model"), "item_agent.model singleton should be gone"
     assert not hasattr(stripe_mod, "model"), "stripe_agent.model singleton should be gone"

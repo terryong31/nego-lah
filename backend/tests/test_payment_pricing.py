@@ -9,8 +9,8 @@ seam here — seed `payment:{u}:{i}` (pending link) and `negotiated_price:{u}:{i
 
 import json
 
-from cache import redis_client
-from payment.pricing import active_negotiated_price
+from core.cache import redis_client
+from domains.billing.pricing import active_negotiated_price
 
 
 def _seed_pending(user_id, item_id, agreed_price):

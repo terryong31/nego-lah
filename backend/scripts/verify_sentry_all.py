@@ -8,6 +8,7 @@ Verification script for all 7 Sentry pillars:
 6. Replays (Web session replay)
 7. Releases (Release Health, session tracking & adoption)
 """
+
 import logging
 import os
 import subprocess
@@ -43,10 +44,7 @@ def verify_all():
     release = _current_release()
     print(f"🚀 Initializing Sentry with Release: {release} (DSN configured)")
 
-    logging_integration = LoggingIntegration(
-        level=logging.INFO,
-        event_level=logging.ERROR
-    )
+    logging_integration = LoggingIntegration(level=logging.INFO, event_level=logging.ERROR)
 
     sentry_sdk.init(
         dsn=dsn,
@@ -60,7 +58,7 @@ def verify_all():
         profiles_sample_rate=1.0,
         profile_session_sample_rate=1.0,
         profile_lifecycle="trace",
-        integrations=[logging_integration]
+        integrations=[logging_integration],
     )
 
     # 1. Release Health Session
@@ -82,7 +80,9 @@ def verify_all():
         try:
             if hasattr(sentry_sdk, "metrics"):
                 sentry_sdk.metrics.count("nego_lah.verification.counter", 1.0, attributes={"env": "dev"})
-                sentry_sdk.metrics.distribution("nego_lah.verification.latency_ms", 42.5, unit="millisecond", attributes={"env": "dev"})
+                sentry_sdk.metrics.distribution(
+                    "nego_lah.verification.latency_ms", 42.5, unit="millisecond", attributes={"env": "dev"}
+                )
                 print("   ✅ Metrics emitted successfully!")
         except Exception as e:
             print(f"   ⚠️ Metrics warning: {e}")
@@ -92,11 +92,14 @@ def verify_all():
 
     # 4. Errors
     print("4️⃣ Verifying Error capture (handled notification)...")
-    sentry_sdk.capture_message("✅ Sentry full-stack telemetry verification succeeded (All 7 pillars online)", level="info")
+    sentry_sdk.capture_message(
+        "✅ Sentry full-stack telemetry verification succeeded (All 7 pillars online)", level="info"
+    )
 
     print("\n⏳ Flushing Sentry events to server...")
     sentry_sdk.flush(timeout=5.0)
     print("🎉 All telemetry successfully dispatched to Sentry!")
+
 
 if __name__ == "__main__":
     verify_all()

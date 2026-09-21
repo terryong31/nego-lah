@@ -3,6 +3,7 @@ import { reactive } from 'vue'
 import { flushPromises } from '@vue/test-utils'
 import { mockNuxtImport, mountSuspended } from '@nuxt/test-utils/runtime'
 import SuccessPage from '~/pages/checkout/success.vue'
+import { makeAuthStub } from '../../helpers/auth'
 
 const { userRef } = vi.hoisted(() => ({
   userRef: { __v_isRef: true, value: null as Record<string, unknown> | null }
@@ -12,7 +13,8 @@ const { toastAddMock } = vi.hoisted(() => ({ toastAddMock: vi.fn() }))
 const callMock = vi.fn()
 
 mockNuxtImport('useApi', () => () => ({ call: callMock }))
-mockNuxtImport('useSupabaseUser', () => () => userRef)
+const authStub = makeAuthStub(userRef)
+mockNuxtImport('useAuth', () => () => authStub)
 mockNuxtImport('useToast', () => () => ({ add: toastAddMock }))
 
 // mountSuspended's `route` option (raw path+querystring, resolved via a real

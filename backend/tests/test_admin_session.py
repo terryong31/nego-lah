@@ -12,6 +12,7 @@ monkeypatch `admin_session.create_client` to return a configurable MagicMock
 instead of hitting real Supabase. Redis-backed state uses the real in-memory
 fake from cache.py (flushed automatically after every test by conftest.py).
 """
+
 import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -19,8 +20,10 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi import HTTPException, Response
 
-import admin_session
-from admin_session import (
+import domains.identity.admin_session as admin_session
+from conftest import make_supabase_result
+from core.cache import redis_client
+from domains.identity.admin_session import (
     _ALLOW_KEY,
     _PREAUTH_KEY,
     _SESS_KEY,
@@ -37,12 +40,11 @@ from admin_session import (
     verify_otp_and_open_session,
     write_audit,
 )
-from cache import redis_client
-from conftest import make_supabase_result
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def make_request(cookies=None, headers=None, ip="127.0.0.1"):
     """Minimal stand-in for fastapi.Request -- everything admin_session.py
@@ -77,6 +79,7 @@ def fake_auth_client(monkeypatch):
 # Admin allowlist
 # ---------------------------------------------------------------------------
 
+
 def test_grant_revoke_allow_roundtrip():
     assert is_allowed_admin("user-round-trip") is False
     grant_admin("user-round-trip", "a@example.com")
@@ -100,6 +103,7 @@ def test_revoke_admin_on_unknown_user_is_a_no_op():
 # ---------------------------------------------------------------------------
 # Rate limiting
 # ---------------------------------------------------------------------------
+
 
 def test_enforce_login_rate_limit_allows_up_to_max_then_blocks():
     email, ip = "ratelimit@example.com", "10.0.0.1"
@@ -133,6 +137,7 @@ def test_enforce_otp_rate_limit_allows_up_to_max_then_blocks():
 # ---------------------------------------------------------------------------
 # Factor 1: password_then_send_otp
 # ---------------------------------------------------------------------------
+
 
 def test_password_then_send_otp_happy_path(fake_auth_client):
     user = make_admin_user("admin-happy")
@@ -269,8 +274,9 @@ def test_password_then_send_otp_error_message_identical_for_missing_and_non_admi
 # Factor 2: verify_otp_and_open_session
 # ---------------------------------------------------------------------------
 
+
 def test_verify_otp_and_open_session_happy_path(fake_auth_client, patch_supabase, fake_supabase):
-    patch_supabase("admin_session", admin=fake_supabase)
+    patch_supabase("domains.identity.admin_session", admin=fake_supabase)
     handle = "preauth-handle-happy"
     redis_client.setex(f"{_PREAUTH_KEY}{handle}", 300, "otp-admin@example.com")
 
@@ -299,10 +305,8 @@ def test_verify_otp_and_open_session_happy_path(fake_auth_client, patch_supabase
     fake_supabase.table.assert_called_with("admin_audit_log")
 
 
-def test_verify_otp_and_open_session_sign_out_failure_is_swallowed(
-    fake_auth_client, patch_supabase, fake_supabase
-):
-    patch_supabase("admin_session", admin=fake_supabase)
+def test_verify_otp_and_open_session_sign_out_failure_is_swallowed(fake_auth_client, patch_supabase, fake_supabase):
+    patch_supabase("domains.identity.admin_session", admin=fake_supabase)
     handle = "preauth-handle-signout-fail"
     redis_client.setex(f"{_PREAUTH_KEY}{handle}", 300, "signoutfail@example.com")
 
@@ -387,6 +391,7 @@ def test_verify_otp_rate_limit_exceeded_raises_429(fake_auth_client):
 # verify_admin dependency
 # ---------------------------------------------------------------------------
 
+
 async def test_verify_admin_missing_cookie_raises_401():
     request = make_request(cookies={})
     with pytest.raises(HTTPException) as exc_info:
@@ -469,6 +474,7 @@ async def test_verify_admin_session_missing_user_id_raises_401():
 # clear_session
 # ---------------------------------------------------------------------------
 
+
 def test_clear_session_deletes_redis_key_and_issues_delete_cookie():
     sid = _create_session("clear-me", "clear@example.com")
     assert redis_client.get(f"{_SESS_KEY}{sid}") is not None
@@ -498,6 +504,7 @@ def test_clear_session_without_cookie_is_a_no_op_but_still_deletes_cookie():
 # client_ip
 # ---------------------------------------------------------------------------
 
+
 def test_client_ip_ignores_a_client_supplied_forwarded_header():
     """This used to return "1.1.1.1" — the first X-Forwarded-For entry, which
     is whatever the client sent, since Caddy appends rather than replaces.
@@ -526,28 +533,29 @@ def test_client_ip_returns_unknown_when_no_client_info():
 # write_audit
 # ---------------------------------------------------------------------------
 
+
 def test_write_audit_success_calls_supabase_insert(patch_supabase, fake_supabase):
-    patch_supabase("admin_session", admin=fake_supabase)
-    fake_supabase.table.return_value.insert.return_value.execute.return_value = (
-        make_supabase_result([{"id": 1}])
-    )
+    patch_supabase("domains.identity.admin_session", admin=fake_supabase)
+    fake_supabase.table.return_value.insert.return_value.execute.return_value = make_supabase_result([{"id": 1}])
 
     write_audit("actor-1", "actor@example.com", "login", None, "1.2.3.4")
 
     fake_supabase.table.assert_called_with("admin_audit_log")
-    fake_supabase.table.return_value.insert.assert_called_once_with({
-        "actor_user_id": "actor-1",
-        "actor_email": "actor@example.com",
-        "action": "login",
-        "target": None,
-        "ip": "1.2.3.4",
-    })
+    fake_supabase.table.return_value.insert.assert_called_once_with(
+        {
+            "actor_user_id": "actor-1",
+            "actor_email": "actor@example.com",
+            "action": "login",
+            "target": None,
+            "ip": "1.2.3.4",
+        }
+    )
     fake_supabase.table.return_value.insert.return_value.execute.assert_called_once()
 
 
 def test_write_audit_swallows_exception(patch_supabase):
     mock = MagicMock()
     mock.table.return_value.insert.return_value.execute.side_effect = Exception("db unreachable")
-    patch_supabase("admin_session", admin=mock)
+    patch_supabase("domains.identity.admin_session", admin=mock)
 
     write_audit("actor-2", "actor2@example.com", "logout", "target-id", "5.5.5.5")  # must not raise

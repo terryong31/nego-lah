@@ -19,12 +19,17 @@ This directory contains the client application for **Nego-Lah**, built with **Nu
 3. **Universal Cloudflare Turnstile Bot Protection:**
    - Every page maintains access to a reactive Turnstile token via `useTurnstileToken()`.
    - The Turnstile widget is mounted in the root layout (`app.vue` or `layouts/default.vue`).
-   - Authentication flows (`login.vue`, `register.vue`, `forgot-password.vue`) must pass `captchaToken: token.value` to the Supabase client (`supabase.auth.signInWithPassword`, etc.).
+   - Authentication flows (`login.vue`, `register.vue`, `forgot-password.vue`) pass the token to `useAuth()`, which forwards it as `X-Turnstile-Token` to the backend's auth routes.
    - Mutating API calls through `useApi()` automatically append the `X-Turnstile-Token` header.
 
-4. **Client-Side Auth & Supabase:**
-   - Authentication is managed via `@nuxtjs/supabase` purely on the client.
-   - Sessions and JWT tokens are stored client-side in localStorage/cookies.
+4. **Server-Side Auth (SPEC-093, ADR-0028):**
+   - FastAPI brokers every Supabase auth call; the browser holds an opaque `nl_sid` httpOnly
+     cookie it cannot read. There is no token in this app and no Supabase client in the bundle.
+   - `useAuth()` is the session (`user`, `login`, `logout`, `signInWithProvider`, …); `useApi()`
+     is every other call. Both send `credentials: 'include'` and the `X-CSRF-Token` header.
+   - Realtime (new messages, typing) arrives on the backend's authenticated SSE stream,
+     not a Supabase Realtime channel (SPEC-094).
+   - `tests/no-client-side-credentials.test.ts` fails the build if any of this is undone.
 
 5. **Test-Driven Development & LeanSpec:**
    - Implementations are driven by specs in `/docs/specs/SPEC-XXX-<name>.md` (<2,000 tokens).

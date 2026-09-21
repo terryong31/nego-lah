@@ -22,10 +22,10 @@ from unittest.mock import AsyncMock
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 
-from agent.sub_agents import item_agent as item_agent_module
-from agent.sub_agents import stripe_agent as stripe_agent_module
-from agent.sub_agents.item_agent import item_agent, item_agent_graph
-from agent.sub_agents.stripe_agent import stripe_agent, stripe_agent_graph
+from domains.negotiation.sub_agents import item_agent as item_agent_module
+from domains.negotiation.sub_agents import stripe_agent as stripe_agent_module
+from domains.negotiation.sub_agents.item_agent import item_agent, item_agent_graph
+from domains.negotiation.sub_agents.stripe_agent import stripe_agent, stripe_agent_graph
 
 # ---------------------------------------------------------------------------
 # item_agent.py
@@ -77,7 +77,9 @@ def test_item_agent_selector_binds_its_own_tools():
     """The dynamic model must arrive with tools already bound -- LangGraph does
     not bind them for a callable model."""
     assert _bound_tool_names(item_agent_module._select_item_model) == {
-        "get_item_info", "search_items", "list_all_items"
+        "get_item_info",
+        "search_items",
+        "list_all_items",
     }
 
 
@@ -148,7 +150,9 @@ def test_stripe_agent_model_config():
 
 def test_stripe_agent_selector_binds_its_own_tools():
     assert _bound_tool_names(stripe_agent_module._select_stripe_model) == {
-        "create_checkout_link", "cancel_payment_link", "collect_shipping_info"
+        "create_checkout_link",
+        "cancel_payment_link",
+        "collect_shipping_info",
     }
 
 
@@ -167,9 +171,7 @@ def test_stripe_agent_tools_imported_into_module_namespace():
 
 
 async def test_stripe_agent_ainvoke_round_trips_when_mocked(monkeypatch):
-    mock_ainvoke = AsyncMock(
-        return_value={"messages": [{"role": "ai", "content": "Payment link created."}]}
-    )
+    mock_ainvoke = AsyncMock(return_value={"messages": [{"role": "ai", "content": "Payment link created."}]})
     monkeypatch.setattr(stripe_agent, "ainvoke", mock_ainvoke)
 
     payload = {"messages": [{"role": "user", "content": "I agree to RM100, checkout please"}]}

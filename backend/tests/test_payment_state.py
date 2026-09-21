@@ -12,8 +12,8 @@ needed. Only Stripe calls are mocked, via the `fake_stripe` fixture.
 
 import time
 
-import payment.payment_state as payment_state
-from cache import redis_client
+import domains.billing.payment_state as payment_state
+from core.cache import redis_client
 
 CLEANUP_QUEUE_KEY = "payment:cleanup_queue"
 
@@ -35,6 +35,7 @@ def _store(user_id="user-1", item_id="item-1", **overrides):
 # ---------------------------------------------------------------------------
 # store_pending_payment / get_pending_payment
 # ---------------------------------------------------------------------------
+
 
 def test_store_and_get_pending_payment_roundtrip():
     ok = _store()
@@ -82,6 +83,7 @@ def test_get_pending_payment_not_found_returns_none():
 # has_active_payment
 # ---------------------------------------------------------------------------
 
+
 def test_has_active_payment_true_and_false():
     assert payment_state.has_active_payment("user-2", "item-2") is False
     _store(user_id="user-2", item_id="item-2")
@@ -91,6 +93,7 @@ def test_has_active_payment_true_and_false():
 # ---------------------------------------------------------------------------
 # get_active_payments_for_user
 # ---------------------------------------------------------------------------
+
 
 def test_get_active_payments_for_user_returns_only_that_users_urls():
     _store(user_id="user-a", item_id="item-1", payment_url="https://pay.example/a1")
@@ -117,6 +120,7 @@ def test_get_active_payments_for_user_skips_entries_without_payment_url():
 # ---------------------------------------------------------------------------
 # delete_pending_payment
 # ---------------------------------------------------------------------------
+
 
 def test_delete_pending_payment_with_cleanup_calls_stripe(fake_stripe):
     _store(user_id="user-d", item_id="item-d")
@@ -179,6 +183,7 @@ def test_delete_pending_payment_stripe_error_is_caught_not_raised(fake_stripe):
 # ---------------------------------------------------------------------------
 # cleanup_expired_payments
 # ---------------------------------------------------------------------------
+
 
 def _make_expired_entry(user_id, item_id, **overrides):
     """Store a payment normally, then move its cleanup-queue score into the past."""
@@ -244,12 +249,8 @@ def test_cleanup_expired_payments_stripe_error_caught_and_entry_still_removed(fa
 
 
 def test_cleanup_expired_payments_processes_multiple_entries(fake_stripe):
-    key1 = _make_expired_entry(
-        "user-l", "item-1", payment_link_id="plink_l1", product_id="prod_l1"
-    )
-    key2 = _make_expired_entry(
-        "user-l", "item-2", payment_link_id="plink_l2", product_id="prod_l2"
-    )
+    key1 = _make_expired_entry("user-l", "item-1", payment_link_id="plink_l1", product_id="prod_l1")
+    key2 = _make_expired_entry("user-l", "item-2", payment_link_id="plink_l2", product_id="prod_l2")
     # One still-active (non-expired) entry that must be left alone.
     _store(user_id="user-l", item_id="item-3")
 
@@ -266,6 +267,7 @@ def test_cleanup_expired_payments_processes_multiple_entries(fake_stripe):
 # ---------------------------------------------------------------------------
 # get_all_pending_payments
 # ---------------------------------------------------------------------------
+
 
 def test_get_all_pending_payments_returns_all_stored_payments():
     _store(user_id="user-m", item_id="item-1")

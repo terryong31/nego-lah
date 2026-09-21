@@ -3,6 +3,7 @@ Migration runner for Nego-lah Supabase database.
 Executes SQL migrations from supabase/migrations/ in alphanumeric order against DATABASE_URL.
 Tracks applied versions in `supabase_migrations.schema_migrations` so re-runs are idempotent.
 """
+
 import asyncio
 import os
 import sys
@@ -64,7 +65,8 @@ async def run_migrations():
                     version = f.stem.split("_")[0]
                     await conn.execute(
                         "INSERT INTO supabase_migrations.schema_migrations (version, name) VALUES ($1, $2) ON CONFLICT DO NOTHING;",
-                        version, f.name
+                        version,
+                        f.name,
                     )
                     applied_versions.add(version)
 
@@ -85,7 +87,8 @@ async def run_migrations():
                 await conn.execute(sql_content)
                 await conn.execute(
                     "INSERT INTO supabase_migrations.schema_migrations (version, name) VALUES ($1, $2);",
-                    version, f.name
+                    version,
+                    f.name,
                 )
             print(f"   ✅ Successfully applied: {f.name}")
             applied_count += 1
@@ -112,10 +115,7 @@ async def run_migrations():
         for row in tables:
             tname = row["table_name"]
             count = await conn.fetchval(f'SELECT count(*) FROM public."{tname}"')  # noqa: S608 # nosec B608
-            rls_enabled = await conn.fetchval(
-                "SELECT relrowsecurity FROM pg_class WHERE relname = $1",
-                tname
-            )
+            rls_enabled = await conn.fetchval("SELECT relrowsecurity FROM pg_class WHERE relname = $1", tname)
             rls_status = "RLS enabled" if rls_enabled else "RLS disabled"
             print(f"     - {tname:20} (rows: {count:3}, {rls_status})")
 

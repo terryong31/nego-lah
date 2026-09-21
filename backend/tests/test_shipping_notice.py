@@ -6,7 +6,7 @@ sentences is three chances to disagree about what was actually shipped, and the
 buyer is the one who notices. They all read from here.
 """
 
-from services.shipping_notice import shipment_chat_message, shipment_summary
+from domains.billing.shipping_notice import shipment_chat_message, shipment_summary
 
 
 def _order(**overrides):
@@ -74,17 +74,13 @@ def test_a_delivered_notice_is_worded_as_delivered():
 
 def test_a_courier_without_a_tracking_number_is_still_worth_saying():
     """The seller may know who took it but not the code yet."""
-    msg = shipment_chat_message(
-        {**_order(), "tracking_number": None, "tracking_url": None}
-    )
+    msg = shipment_chat_message({**_order(), "tracking_number": None, "tracking_url": None})
     assert "Shipped with J&T Express" in msg
     assert "None" not in msg
 
 
 def test_a_tracking_number_without_a_courier_is_still_worth_saying():
-    msg = shipment_chat_message(
-        {**_order(), "courier": None, "tracking_url": None}
-    )
+    msg = shipment_chat_message({**_order(), "courier": None, "tracking_url": None})
     assert "630123456789" in msg
     assert "None" not in msg
 
@@ -95,9 +91,7 @@ def test_a_delivery_notice_carries_the_tracking_number_it_arrived_under():
 
 
 def test_a_delivery_notice_without_tracking_still_reads_as_a_sentence():
-    msg = shipment_chat_message(
-        {**_order(), "tracking_number": None, "tracking_url": None}, delivered=True
-    )
+    msg = shipment_chat_message({**_order(), "tracking_number": None, "tracking_url": None}, delivered=True)
     assert "delivered" in msg.lower()
     assert "None" not in msg
     assert "Tracking:" not in msg

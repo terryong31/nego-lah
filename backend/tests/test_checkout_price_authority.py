@@ -18,12 +18,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from agent import context
-from agent.tools.payment import create_checkout_link
+from domains.negotiation import context
+from domains.negotiation.tools.payment import create_checkout_link
 
 # The real listing from the observed conversation.
-LAPTOP = {"id": "item-1", "name": "ASUS TUF Gaming A15", "price": 2599.0, "min_price": 2000.0,
-          "status": "available"}
+LAPTOP = {"id": "item-1", "name": "ASUS TUF Gaming A15", "price": 2599.0, "min_price": 2000.0, "status": "available"}
 
 
 @pytest.fixture(autouse=True)
@@ -35,18 +34,16 @@ def _ctx():
 
 @pytest.fixture
 def checkout(monkeypatch, fake_supabase, patch_supabase, fake_stripe):
-    patch_supabase("connector", admin=fake_supabase)
-    fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = (
-        MagicMock(data=[LAPTOP])
-    )
-    monkeypatch.setattr("payment.payment_state.get_pending_payment", lambda uid, iid: None)
-    monkeypatch.setattr("payment.payment_state.store_pending_payment", lambda **kw: None)
+    patch_supabase("core.connector", admin=fake_supabase)
+    fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = MagicMock(data=[LAPTOP])
+    monkeypatch.setattr("domains.billing.payment_state.get_pending_payment", lambda uid, iid: None)
+    monkeypatch.setattr("domains.billing.payment_state.store_pending_payment", lambda **kw: None)
     fake_stripe.Product.create.return_value = MagicMock(id="prod_1")
     fake_stripe.Price.create.return_value = MagicMock(id="price_1")
     fake_stripe.PaymentLink.create.return_value = MagicMock(id="pl_1", url="https://buy.stripe.com/x")
 
     def _run(agreed_price, standing=None):
-        monkeypatch.setattr("payment.pricing.active_negotiated_price", lambda uid, iid: standing)
+        monkeypatch.setattr("domains.billing.pricing.active_negotiated_price", lambda uid, iid: standing)
         return create_checkout_link.func(item_id="item-1", agreed_price=agreed_price)
 
     return _run
@@ -55,6 +52,7 @@ def checkout(monkeypatch, fake_supabase, patch_supabase, fake_stripe):
 # ---------------------------------------------------------------------------
 # S1 — the observed case
 # ---------------------------------------------------------------------------
+
 
 def test_an_invented_discount_is_refused_even_though_it_clears_the_floor(checkout):
     result = checkout(2300.0, standing=None)
@@ -66,6 +64,7 @@ def test_an_invented_discount_is_refused_even_though_it_clears_the_floor(checkou
 # ---------------------------------------------------------------------------
 # S2-S4 — the authorised path still works
 # ---------------------------------------------------------------------------
+
 
 def test_a_committed_counter_is_checkout_able_at_exactly_that_price(checkout):
     result = checkout(2449.0, standing=2449.0)
@@ -92,6 +91,7 @@ def test_full_price_with_no_negotiation_is_fine(checkout):
 # S5/S6 — the floor check is untouched, and nothing is disclosed
 # ---------------------------------------------------------------------------
 
+
 def test_a_below_floor_price_still_fails_the_original_check(checkout):
     """The floor check runs first, so its wording and its silence are unchanged."""
     result = checkout(1500.0, standing=None)
@@ -116,11 +116,12 @@ def test_the_refusal_tells_the_agent_what_to_do_instead(checkout):
 # S7 — a resolver failure falls back to the listing rather than opening up
 # ---------------------------------------------------------------------------
 
+
 def test_a_resolver_failure_holds_to_the_listed_price(checkout, monkeypatch):
     def boom(_uid, _iid):
         raise RuntimeError("redis down")
 
-    monkeypatch.setattr("payment.pricing.active_negotiated_price", boom)
+    monkeypatch.setattr("domains.billing.pricing.active_negotiated_price", boom)
     result = create_checkout_link.func(item_id="item-1", agreed_price=2300.0)
 
     assert "NOT AUTHORISED" in result

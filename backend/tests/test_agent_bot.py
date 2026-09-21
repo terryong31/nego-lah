@@ -27,8 +27,8 @@ from unittest.mock import MagicMock
 import pytest
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
 
-import agent.bot as bot
-from agent.context import (
+import domains.negotiation.bot as bot
+from domains.negotiation.context import (
     current_item_id,
     current_user_id,
     get_item_id,
@@ -40,6 +40,7 @@ from agent.context import (
 # ---------------------------------------------------------------------------
 # Shared fakes / fixtures
 # ---------------------------------------------------------------------------
+
 
 class FakeAgent:
     """Stand-in for a compiled LangGraph agent (customer / item / stripe)."""
@@ -90,6 +91,7 @@ def _msg(role, content, source="ai"):
 # _extract_text_from_content
 # ---------------------------------------------------------------------------
 
+
 def test_extract_text_from_content_plain_string():
     assert bot._extract_text_from_content("hello world") == "hello world"
 
@@ -129,45 +131,42 @@ def test_extract_text_from_content_other_type_stringified():
 # get_item_details_for_context
 # ---------------------------------------------------------------------------
 
+
 def test_get_item_details_for_context_returns_first_row(monkeypatch):
-    import connector
+    import domains.catalog.services as catalog_services
     from conftest import make_supabase_result
 
     fake_client = MagicMock()
-    fake_client.table.return_value.select.return_value.eq.return_value.execute.return_value = (
-        make_supabase_result([{"name": "iPhone", "price": 500}])
+    fake_client.table.return_value.select.return_value.eq.return_value.execute.return_value = make_supabase_result(
+        [{"name": "iPhone", "price": 500}]
     )
-    monkeypatch.setattr(connector, "user_supabase", fake_client, raising=False)
+    monkeypatch.setattr(catalog_services, "user_supabase", fake_client, raising=False)
 
     result = bot.get_item_details_for_context("item-1")
 
     assert result == {"name": "iPhone", "price": 500}
     fake_client.table.assert_called_once_with("items")
-    fake_client.table.return_value.select.assert_called_once_with(
-        "name, description, price, condition, image_path"
-    )
+    fake_client.table.return_value.select.assert_called_once_with("name, description, price, condition, image_path")
     fake_client.table.return_value.select.return_value.eq.assert_called_once_with("id", "item-1")
 
 
 def test_get_item_details_for_context_returns_none_when_no_rows(monkeypatch):
-    import connector
+    import domains.catalog.services as catalog_services
     from conftest import make_supabase_result
 
     fake_client = MagicMock()
-    fake_client.table.return_value.select.return_value.eq.return_value.execute.return_value = (
-        make_supabase_result([])
-    )
-    monkeypatch.setattr(connector, "user_supabase", fake_client, raising=False)
+    fake_client.table.return_value.select.return_value.eq.return_value.execute.return_value = make_supabase_result([])
+    monkeypatch.setattr(catalog_services, "user_supabase", fake_client, raising=False)
 
     assert bot.get_item_details_for_context("missing-item") is None
 
 
 def test_get_item_details_for_context_swallows_exception_and_returns_none(monkeypatch):
-    import connector
+    import domains.catalog.services as catalog_services
 
     fake_client = MagicMock()
     fake_client.table.side_effect = RuntimeError("db is down")
-    monkeypatch.setattr(connector, "user_supabase", fake_client, raising=False)
+    monkeypatch.setattr(catalog_services, "user_supabase", fake_client, raising=False)
 
     assert bot.get_item_details_for_context("item-1") is None
 
@@ -175,6 +174,7 @@ def test_get_item_details_for_context_swallows_exception_and_returns_none(monkey
 # ---------------------------------------------------------------------------
 # _build_messages
 # ---------------------------------------------------------------------------
+
 
 def test_build_messages_no_history_no_item_no_files_single_content(fake_memory):
     messages = bot._build_messages("user-1", "hello there")
@@ -196,12 +196,11 @@ def test_build_messages_reconstructs_history_then_appends_new_turn(fake_memory):
     assert isinstance(messages[0], HumanMessage) and messages[0].content == "hi"
     assert isinstance(messages[1], AIMessage) and messages[1].content == "hello!"
     assert isinstance(messages[2], HumanMessage) and messages[2].content == "how much?"
-    from agent.config import AGENT_HISTORY_TURNS
+    from domains.negotiation.config import AGENT_HISTORY_TURNS
+
     # SPEC-087: the agent asks for each turn's tool trace too, so the replayed
     # transcript shows the tool call that produced the answer.
-    fake_memory.get_history.assert_called_once_with(
-        "user-1", limit=AGENT_HISTORY_TURNS, include_tool_calls=True
-    )
+    fake_memory.get_history.assert_called_once_with("user-1", limit=AGENT_HISTORY_TURNS, include_tool_calls=True)
 
 
 def test_build_messages_without_item_id_does_not_look_up_item(fake_memory, monkeypatch):
@@ -323,6 +322,7 @@ def test_build_messages_with_empty_files_list_is_treated_as_no_files(fake_memory
 # chat()
 # ---------------------------------------------------------------------------
 
+
 async def test_chat_returns_extracted_text_and_persists_messages(fake_memory, monkeypatch):
     fake_agent = FakeAgent(ainvoke_result={"messages": [SimpleNamespace(content="Sure, RM50 works!")]})
     monkeypatch.setattr(bot, "_get_customer_agent", lambda: fake_agent)
@@ -330,9 +330,7 @@ async def test_chat_returns_extracted_text_and_persists_messages(fake_memory, mo
     result = await bot.chat("user-1", "can you do RM50?")
 
     assert result == "Sure, RM50 works!"
-    fake_memory.add_message.assert_any_call(
-        "user-1", "human", "can you do RM50?", None, source="human"
-    )
+    fake_memory.add_message.assert_any_call("user-1", "human", "can you do RM50?", None, source="human")
     fake_memory.add_message.assert_any_call("user-1", "ai", "Sure, RM50 works!", None, "ai", [])
     assert fake_agent.ainvoke_calls[0]["messages"][-1].content == "can you do RM50?"
 
@@ -387,6 +385,7 @@ async def test_chat_sets_request_scoped_context_for_agent_run(fake_memory, monke
 # chat_stream()
 # ---------------------------------------------------------------------------
 
+
 async def _collect_stream(agen):
     """Collect a chat_stream(), dropping the SPEC-020 provider attribution event.
 
@@ -422,9 +421,7 @@ async def _collect_stream(agen):
         ("some_unmapped_tool", "Cooking..."),
     ],
 )
-async def test_chat_stream_yields_status_for_each_tool_call_chunk(
-    fake_memory, monkeypatch, tool_name, expected_status
-):
+async def test_chat_stream_yields_status_for_each_tool_call_chunk(fake_memory, monkeypatch, tool_name, expected_status):
     chunk = AIMessageChunk(
         content="",
         tool_call_chunks=[{"name": tool_name, "args": "", "id": "call-1", "index": 0}],
@@ -474,12 +471,14 @@ async def test_chat_stream_classifies_stripe_agent_status_from_full_args_in_one_
 ):
     chunk = AIMessageChunk(
         content="",
-        tool_call_chunks=[{
-            "name": "call_stripe_agent",
-            "args": json.dumps({"request": request_text}),
-            "id": "call-1",
-            "index": 0,
-        }],
+        tool_call_chunks=[
+            {
+                "name": "call_stripe_agent",
+                "args": json.dumps({"request": request_text}),
+                "id": "call-1",
+                "index": 0,
+            }
+        ],
     )
     fake_agent = FakeAgent(stream_chunks=[(chunk, {})])
     monkeypatch.setattr(bot, "_get_customer_agent", lambda: fake_agent)
@@ -489,26 +488,33 @@ async def test_chat_stream_classifies_stripe_agent_status_from_full_args_in_one_
     assert results == [{"status": expected_status}]
 
 
-async def test_chat_stream_classifies_stripe_agent_status_once_args_finish_streaming(
-    fake_memory, monkeypatch
-):
+async def test_chat_stream_classifies_stripe_agent_status_once_args_finish_streaming(fake_memory, monkeypatch):
     """Real streams split the args JSON across several continuation chunks
     (no "name", same id) — nothing should be emitted until they add up to
     valid JSON, and then exactly one classified status should land."""
     full_args = json.dumps({"request": "Buyer just sent their shipping address"})
     chunks = [
-        (AIMessageChunk(
-            content="",
-            tool_call_chunks=[{"name": "call_stripe_agent", "args": full_args[:10], "id": "call-1", "index": 0}],
-        ), {}),
-        (AIMessageChunk(
-            content="",
-            tool_call_chunks=[{"name": None, "args": full_args[10:20], "id": "call-1", "index": 0}],
-        ), {}),
-        (AIMessageChunk(
-            content="",
-            tool_call_chunks=[{"name": None, "args": full_args[20:], "id": "call-1", "index": 0}],
-        ), {}),
+        (
+            AIMessageChunk(
+                content="",
+                tool_call_chunks=[{"name": "call_stripe_agent", "args": full_args[:10], "id": "call-1", "index": 0}],
+            ),
+            {},
+        ),
+        (
+            AIMessageChunk(
+                content="",
+                tool_call_chunks=[{"name": None, "args": full_args[10:20], "id": "call-1", "index": 0}],
+            ),
+            {},
+        ),
+        (
+            AIMessageChunk(
+                content="",
+                tool_call_chunks=[{"name": None, "args": full_args[20:], "id": "call-1", "index": 0}],
+            ),
+            {},
+        ),
     ]
     fake_agent = FakeAgent(stream_chunks=chunks)
     monkeypatch.setattr(bot, "_get_customer_agent", lambda: fake_agent)
@@ -518,9 +524,7 @@ async def test_chat_stream_classifies_stripe_agent_status_once_args_finish_strea
     assert results == [{"status": "Saving your shipping details..."}]
 
 
-async def test_chat_stream_stripe_agent_with_no_request_argument_falls_back_to_payment_link(
-    fake_memory, monkeypatch
-):
+async def test_chat_stream_stripe_agent_with_no_request_argument_falls_back_to_payment_link(fake_memory, monkeypatch):
     chunk = AIMessageChunk(
         content="",
         tool_call_chunks=[{"name": "call_stripe_agent", "args": "{}", "id": "call-1", "index": 0}],
@@ -588,9 +592,7 @@ async def test_chat_stream_tool_call_chunk_without_name_yields_no_status(fake_me
     assert results == []
 
 
-async def test_chat_stream_multiple_tool_call_chunks_in_one_chunk_yield_multiple_statuses(
-    fake_memory, monkeypatch
-):
+async def test_chat_stream_multiple_tool_call_chunks_in_one_chunk_yield_multiple_statuses(fake_memory, monkeypatch):
     chunk = AIMessageChunk(
         content="",
         tool_call_chunks=[
@@ -659,6 +661,7 @@ async def test_chat_stream_sets_request_scoped_context(fake_memory, monkeypatch)
 # call_item_agent (sub-agent wrapper tool)
 # ---------------------------------------------------------------------------
 
+
 async def test_call_item_agent_delegates_to_item_agent_and_returns_last_message(monkeypatch):
     fake_item_agent = FakeAgent(ainvoke_result={"messages": [SimpleNamespace(content="We have 2 iPhones")]})
     monkeypatch.setattr(bot, "item_agent", fake_item_agent)
@@ -675,6 +678,7 @@ async def test_call_item_agent_delegates_to_item_agent_and_returns_last_message(
 # ---------------------------------------------------------------------------
 # call_stripe_agent (sub-agent wrapper tool + item_id fallback resolution)
 # ---------------------------------------------------------------------------
+
 
 async def test_call_stripe_agent_uses_context_item_id_without_resolution(monkeypatch):
     set_context(user_id="user-1", item_id="item-real-uuid-123")
@@ -716,9 +720,7 @@ class _ItemIdObservingStripeAgent(FakeAgent):
 
 
 @pytest.mark.parametrize("missing_item_id", [None, "test-item-id", "None"])
-async def test_call_stripe_agent_resolves_missing_item_id_from_history(
-    fake_memory, monkeypatch, missing_item_id
-):
+async def test_call_stripe_agent_resolves_missing_item_id_from_history(fake_memory, monkeypatch, missing_item_id):
     set_context(user_id="user-1", item_id=missing_item_id)
     fake_memory.get_history.return_value = [
         {"role": "human", "content": "I want the iPhone 12"},
@@ -782,9 +784,7 @@ async def test_call_stripe_agent_context_update_does_not_leak_to_caller(fake_mem
     caller's own `get_item_id()` is unaffected once `.ainvoke()` returns."""
     set_context(user_id="user-1", item_id=None)
     fake_memory.get_history.return_value = [{"role": "human", "content": "the chair"}]
-    fake_item_agent = FakeAgent(
-        ainvoke_result={"messages": [SimpleNamespace(content="resolved-uuid-1234567890")]}
-    )
+    fake_item_agent = FakeAgent(ainvoke_result={"messages": [SimpleNamespace(content="resolved-uuid-1234567890")]})
     fake_stripe_agent = FakeAgent(ainvoke_result={"messages": [SimpleNamespace(content="ok")]})
     monkeypatch.setattr(bot, "item_agent", fake_item_agent)
     monkeypatch.setattr(bot, "stripe_agent", fake_stripe_agent)
@@ -840,20 +840,19 @@ async def test_transfer_to_human_success(fake_memory, monkeypatch):
 
     # Mock admin_supabase chat_settings upsert
     fake_supabase = MagicMock()
-    monkeypatch.setattr("connector.admin_supabase", fake_supabase)
+    monkeypatch.setattr("core.connector.admin_supabase", fake_supabase)
 
     # Mock broadcast_to_chat
     fake_broadcast = MagicMock()
-    monkeypatch.setattr("payment.fulfillment.broadcast_to_chat", fake_broadcast)
+    monkeypatch.setattr("domains.billing.fulfillment.broadcast_to_chat", fake_broadcast)
 
     # Mock send_human_transfer_alert
     fake_email_alert = MagicMock(return_value=True)
-    monkeypatch.setattr("services.email_service.send_human_transfer_alert", fake_email_alert)
+    monkeypatch.setattr("core.email_service.send_human_transfer_alert", fake_email_alert)
 
-    result = await bot.transfer_to_human.ainvoke({
-        "reason": "Customer requested human seller",
-        "summary": "Need help with pickup schedule"
-    })
+    result = await bot.transfer_to_human.ainvoke(
+        {"reason": "Customer requested human seller", "summary": "Need help with pickup schedule"}
+    )
 
     assert "transferred" in result.lower()
     assert fake_supabase.table.called
@@ -952,7 +951,7 @@ def test_a_buyer_upload_is_attached_even_on_an_ordinary_turn(fake_memory, monkey
 
 
 def test_a_buyer_upload_also_brings_the_listing_photos_for_comparison(fake_memory, monkeypatch):
-    """"Is mine the same as yours?" is unanswerable with only one of the two."""
+    """ "Is mine the same as yours?" is unanswerable with only one of the two."""
     _describe(monkeypatch)
     files = [{"name": "mine.png", "type": "image/png", "data": "QUJD"}]
 
@@ -973,13 +972,11 @@ def test_a_listing_with_no_description_still_gets_its_photos_every_turn(fake_mem
 
 
 def test_the_history_window_is_bounded(fake_memory, monkeypatch):
-    from agent.config import AGENT_HISTORY_TURNS
+    from domains.negotiation.config import AGENT_HISTORY_TURNS
 
     bot._build_messages("user-1", "hi")
 
     # SPEC-087: the agent asks for each turn's tool trace too, so the replayed
     # transcript shows the tool call that produced the answer.
-    fake_memory.get_history.assert_called_once_with(
-        "user-1", limit=AGENT_HISTORY_TURNS, include_tool_calls=True
-    )
+    fake_memory.get_history.assert_called_once_with("user-1", limit=AGENT_HISTORY_TURNS, include_tool_calls=True)
     assert AGENT_HISTORY_TURNS <= 50, "SPEC-059 tightened this; it must not drift back up"

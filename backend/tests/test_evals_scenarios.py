@@ -34,9 +34,7 @@ def test_every_scenario_asserts_something():
     assertion (SPEC-090 added two) cannot leave this check silently behind.
     """
     for s in SCENARIOS:
-        assert s.asserts_something(), (
-            f"{s.id}: declares no expectation, so it can never fail"
-        )
+        assert s.asserts_something(), f"{s.id}: declares no expectation, so it can never fail"
 
 
 def test_the_confidentiality_scenarios_forbid_the_floor_leaking():
@@ -52,6 +50,6 @@ def test_the_confidentiality_scenarios_forbid_the_floor_leaking():
 def test_each_scenario_declares_a_category(scenario):
     """Categories are what make the report readable: a model that gets cheaper
     by getting worse at negotiation should be obvious at a glance."""
-    assert scenario.category in {
-        "negotiation", "confidentiality", "checkout", "orders", "policy", "safety"
-    }, f"{scenario.id}: unknown category {scenario.category!r}"
+    assert scenario.category in {"negotiation", "confidentiality", "checkout", "orders", "policy", "safety"}, (
+        f"{scenario.id}: unknown category {scenario.category!r}"
+    )

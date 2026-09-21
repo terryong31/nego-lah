@@ -27,19 +27,19 @@ import pytest
 from starlette.requests import Request
 
 from conftest import make_supabase_result
-from routes.chat import chat_stream
+from domains.negotiation.routes import chat_stream
 
 
 def set_chat_settings_select(fake_supabase, data):
-    (
-        fake_supabase.table.return_value.select.return_value.eq.return_value
-        .execute.return_value
-    ) = make_supabase_result(data)
+    (fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value) = make_supabase_result(
+        data
+    )
 
 
 def fake_verify_user_token(user_id):
     async def _fake(request):
         return user_id
+
     return _fake
 
 
@@ -75,7 +75,7 @@ def budget(monkeypatch):
     """Records every charge against the AI token budget."""
     calls = []
     monkeypatch.setattr(
-        "routes.chat.track_ai_tokens",
+        "domains.negotiation.routes.track_ai_tokens",
         lambda uid, inp, out: calls.append((uid, inp, out)),
     )
     return calls
@@ -85,21 +85,18 @@ def budget(monkeypatch):
 def chat_env(monkeypatch, patch_supabase, fake_supabase):
     """Wires up the collaborators every streaming test needs, so each test body
     only has to supply the turn it wants to exercise."""
+
     def _setup(user_id):
-        monkeypatch.setattr(
-            "routes.chat.verify_user_token", fake_verify_user_token(user_id)
-        )
+        monkeypatch.setattr("domains.negotiation.routes.verify_user_token", fake_verify_user_token(user_id))
         set_chat_settings_select(fake_supabase, [])
-        patch_supabase("routes.chat", admin=fake_supabase)
+        patch_supabase("domains.negotiation.routes", admin=fake_supabase)
         monkeypatch.setattr(
-            "agent.memory.conversation_memory.add_message",
+            "domains.negotiation.memory.conversation_memory.add_message",
             lambda *a, **k: None,
         )
         # Imported lazily inside `generate()` (`from payment.fulfillment import
         # broadcast_to_chat`), so the patch has to land on the source module.
-        monkeypatch.setattr(
-            "payment.fulfillment.broadcast_to_chat", lambda *a, **k: None
-        )
+        monkeypatch.setattr("domains.billing.fulfillment.broadcast_to_chat", lambda *a, **k: None)
         return fake_supabase
 
     return _setup
@@ -109,6 +106,7 @@ def chat_env(monkeypatch, patch_supabase, fake_supabase):
 # every exit path settles the budget
 # ---------------------------------------------------------------------------
 
+
 async def test_completed_turn_is_charged_once(client, monkeypatch, chat_env, budget):
     user_id = "budget-ok"
     chat_env(user_id)
@@ -117,7 +115,7 @@ async def test_completed_turn_is_charged_once(client, monkeypatch, chat_env, bud
         yield "Hello "
         yield "world!"
 
-    monkeypatch.setattr("agent.bot.chat_stream", stream)
+    monkeypatch.setattr("domains.negotiation.bot.chat_stream", stream)
 
     resp = await client.post(
         "/chat/stream",
@@ -138,14 +136,14 @@ async def test_timed_out_turn_is_still_charged(client, monkeypatch, chat_env, bu
     as tokens that arrived in time."""
     user_id = "budget-timeout"
     chat_env(user_id)
-    monkeypatch.setattr("routes.chat.CHAT_TURN_DEADLINE_SECONDS", 0.15)
+    monkeypatch.setattr("domains.negotiation.routes.CHAT_TURN_DEADLINE_SECONDS", 0.15)
 
     async def hanging(user_id, message, item_id=None, files=None):
         yield "partial answer"
         await asyncio.sleep(30)
         yield "never arrives"
 
-    monkeypatch.setattr("agent.bot.chat_stream", hanging)
+    monkeypatch.setattr("domains.negotiation.bot.chat_stream", hanging)
 
     resp = await client.post(
         "/chat/stream",
@@ -168,7 +166,7 @@ async def test_errored_turn_is_still_charged(client, monkeypatch, chat_env, budg
         yield "half an answer"
         raise RuntimeError("upstream fell over")
 
-    monkeypatch.setattr("agent.bot.chat_stream", exploding)
+    monkeypatch.setattr("domains.negotiation.bot.chat_stream", exploding)
 
     resp = await client.post(
         "/chat/stream",
@@ -201,7 +199,7 @@ async def test_abandoned_turn_is_charged_when_it_finishes(monkeypatch, chat_env,
         yield "the rest of a real answer, generated whether or not anyone reads it"
         finished.set()
 
-    monkeypatch.setattr("agent.bot.chat_stream", slow)
+    monkeypatch.setattr("domains.negotiation.bot.chat_stream", slow)
 
     response = await chat_stream(_make_request(user_id))
     body = response.body_iterator
@@ -225,14 +223,10 @@ async def test_abandoned_turn_is_charged_when_it_finishes(monkeypatch, chat_env,
 
     assert len(budget) == 1, f"an abandoned turn must be charged: {budget}"
     assert budget[0][0] == user_id
-    assert budget[0][2] > 10, (
-        f"the charge must cover what the model generated unwatched: {budget}"
-    )
+    assert budget[0][2] > 10, f"the charge must cover what the model generated unwatched: {budget}"
 
 
-async def test_abandoned_turn_is_not_charged_twice_when_it_also_completed(
-    monkeypatch, chat_env, budget
-):
+async def test_abandoned_turn_is_not_charged_twice_when_it_also_completed(monkeypatch, chat_env, budget):
     """Closing a generator that already ran to completion must not re-charge:
     the success path and the cleanup path both settle the budget, and only one
     of them may take effect."""
@@ -242,7 +236,7 @@ async def test_abandoned_turn_is_not_charged_twice_when_it_also_completed(
     async def stream(user_id, message, item_id=None, files=None):
         yield "done"
 
-    monkeypatch.setattr("agent.bot.chat_stream", stream)
+    monkeypatch.setattr("domains.negotiation.bot.chat_stream", stream)
 
     response = await chat_stream(_make_request(user_id))
     body = response.body_iterator
@@ -258,9 +252,8 @@ async def test_abandoned_turn_is_not_charged_twice_when_it_also_completed(
 # turns where no model ran are still free
 # ---------------------------------------------------------------------------
 
-async def test_turn_is_not_charged_when_ai_is_disabled(
-    client, monkeypatch, chat_env, budget, fake_supabase
-):
+
+async def test_turn_is_not_charged_when_ai_is_disabled(client, monkeypatch, chat_env, budget, fake_supabase):
     user_id = "budget-ai-off"
     chat_env(user_id)
     set_chat_settings_select(fake_supabase, [{"ai_enabled": False}])
@@ -275,15 +268,11 @@ async def test_turn_is_not_charged_when_ai_is_disabled(
     assert budget == [], "no model ran, so there is nothing to charge"
 
 
-async def test_turn_is_not_charged_when_already_over_the_budget(
-    client, monkeypatch, chat_env, budget
-):
+async def test_turn_is_not_charged_when_already_over_the_budget(client, monkeypatch, chat_env, budget):
     """The over-limit reply is a canned string, not a generated one."""
     user_id = "budget-exceeded"
     chat_env(user_id)
-    monkeypatch.setattr(
-        "routes.chat.check_ai_token_limit", lambda uid: (False, 1_500_000)
-    )
+    monkeypatch.setattr("domains.negotiation.routes.check_ai_token_limit", lambda uid: (False, 1_500_000))
 
     resp = await client.post(
         "/chat/stream",

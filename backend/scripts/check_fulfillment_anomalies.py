@@ -17,8 +17,8 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import sentry_sdk
 import stripe
 
-from connector import admin_supabase
-from env import STRIPE_API_KEY
+from core.connector import admin_supabase
+from core.env import STRIPE_API_KEY
 
 stripe.api_key = STRIPE_API_KEY
 
@@ -30,12 +30,18 @@ sentry_dsn = os.environ.get("SENTRY_DSN")
 if sentry_dsn:
     sentry_sdk.init(dsn=sentry_dsn, environment=os.environ.get("ENV", "development"))
 
+
 def check_anomalies():
     logger.info("Starting fulfillment anomaly check...")
     anomalies_found = 0
 
     # 1. Find orders that are 'pending_info' but the item is sold to someone else.
-    orders_res = admin_supabase.table("orders").select("id, item_id, buyer_id, stripe_payment_id, created_at, status").eq("status", "pending_info").execute()
+    orders_res = (
+        admin_supabase.table("orders")
+        .select("id, item_id, buyer_id, stripe_payment_id, created_at, status")
+        .eq("status", "pending_info")
+        .execute()
+    )
 
     if not orders_res.data:
         logger.info("No pending_info orders found.")
@@ -88,7 +94,11 @@ def check_anomalies():
                                     sentry_sdk.capture_message(
                                         msg,
                                         level="fatal",
-                                        tags={"alert": "stuck_refund_sla", "order_id": order_id, "payment_intent": payment_intent_id}
+                                        tags={
+                                            "alert": "stuck_refund_sla",
+                                            "order_id": order_id,
+                                            "payment_intent": payment_intent_id,
+                                        },
                                     )
                                     anomalies_found += 1
                                     continue
@@ -99,13 +109,12 @@ def check_anomalies():
                 msg = f"⚠️ Order {order_id} (buyer {buyer_id}) stuck >24h for item {item_id} sold to someone else."
                 logger.warning(msg)
                 sentry_sdk.capture_message(
-                    msg,
-                    level="warning",
-                    tags={"alert": "stuck_order_sla", "order_id": order_id}
+                    msg, level="warning", tags={"alert": "stuck_order_sla", "order_id": order_id}
                 )
                 anomalies_found += 1
 
     logger.info(f"Anomaly check complete. Found {anomalies_found} anomalies.")
+
 
 if __name__ == "__main__":
     check_anomalies()

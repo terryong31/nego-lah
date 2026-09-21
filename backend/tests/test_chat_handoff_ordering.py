@@ -20,9 +20,9 @@ from unittest.mock import MagicMock
 
 from starlette.requests import Request
 
-import agent.bot as bot
-from agent.context import pending_handoff, set_context
-from routes.chat import chat_stream
+import domains.negotiation.bot as bot
+from domains.negotiation.context import pending_handoff, set_context
+from domains.negotiation.routes import chat_stream
 
 
 def _make_request(user_id, message="hi"):
@@ -55,10 +55,7 @@ async def _settle(deadline=2.0):
     loop_deadline = asyncio.get_running_loop().time() + deadline
     while asyncio.get_running_loop().time() < loop_deadline:
         await asyncio.sleep(0.01)
-        pending = [
-            t for t in asyncio.all_tasks()
-            if t is not asyncio.current_task() and not t.done()
-        ]
+        pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()]
         if not pending:
             return
 
@@ -67,20 +64,23 @@ async def _settle(deadline=2.0):
 # Scenario 5 — the tool records the notice instead of writing it
 # ---------------------------------------------------------------------------
 
+
 async def test_transfer_records_the_notice_rather_than_writing_it(monkeypatch):
     set_context(user_id="user-handoff-1", item_id="item-1")
 
     fake_memory = MagicMock()
     monkeypatch.setattr(bot, "conversation_memory", fake_memory)
     fake_broadcast = MagicMock()
-    monkeypatch.setattr("payment.fulfillment.broadcast_to_chat", fake_broadcast)
-    monkeypatch.setattr("connector.admin_supabase", MagicMock())
-    monkeypatch.setattr("services.email_service.send_human_transfer_alert", MagicMock())
+    monkeypatch.setattr("core.broadcast.broadcast_to_chat", fake_broadcast)
+    monkeypatch.setattr("core.connector.admin_supabase", MagicMock())
+    monkeypatch.setattr("core.email_service.send_human_transfer_alert", MagicMock())
 
-    await bot.transfer_to_human.ainvoke({
-        "reason": "Cash-on-delivery arrangement requested",
-        "summary": "Buyer wants to meet up and pay cash.",
-    })
+    await bot.transfer_to_human.ainvoke(
+        {
+            "reason": "Cash-on-delivery arrangement requested",
+            "summary": "Buyer wants to meet up and pay cash.",
+        }
+    )
 
     notice = pending_handoff.get()
     assert notice and "transferred" in notice.lower()
@@ -94,11 +94,11 @@ async def test_transfer_still_pauses_the_ai_and_alerts_terry_immediately(monkeyp
     set_context(user_id="user-handoff-2", item_id=None)
 
     monkeypatch.setattr(bot, "conversation_memory", MagicMock())
-    monkeypatch.setattr("payment.fulfillment.broadcast_to_chat", MagicMock())
+    monkeypatch.setattr("core.broadcast.broadcast_to_chat", MagicMock())
     fake_supabase = MagicMock()
-    monkeypatch.setattr("connector.admin_supabase", fake_supabase)
+    monkeypatch.setattr("core.connector.admin_supabase", fake_supabase)
     fake_alert = MagicMock(return_value=True)
-    monkeypatch.setattr("services.email_service.send_human_transfer_alert", fake_alert)
+    monkeypatch.setattr("core.email_service.send_human_transfer_alert", fake_alert)
 
     await bot.transfer_to_human.ainvoke({"reason": "Dispute", "summary": ""})
 
@@ -119,6 +119,7 @@ async def test_a_turn_with_no_handoff_leaves_nothing_pending(monkeypatch):
 # Scenario 6 — the turn runner writes it, after the reply
 # ---------------------------------------------------------------------------
 
+
 async def test_notice_is_persisted_and_broadcast_after_the_reply(monkeypatch, turn_env):
     record = turn_env("handoff-order")
 
@@ -126,15 +127,14 @@ async def test_notice_is_persisted_and_broadcast_after_the_reply(monkeypatch, tu
         """A COD turn, shaped like the real `agent.bot.chat_stream`: it writes
         the buyer's message, the tool hands over, then the agent says goodbye
         and the reply is persisted on the way out."""
-        from agent.memory import conversation_memory
+        from domains.negotiation.memory import conversation_memory
+
         conversation_memory.add_message(user_id, "human", message, item_id, source="human")
         pending_handoff.set("--- transferred to Terry ---")
         yield "Ah, COD isn't something I can set up here"
-        conversation_memory.add_message(
-            user_id, "ai", "Ah, COD isn't something I can set up here", item_id
-        )
+        conversation_memory.add_message(user_id, "ai", "Ah, COD isn't something I can set up here", item_id)
 
-    monkeypatch.setattr("agent.bot.chat_stream", stream)
+    monkeypatch.setattr("domains.negotiation.bot.chat_stream", stream)
 
     response = await chat_stream(_make_request("handoff-order", "boleh cod x?"))
     async for _ in response.body_iterator:
@@ -160,7 +160,7 @@ async def test_notice_survives_a_turn_that_broke_after_the_handoff(monkeypatch, 
         yield "Let me pass you to Terry"
         raise RuntimeError("provider fell over")
 
-    monkeypatch.setattr("agent.bot.chat_stream", stream)
+    monkeypatch.setattr("domains.negotiation.bot.chat_stream", stream)
 
     response = await chat_stream(_make_request("handoff-error"))
     async for _ in response.body_iterator:

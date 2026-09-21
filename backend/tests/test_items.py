@@ -10,6 +10,7 @@ Tests for items.py:
 - delete_item / update_item: soft delete / partial update, and their
   except-returns-False fallback paths.
 """
+
 import io
 import json
 import time
@@ -17,10 +18,10 @@ from datetime import UTC, datetime
 
 from PIL import Image, ImageFilter
 
-from cache import cache_items_with_hash, redis_client
 from conftest import PNG_BYTES, make_supabase_result
+from core.cache import cache_items_with_hash, redis_client
 from core.images import MAX_ITEM_EDGE
-from items import (
+from domains.catalog.items import (
     compute_items_hash,
     delete_item,
     get_featured_items,
@@ -64,6 +65,7 @@ class FakeUploadFile:
 # compute_items_hash
 # ---------------------------------------------------------------------------
 
+
 def test_compute_items_hash_deterministic_for_same_inputs():
     h1 = compute_items_hash(5, "2024-01-01T00:00:00")
     h2 = compute_items_hash(5, "2024-01-01T00:00:00")
@@ -88,6 +90,7 @@ def test_compute_items_hash_differs_for_different_timestamp():
 # get_items_fingerprint
 # ---------------------------------------------------------------------------
 
+
 def configure_fingerprint(fake_user, *, count=3, latest_created_at="2024-05-01T00:00:00"):
     data = [{"created_at": latest_created_at}] if latest_created_at is not None else []
     chain = fake_user.table.return_value.select.return_value.is_.return_value
@@ -96,7 +99,7 @@ def configure_fingerprint(fake_user, *, count=3, latest_created_at="2024-05-01T0
 
 
 def test_get_items_fingerprint_returns_count_and_latest_timestamp(patch_supabase, fake_supabase):
-    patch_supabase("items", user=fake_supabase)
+    patch_supabase("domains.catalog.items", user=fake_supabase)
     configure_fingerprint(fake_supabase, count=7, latest_created_at="2024-05-01T12:00:00")
 
     count, max_created_at = get_items_fingerprint()
@@ -106,7 +109,7 @@ def test_get_items_fingerprint_returns_count_and_latest_timestamp(patch_supabase
 
 
 def test_get_items_fingerprint_no_rows_returns_zero_count_and_empty_timestamp(patch_supabase, fake_supabase):
-    patch_supabase("items", user=fake_supabase)
+    patch_supabase("domains.catalog.items", user=fake_supabase)
     configure_fingerprint(fake_supabase, count=None, latest_created_at=None)
 
     count, max_created_at = get_items_fingerprint()
@@ -118,6 +121,7 @@ def test_get_items_fingerprint_no_rows_returns_zero_count_and_empty_timestamp(pa
 # ---------------------------------------------------------------------------
 # should_validate_cache
 # ---------------------------------------------------------------------------
+
 
 def test_should_validate_cache_true_when_no_recent_validation():
     assert redis_client.get("items:last_validation") is None
@@ -135,6 +139,7 @@ def test_should_validate_cache_false_within_debounce_window():
 # get_items
 # ---------------------------------------------------------------------------
 
+
 def configure_full_fetch(fake_user, data):
     chain = fake_user.table.return_value.select.return_value.is_.return_value
     chain.order.return_value.order.return_value.execute.return_value = make_supabase_result(data=data)
@@ -146,7 +151,7 @@ def configure_keyword_fetch(fake_user, data):
 
 
 def test_get_items_no_keyword_cache_miss_fetches_and_caches(patch_supabase, fake_supabase):
-    patch_supabase("items", user=fake_supabase)
+    patch_supabase("domains.catalog.items", user=fake_supabase)
     items_data = [
         {"id": "1", "status": "available", "created_at": "2024-01-01T00:00:00"},
         {"id": "2", "status": "available", "created_at": "2024-01-02T00:00:00"},
@@ -157,7 +162,8 @@ def test_get_items_no_keyword_cache_miss_fetches_and_caches(patch_supabase, fake
 
     assert result == items_data
     # Should now be cached with a matching hash.
-    from cache import get_cached_items_with_hash
+    from core.cache import get_cached_items_with_hash
+
     cached, cached_hash = get_cached_items_with_hash()
     assert cached == items_data
     expected_hash = compute_items_hash(2, "2024-01-02T00:00:00")
@@ -165,7 +171,7 @@ def test_get_items_no_keyword_cache_miss_fetches_and_caches(patch_supabase, fake
 
 
 def test_get_items_no_keyword_cache_miss_empty_db_returns_empty_list(patch_supabase, fake_supabase):
-    patch_supabase("items", user=fake_supabase)
+    patch_supabase("domains.catalog.items", user=fake_supabase)
     configure_full_fetch(fake_supabase, [])
 
     result = get_items()
@@ -174,7 +180,7 @@ def test_get_items_no_keyword_cache_miss_empty_db_returns_empty_list(patch_supab
 
 
 def test_get_items_cache_hit_validated_and_matching_returns_cached(patch_supabase, fake_supabase):
-    patch_supabase("items", user=fake_supabase)
+    patch_supabase("domains.catalog.items", user=fake_supabase)
     cached_data = [{"id": "cached-1", "created_at": "2024-03-01T00:00:00"}]
     cached_hash = compute_items_hash(1, "2024-03-01T00:00:00")
     cache_items_with_hash(cached_data, cached_hash)
@@ -191,7 +197,7 @@ def test_get_items_cache_hit_validated_and_matching_returns_cached(patch_supabas
 
 
 def test_get_items_cache_hit_but_skips_validation_returns_cached_without_query(patch_supabase, fake_supabase):
-    patch_supabase("items", user=fake_supabase)
+    patch_supabase("domains.catalog.items", user=fake_supabase)
     cached_data = [{"id": "cached-2", "created_at": "2024-03-01T00:00:00"}]
     cached_hash = compute_items_hash(1, "2024-03-01T00:00:00")
     cache_items_with_hash(cached_data, cached_hash)
@@ -207,7 +213,7 @@ def test_get_items_cache_hit_but_skips_validation_returns_cached_without_query(p
 
 
 def test_get_items_cache_stale_invalidates_and_refetches(patch_supabase, fake_supabase):
-    patch_supabase("items", user=fake_supabase)
+    patch_supabase("domains.catalog.items", user=fake_supabase)
     stale_data = [{"id": "old", "created_at": "2024-01-01T00:00:00"}]
     stale_hash = compute_items_hash(1, "2024-01-01T00:00:00")
     cache_items_with_hash(stale_data, stale_hash)
@@ -221,13 +227,14 @@ def test_get_items_cache_stale_invalidates_and_refetches(patch_supabase, fake_su
     result = get_items()
 
     assert result == fresh_data
-    from cache import get_cached_items_with_hash
+    from core.cache import get_cached_items_with_hash
+
     cached, _ = get_cached_items_with_hash()
     assert cached == fresh_data
 
 
 def test_get_items_with_keyword_bypasses_cache_and_searches(patch_supabase, fake_supabase):
-    patch_supabase("items", user=fake_supabase)
+    patch_supabase("domains.catalog.items", user=fake_supabase)
     # Pre-populate cache to prove keyword search ignores it entirely.
     cache_items_with_hash([{"id": "irrelevant"}], "somehash")
 
@@ -240,7 +247,7 @@ def test_get_items_with_keyword_bypasses_cache_and_searches(patch_supabase, fake
 
 
 def test_get_items_with_keyword_no_matches_returns_empty_list(patch_supabase, fake_supabase):
-    patch_supabase("items", user=fake_supabase)
+    patch_supabase("domains.catalog.items", user=fake_supabase)
     configure_keyword_fetch(fake_supabase, [])
 
     result = get_items(keyword="nonexistent-thing")
@@ -252,13 +259,11 @@ def test_get_items_with_keyword_no_matches_returns_empty_list(patch_supabase, fa
 # get_featured_items
 # ---------------------------------------------------------------------------
 
+
 def test_get_featured_items_returns_data(patch_supabase, fake_supabase):
-    patch_supabase("items", user=fake_supabase)
+    patch_supabase("domains.catalog.items", user=fake_supabase)
     data = [{"id": "f1", "status": "available"}]
-    chain = (
-        fake_supabase.table.return_value.select.return_value.eq.return_value
-        .is_.return_value.order.return_value.limit.return_value
-    )
+    chain = fake_supabase.table.return_value.select.return_value.eq.return_value.is_.return_value.order.return_value.limit.return_value
     chain.execute.return_value = make_supabase_result(data=data)
 
     result = get_featured_items(limit=6)
@@ -267,11 +272,8 @@ def test_get_featured_items_returns_data(patch_supabase, fake_supabase):
 
 
 def test_get_featured_items_empty_data_returns_empty_list(patch_supabase, fake_supabase):
-    patch_supabase("items", user=fake_supabase)
-    chain = (
-        fake_supabase.table.return_value.select.return_value.eq.return_value
-        .is_.return_value.order.return_value.limit.return_value
-    )
+    patch_supabase("domains.catalog.items", user=fake_supabase)
+    chain = fake_supabase.table.return_value.select.return_value.eq.return_value.is_.return_value.order.return_value.limit.return_value
     chain.execute.return_value = make_supabase_result(data=None)
 
     result = get_featured_items()
@@ -280,7 +282,7 @@ def test_get_featured_items_empty_data_returns_empty_list(patch_supabase, fake_s
 
 
 def test_get_featured_items_exception_falls_back_to_empty_list(patch_supabase, fake_supabase):
-    patch_supabase("items", user=fake_supabase)
+    patch_supabase("domains.catalog.items", user=fake_supabase)
     fake_supabase.table.side_effect = Exception("supabase is down")
 
     result = get_featured_items()
@@ -292,8 +294,9 @@ def test_get_featured_items_exception_falls_back_to_empty_list(patch_supabase, f
 # upload_item
 # ---------------------------------------------------------------------------
 
+
 async def test_upload_item_success_uploads_images_and_inserts_row(patch_supabase, fake_supabase):
-    patch_supabase("items", admin=fake_supabase)
+    patch_supabase("domains.catalog.items", admin=fake_supabase)
     fake_supabase.storage.from_.return_value.get_public_url.return_value = "https://cdn.example.com/img0.jpg"
     fake_supabase.table.return_value.insert.return_value.execute.return_value = make_supabase_result([{"id": "x"}])
 
@@ -336,7 +339,7 @@ async def test_upload_item_success_uploads_images_and_inserts_row(patch_supabase
 
 
 async def test_upload_item_without_min_price_omits_it(patch_supabase, fake_supabase):
-    patch_supabase("items", admin=fake_supabase)
+    patch_supabase("domains.catalog.items", admin=fake_supabase)
     fake_supabase.storage.from_.return_value.get_public_url.return_value = "https://cdn.example.com/img0.jpg"
     fake_supabase.table.return_value.insert.return_value.execute.return_value = make_supabase_result([{"id": "x"}])
 
@@ -359,7 +362,7 @@ async def test_upload_item_ignores_the_filename_entirely(patch_supabase, fake_su
     with no filename was stored as `.dat` and a lying filename decided how the
     CDN would later serve the bytes. The decode decides both now, so a missing
     filename is simply irrelevant."""
-    patch_supabase("items", admin=fake_supabase)
+    patch_supabase("domains.catalog.items", admin=fake_supabase)
     fake_supabase.storage.from_.return_value.get_public_url.return_value = "https://cdn.example.com/img"
 
     images = [FakeUploadFile(filename=None, content=PNG_BYTES)]
@@ -379,12 +382,10 @@ async def test_upload_item_ignores_the_filename_entirely(patch_supabase, fake_su
 
 async def test_upload_item_rejects_a_payload_that_is_not_an_image(patch_supabase, fake_supabase):
     """A listing photo now goes through the same gate as an avatar (SPEC-044/054)."""
-    patch_supabase("items", admin=fake_supabase)
+    patch_supabase("domains.catalog.items", admin=fake_supabase)
 
     images = [FakeUploadFile("evil.png", content=b"<svg onload=alert(1)></svg>")]
-    ok = await upload_item(
-        name="Nope", description="desc", condition="used", uploaded_images=images, price=1.0
-    )
+    ok = await upload_item(name="Nope", description="desc", condition="used", uploaded_images=images, price=1.0)
 
     assert ok is False
     fake_supabase.storage.from_.return_value.upload.assert_not_called()
@@ -392,14 +393,17 @@ async def test_upload_item_rejects_a_payload_that_is_not_an_image(patch_supabase
 
 async def test_upload_item_downscales_and_recompresses_a_large_photo(patch_supabase, fake_supabase):
     """The whole point: a phone photo is not served to the storefront at 12 MP."""
-    patch_supabase("items", admin=fake_supabase)
+    patch_supabase("domains.catalog.items", admin=fake_supabase)
     fake_supabase.storage.from_.return_value.get_public_url.return_value = "https://cdn.example.com/img"
     fake_supabase.table.return_value.insert.return_value.execute.return_value = make_supabase_result([{"id": "x"}])
 
     big = _encode_photo((4000, 3000))
     ok = await upload_item(
-        name="Big", description="desc", condition="used",
-        uploaded_images=[FakeUploadFile("huge.jpg", content=big)], price=1.0,
+        name="Big",
+        description="desc",
+        condition="used",
+        uploaded_images=[FakeUploadFile("huge.jpg", content=big)],
+        price=1.0,
     )
 
     assert ok is True
@@ -409,7 +413,7 @@ async def test_upload_item_downscales_and_recompresses_a_large_photo(patch_supab
 
 
 async def test_upload_item_multiple_images_all_uploaded(patch_supabase, fake_supabase):
-    patch_supabase("items", admin=fake_supabase)
+    patch_supabase("domains.catalog.items", admin=fake_supabase)
     fake_supabase.storage.from_.return_value.get_public_url.return_value = "https://cdn.example.com/img"
     fake_supabase.table.return_value.insert.return_value.execute.return_value = make_supabase_result([{"id": "x"}])
 
@@ -433,7 +437,7 @@ async def test_upload_item_multiple_images_all_uploaded(patch_supabase, fake_sup
 async def test_upload_item_stores_images_in_the_order_they_were_given(patch_supabase, fake_supabase):
     """Uploads run concurrently, but the stored map must stay in input order --
     the storefront reads the first entry as the item's thumbnail."""
-    patch_supabase("items", admin=fake_supabase)
+    patch_supabase("domains.catalog.items", admin=fake_supabase)
     fake_supabase.table.return_value.insert.return_value.execute.return_value = make_supabase_result([{"id": "x"}])
 
     # Make the first upload the slowest, so a naive gather-and-collect would
@@ -444,9 +448,7 @@ async def test_upload_item_stores_images_in_the_order_they_were_given(patch_supa
         time.sleep(delays[path.rsplit("/", 1)[-1]])
 
     fake_supabase.storage.from_.return_value.upload.side_effect = slow_upload
-    fake_supabase.storage.from_.return_value.get_public_url.side_effect = (
-        lambda path: f"https://cdn.example.com/{path}"
-    )
+    fake_supabase.storage.from_.return_value.get_public_url.side_effect = lambda path: f"https://cdn.example.com/{path}"
 
     images = [FakeUploadFile("a.jpg"), FakeUploadFile("b.png"), FakeUploadFile("c.gif")]
     ok = await upload_item(
@@ -463,7 +465,7 @@ async def test_upload_item_stores_images_in_the_order_they_were_given(patch_supa
 
 
 async def test_upload_item_exception_returns_false(patch_supabase, fake_supabase):
-    patch_supabase("items", admin=fake_supabase)
+    patch_supabase("domains.catalog.items", admin=fake_supabase)
     fake_supabase.storage.from_.return_value.upload.side_effect = Exception("storage exploded")
 
     images = [FakeUploadFile("a.jpg")]
@@ -485,18 +487,21 @@ async def test_upload_item_exception_returns_false(patch_supabase, fake_supabase
 
 def _stub_current_images(fake_supabase, image_path):
     """Point the `select('image_path').eq('id', ...)` chain at a stored map."""
-    fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = (
-        make_supabase_result([{"image_path": json.dumps(image_path)}])
+    fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = make_supabase_result(
+        [{"image_path": json.dumps(image_path)}]
     )
 
 
 async def test_sync_item_images_keeps_a_subset_in_the_requested_order(patch_supabase, fake_supabase):
-    patch_supabase("items", admin=fake_supabase)
-    _stub_current_images(fake_supabase, {
-        "0.jpg": "https://cdn.example.com/a.jpg",
-        "1.jpg": "https://cdn.example.com/b.jpg",
-        "2.jpg": "https://cdn.example.com/c.jpg",
-    })
+    patch_supabase("domains.catalog.items", admin=fake_supabase)
+    _stub_current_images(
+        fake_supabase,
+        {
+            "0.jpg": "https://cdn.example.com/a.jpg",
+            "1.jpg": "https://cdn.example.com/b.jpg",
+            "2.jpg": "https://cdn.example.com/c.jpg",
+        },
+    )
 
     result = await sync_item_images(
         "item-1",
@@ -512,7 +517,7 @@ async def test_sync_item_images_keeps_a_subset_in_the_requested_order(patch_supa
 
 
 async def test_sync_item_images_uploads_new_files_at_their_requested_position(patch_supabase, fake_supabase):
-    patch_supabase("items", admin=fake_supabase)
+    patch_supabase("domains.catalog.items", admin=fake_supabase)
     _stub_current_images(fake_supabase, {"0.jpg": "https://cdn.example.com/a.jpg"})
     fake_supabase.storage.from_.return_value.get_public_url.return_value = "https://cdn.example.com/new.png"
 
@@ -534,11 +539,9 @@ async def test_sync_item_images_uploads_new_files_at_their_requested_position(pa
 
 async def test_sync_item_images_names_new_uploads_uniquely(patch_supabase, fake_supabase):
     """A new photo must never overwrite the storage object of a kept one."""
-    patch_supabase("items", admin=fake_supabase)
+    patch_supabase("domains.catalog.items", admin=fake_supabase)
     _stub_current_images(fake_supabase, {"0.jpg": "https://cdn.example.com/a.jpg"})
-    fake_supabase.storage.from_.return_value.get_public_url.side_effect = (
-        lambda path: f"https://cdn.example.com/{path}"
-    )
+    fake_supabase.storage.from_.return_value.get_public_url.side_effect = lambda path: f"https://cdn.example.com/{path}"
 
     result = await sync_item_images(
         "item-1",
@@ -553,7 +556,7 @@ async def test_sync_item_images_names_new_uploads_uniquely(patch_supabase, fake_
 
 
 async def test_sync_item_images_drops_tokens_the_item_does_not_own(patch_supabase, fake_supabase):
-    patch_supabase("items", admin=fake_supabase)
+    patch_supabase("domains.catalog.items", admin=fake_supabase)
     _stub_current_images(fake_supabase, {"0.jpg": "https://cdn.example.com/a.jpg"})
 
     result = await sync_item_images(
@@ -565,11 +568,14 @@ async def test_sync_item_images_drops_tokens_the_item_does_not_own(patch_supabas
 
 
 async def test_sync_item_images_removes_storage_objects_that_dropped_out(patch_supabase, fake_supabase):
-    patch_supabase("items", admin=fake_supabase)
-    _stub_current_images(fake_supabase, {
-        "0.jpg": "https://cdn.example.com/a.jpg",
-        "1.jpg": "https://cdn.example.com/b.jpg",
-    })
+    patch_supabase("domains.catalog.items", admin=fake_supabase)
+    _stub_current_images(
+        fake_supabase,
+        {
+            "0.jpg": "https://cdn.example.com/a.jpg",
+            "1.jpg": "https://cdn.example.com/b.jpg",
+        },
+    )
 
     result = await sync_item_images("item-1", ["https://cdn.example.com/b.jpg"])
 
@@ -579,11 +585,14 @@ async def test_sync_item_images_removes_storage_objects_that_dropped_out(patch_s
 
 async def test_sync_item_images_survives_a_failing_storage_remove(patch_supabase, fake_supabase):
     """Orphaned bytes are cheaper than a failed save the admin cannot retry."""
-    patch_supabase("items", admin=fake_supabase)
-    _stub_current_images(fake_supabase, {
-        "0.jpg": "https://cdn.example.com/a.jpg",
-        "1.jpg": "https://cdn.example.com/b.jpg",
-    })
+    patch_supabase("domains.catalog.items", admin=fake_supabase)
+    _stub_current_images(
+        fake_supabase,
+        {
+            "0.jpg": "https://cdn.example.com/a.jpg",
+            "1.jpg": "https://cdn.example.com/b.jpg",
+        },
+    )
     fake_supabase.storage.from_.return_value.remove.side_effect = Exception("storage down")
 
     result = await sync_item_images("item-1", ["https://cdn.example.com/b.jpg"])
@@ -592,7 +601,7 @@ async def test_sync_item_images_survives_a_failing_storage_remove(patch_supabase
 
 
 async def test_sync_item_images_returns_empty_map_when_every_photo_is_dropped(patch_supabase, fake_supabase):
-    patch_supabase("items", admin=fake_supabase)
+    patch_supabase("domains.catalog.items", admin=fake_supabase)
     _stub_current_images(fake_supabase, {"0.jpg": "https://cdn.example.com/a.jpg"})
 
     result = await sync_item_images("item-1", [])
@@ -602,9 +611,9 @@ async def test_sync_item_images_returns_empty_map_when_every_photo_is_dropped(pa
 
 
 async def test_sync_item_images_treats_an_unreadable_image_path_as_empty(patch_supabase, fake_supabase):
-    patch_supabase("items", admin=fake_supabase)
-    fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = (
-        make_supabase_result([{"image_path": "not-json"}])
+    patch_supabase("domains.catalog.items", admin=fake_supabase)
+    fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = make_supabase_result(
+        [{"image_path": "not-json"}]
     )
     fake_supabase.storage.from_.return_value.get_public_url.return_value = "https://cdn.example.com/new.png"
 
@@ -615,7 +624,7 @@ async def test_sync_item_images_treats_an_unreadable_image_path_as_empty(patch_s
 
 
 async def test_sync_item_images_upload_exception_returns_none(patch_supabase, fake_supabase):
-    patch_supabase("items", admin=fake_supabase)
+    patch_supabase("domains.catalog.items", admin=fake_supabase)
     _stub_current_images(fake_supabase, {"0.jpg": "https://cdn.example.com/a.jpg"})
     fake_supabase.storage.from_.return_value.upload.side_effect = Exception("storage exploded")
 
@@ -625,10 +634,8 @@ async def test_sync_item_images_upload_exception_returns_none(patch_supabase, fa
 
 
 async def test_sync_item_images_missing_item_returns_none(patch_supabase, fake_supabase):
-    patch_supabase("items", admin=fake_supabase)
-    fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = (
-        make_supabase_result([])
-    )
+    patch_supabase("domains.catalog.items", admin=fake_supabase)
+    fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = make_supabase_result([])
 
     result = await sync_item_images("ghost", ["https://cdn.example.com/a.jpg"])
 
@@ -639,10 +646,11 @@ async def test_sync_item_images_missing_item_returns_none(patch_supabase, fake_s
 # delete_item
 # ---------------------------------------------------------------------------
 
+
 def test_delete_item_success_sets_deleted_at(patch_supabase, fake_supabase):
-    patch_supabase("items", admin=fake_supabase)
-    fake_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value = (
-        make_supabase_result([{"id": "item-1"}])
+    patch_supabase("domains.catalog.items", admin=fake_supabase)
+    fake_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value = make_supabase_result(
+        [{"id": "item-1"}]
     )
 
     ok = delete_item("item-1")
@@ -657,7 +665,7 @@ def test_delete_item_success_sets_deleted_at(patch_supabase, fake_supabase):
 
 
 def test_delete_item_exception_returns_false(patch_supabase, fake_supabase):
-    patch_supabase("items", admin=fake_supabase)
+    patch_supabase("domains.catalog.items", admin=fake_supabase)
     fake_supabase.table.side_effect = Exception("db unavailable")
 
     ok = delete_item("item-1")
@@ -669,8 +677,9 @@ def test_delete_item_exception_returns_false(patch_supabase, fake_supabase):
 # update_item
 # ---------------------------------------------------------------------------
 
+
 def test_update_item_no_fields_returns_false(patch_supabase, fake_supabase):
-    patch_supabase("items", admin=fake_supabase)
+    patch_supabase("domains.catalog.items", admin=fake_supabase)
 
     ok = update_item("item-1")
 
@@ -679,9 +688,9 @@ def test_update_item_no_fields_returns_false(patch_supabase, fake_supabase):
 
 
 def test_update_item_success_updates_given_fields(patch_supabase, fake_supabase):
-    patch_supabase("items", admin=fake_supabase)
-    fake_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value = (
-        make_supabase_result([{"id": "item-1"}])
+    patch_supabase("domains.catalog.items", admin=fake_supabase)
+    fake_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value = make_supabase_result(
+        [{"id": "item-1"}]
     )
 
     ok = update_item(
@@ -706,9 +715,9 @@ def test_update_item_success_updates_given_fields(patch_supabase, fake_supabase)
 
 
 def test_update_item_partial_fields_only_includes_provided(patch_supabase, fake_supabase):
-    patch_supabase("items", admin=fake_supabase)
-    fake_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value = (
-        make_supabase_result([{"id": "item-1"}])
+    patch_supabase("domains.catalog.items", admin=fake_supabase)
+    fake_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value = make_supabase_result(
+        [{"id": "item-1"}]
     )
 
     ok = update_item("item-1", description="Updated description")
@@ -719,7 +728,7 @@ def test_update_item_partial_fields_only_includes_provided(patch_supabase, fake_
 
 
 def test_update_item_exception_returns_false(patch_supabase, fake_supabase):
-    patch_supabase("items", admin=fake_supabase)
+    patch_supabase("domains.catalog.items", admin=fake_supabase)
     fake_supabase.table.side_effect = Exception("db exploded")
 
     ok = update_item("item-1", name="whatever")

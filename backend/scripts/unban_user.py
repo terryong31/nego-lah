@@ -6,12 +6,13 @@ Usage:
 
 Uses the service-role client, so run it from the backend with env configured.
 """
+
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from connector import admin_supabase  # noqa: E402
+from core.connector import admin_supabase  # noqa: E402
 
 
 def find_user_by_email(email: str):
@@ -48,14 +49,13 @@ def main():
     print("  - Supabase auth ban lifted (ban_duration=none)")
 
     # 2. Clear the app-side DB flag.
-    admin_supabase.table("user_profiles").upsert(
-        {"id": user.id, "is_banned": False, "updated_at": "now()"}
-    ).execute()
+    admin_supabase.table("user_profiles").upsert({"id": user.id, "is_banned": False, "updated_at": "now()"}).execute()
     print("  - user_profiles.is_banned = False")
 
     # 3. Drop the cached ban status.
     try:
-        from cache import invalidate_ban_status
+        from core.cache import invalidate_ban_status
+
         invalidate_ban_status(user.id)
         print("  - cache invalidated")
     except Exception as e:

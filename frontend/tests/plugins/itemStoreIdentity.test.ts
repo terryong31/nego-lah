@@ -19,8 +19,8 @@ const { holder } = vi.hoisted(() => ({
   holder: { user: null as unknown as Ref<{ sub: string } | null> }
 }))
 
-mockNuxtImport('useSupabaseUser', () => {
-  return () => holder.user
+mockNuxtImport('useAuth', () => {
+  return () => ({ user: holder.user })
 })
 
 const ITEM_ID = 'item-abc'

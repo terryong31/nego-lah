@@ -45,6 +45,7 @@ from scripts import check_fulfillment_anomalies as cfa
 # helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_admin_supabase(orders_data, items_by_id=None):
     """Build a fake admin_supabase whose `.table("orders")...` and
     `.table("items")...` chains are configured independently.
@@ -59,10 +60,9 @@ def _make_admin_supabase(orders_data, items_by_id=None):
     def table_side_effect(table_name):
         table_mock = MagicMock()
         if table_name == "orders":
-            table_mock.select.return_value.eq.return_value.execute.return_value = (
-                make_supabase_result(orders_data)
-            )
+            table_mock.select.return_value.eq.return_value.execute.return_value = make_supabase_result(orders_data)
         elif table_name == "items":
+
             def eq_side_effect(_field, item_id):
                 eq_mock = MagicMock()
                 raw = items_by_id.get(item_id)
@@ -128,7 +128,9 @@ def _patch_admin(monkeypatch, orders_data, items_by_id=None):
     return admin
 
 
-def _patch_stripe_pi_charge(fake_stripe, monkeypatch, *, pi_status="succeeded", latest_charge="ch_1", charge_refunded=False, pi_side_effect=None):
+def _patch_stripe_pi_charge(
+    fake_stripe, monkeypatch, *, pi_status="succeeded", latest_charge="ch_1", charge_refunded=False, pi_side_effect=None
+):
     mock_pi = MagicMock(status=pi_status, latest_charge=latest_charge)
     mock_charge = MagicMock(refunded=charge_refunded)
     if pi_side_effect is not None:
@@ -142,6 +144,7 @@ def _patch_stripe_pi_charge(fake_stripe, monkeypatch, *, pi_status="succeeded", 
 # ---------------------------------------------------------------------------
 # 1. No pending_info orders at all -> early return, no alerts.
 # ---------------------------------------------------------------------------
+
 
 def test_no_orders_data_empty_list_returns_early(monkeypatch, _capture_message):
     _patch_admin(monkeypatch, orders_data=[])
@@ -159,6 +162,7 @@ def test_no_orders_data_none_returns_early(monkeypatch, _capture_message):
 # 2. "No alert" paths: item not found, item not sold, item sold to same
 #    buyer, and item sold to a different buyer but still within SLA (<24h).
 # ---------------------------------------------------------------------------
+
 
 def test_item_not_found_skips_order(monkeypatch, _capture_message):
     order = _order(item_id="ghost-item")
@@ -198,11 +202,14 @@ def test_item_sold_to_different_buyer_but_within_sla_no_alert(monkeypatch, _capt
 #    refunded).
 # ---------------------------------------------------------------------------
 
+
 def test_stuck_refund_triggers_fatal_alert(monkeypatch, fake_stripe, _capture_message):
     order = _order(order_id="order-42", item_id="item-1", buyer_id="buyer-1", stripe_payment_id="pi_999")
     item = {"status": "sold", "buyer_id": "someone-else"}
     _patch_admin(monkeypatch, orders_data=[order], items_by_id={"item-1": item})
-    _patch_stripe_pi_charge(fake_stripe, monkeypatch, pi_status="succeeded", latest_charge="ch_abc", charge_refunded=False)
+    _patch_stripe_pi_charge(
+        fake_stripe, monkeypatch, pi_status="succeeded", latest_charge="ch_abc", charge_refunded=False
+    )
 
     cfa.check_anomalies()
 
@@ -234,6 +241,7 @@ def test_stuck_refund_uses_charge_retrieve_with_latest_charge_id(monkeypatch, fa
 # 4. General SLA warning path: every way the fatal branch can be bypassed
 #    while the order is still stuck >24h with the item sold to someone else.
 # ---------------------------------------------------------------------------
+
 
 def test_general_warning_when_no_payment_intent_id(monkeypatch, fake_stripe, _capture_message):
     order = _order(item_id="item-1", stripe_payment_id=None)
@@ -295,7 +303,9 @@ def test_general_warning_when_charge_already_refunded(monkeypatch, fake_stripe, 
     order = _order(item_id="item-1", stripe_payment_id="pi_refunded")
     item = {"status": "sold", "buyer_id": "someone-else"}
     _patch_admin(monkeypatch, orders_data=[order], items_by_id={"item-1": item})
-    _patch_stripe_pi_charge(fake_stripe, monkeypatch, pi_status="succeeded", latest_charge="ch_ref", charge_refunded=True)
+    _patch_stripe_pi_charge(
+        fake_stripe, monkeypatch, pi_status="succeeded", latest_charge="ch_ref", charge_refunded=True
+    )
 
     cfa.check_anomalies()
 
@@ -322,6 +332,7 @@ def test_general_warning_when_stripe_raises(monkeypatch, fake_stripe, _capture_m
 # ---------------------------------------------------------------------------
 # 5. created_at parsing branches.
 # ---------------------------------------------------------------------------
+
 
 def test_created_at_with_microseconds_parses_and_still_alerts(monkeypatch, fake_stripe, _capture_message):
     order = _order(item_id="item-1", stripe_payment_id="pi_micro", age=timedelta(hours=30), micros=True)
@@ -387,11 +398,13 @@ def test_created_at_none_falls_back_to_now_and_suppresses_alert(monkeypatch, fak
 #    sentry_sdk.init itself is mocked so this never touches the network.
 # ---------------------------------------------------------------------------
 
+
 def test_sentry_not_initialized_without_dsn():
     # conftest pins SENTRY_DSN to "" (falsy, not simply absent - see conftest's
     # module docstring for why), so the module-level import at the top of this
     # file already ran with sentry_sdk.init never called.
     import os
+
     assert not os.environ.get("SENTRY_DSN")
 
 
@@ -404,9 +417,7 @@ def test_sentry_initialized_when_dsn_set(monkeypatch):
     monkeypatch.setenv("ENV", "staging")
     try:
         importlib.reload(cfa)
-        mock_init.assert_called_once_with(
-            dsn="https://fakekey@fake.ingest.sentry.io/123", environment="staging"
-        )
+        mock_init.assert_called_once_with(dsn="https://fakekey@fake.ingest.sentry.io/123", environment="staging")
     finally:
         monkeypatch.undo()
         importlib.reload(cfa)
@@ -415,6 +426,7 @@ def test_sentry_initialized_when_dsn_set(monkeypatch):
 # ---------------------------------------------------------------------------
 # 7. Multiple orders processed in one pass, mixing outcomes.
 # ---------------------------------------------------------------------------
+
 
 def test_multiple_orders_mixed_outcomes(monkeypatch, fake_stripe, _capture_message):
     fatal_order = _order(order_id="order-fatal", item_id="item-fatal", buyer_id="buyer-a", stripe_payment_id="pi_fatal")
@@ -427,7 +439,9 @@ def test_multiple_orders_mixed_outcomes(monkeypatch, fake_stripe, _capture_messa
         "item-clean": {"status": "sold", "buyer_id": "buyer-c"},  # same buyer -> not anomalous
     }
     _patch_admin(monkeypatch, orders_data=[fatal_order, warning_order, clean_order], items_by_id=items_by_id)
-    _patch_stripe_pi_charge(fake_stripe, monkeypatch, pi_status="succeeded", latest_charge="ch_fatal", charge_refunded=False)
+    _patch_stripe_pi_charge(
+        fake_stripe, monkeypatch, pi_status="succeeded", latest_charge="ch_fatal", charge_refunded=False
+    )
 
     cfa.check_anomalies()
 

@@ -7,8 +7,8 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from unittest.mock import MagicMock
 
-from env import FRONTEND_URL
-from payment.pay import create_checkout_session
+from core.env import FRONTEND_URL
+from domains.billing.pay import create_checkout_session
 
 
 def test_create_checkout_session_without_user_id_returns_url(fake_stripe):
@@ -103,8 +103,7 @@ def test_create_checkout_session_sets_payment_mode_and_urls(fake_stripe):
     assert kwargs["payment_method_types"] == ["card"]
     assert kwargs["mode"] == "payment"
     assert kwargs["success_url"] == (
-        f"{FRONTEND_URL}/checkout/success?payment=success&item_id=item-4"
-        "&session_id={CHECKOUT_SESSION_ID}"
+        f"{FRONTEND_URL}/checkout/success?payment=success&item_id=item-4&session_id={{CHECKOUT_SESSION_ID}}"
     )
     assert kwargs["cancel_url"] == f"{FRONTEND_URL}/checkout/cancel"
 

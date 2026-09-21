@@ -14,8 +14,7 @@ definePageMeta({
 
 const { t } = useI18n()
 const { call } = useApi()
-const user = useSupabaseUser()
-const supabase = useSupabaseClient()
+const { user, fetchSession, clearSession } = useAuth()
 const router = useRouter()
 const toast = useToast()
 
@@ -32,14 +31,14 @@ const initials = computed(() => {
   return name.slice(0, 2).toUpperCase()
 })
 
-// Resolve the user id from the live session rather than the reactive
-// `useSupabaseUser` ref. The ref can be populated (truthy) while its `id` is
-// still undefined during hydration, which produced `/user/undefined/profile`
-// requests. The session is the same source `useApi` reads the JWT from, so the
-// path id and the Authorization header are guaranteed to refer to the same user.
+// `plugins/auth.client.ts` settles the session before any page renders, so the
+// ref is authoritative here. It re-asks only if it somehow is not — the failure
+// this guards against is a `/user/undefined/profile` request, which the server
+// answers with a 403 and the user reads as "saving is broken".
 async function getUserId(): Promise<string | null> {
-  const { data: { session } } = await supabase.auth.getSession()
-  return resolveUserId(session?.user) ?? resolveUserId(user.value)
+  const known = resolveUserId(user.value)
+  if (known) return known
+  return resolveUserId(await fetchSession())
 }
 
 // Keep local fields in sync if the user object updates elsewhere
@@ -75,8 +74,8 @@ async function onProfileSave() {
       { method: 'PUT', body: form }
     )
 
-    // Refresh the client session so the updated metadata (used by the header) shows
-    await supabase.auth.refreshSession()
+    // Re-read the session so the updated metadata (used by the header) shows.
+    await fetchSession()
 
     avatarUrl.value = res.avatar_url || avatarUrl.value
     avatarFile.value = null
@@ -185,7 +184,9 @@ async function handleDeleteAccount() {
       body: { current_password: deletePassword.value }
     })
     deleteModalOpen.value = false
-    await supabase.auth.signOut()
+    // The account is gone, so the session went with it server-side; drop what
+    // this tab still holds rather than calling a logout that would 401.
+    clearSession()
     toast.add({ title: t('profile.accountDeleted'), description: t('profile.accountDeletedDesc'), color: 'success' })
     router.push('/')
   } catch (err) {

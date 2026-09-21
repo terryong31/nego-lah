@@ -20,7 +20,7 @@ process for the length of one scenario.
 
 from contextlib import contextmanager
 
-from agent.memory import DEFAULT_HISTORY_LIMIT
+from domains.negotiation.memory import DEFAULT_HISTORY_LIMIT
 
 
 class ScenarioMemory:
@@ -45,12 +45,14 @@ class ScenarioMemory:
         source: str = "ai",
         tool_calls: list[dict] | None = None,
     ):
-        self._rows.setdefault(user_id, []).append({
-            "role": role,
-            "content": message,
-            "source": source,
-            "tool_calls": tool_calls or None,
-        })
+        self._rows.setdefault(user_id, []).append(
+            {
+                "role": role,
+                "content": message,
+                "source": source,
+                "tool_calls": tool_calls or None,
+            }
+        )
 
     def get_history(
         self,
@@ -86,7 +88,7 @@ def scenario_memory():
     disable persistence for the rest of the process, which in a test run means
     every later test quietly sharing one transcript.
     """
-    from agent import bot
+    from domains.negotiation import bot
 
     original = bot.conversation_memory
     memory = ScenarioMemory()

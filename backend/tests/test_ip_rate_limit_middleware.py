@@ -6,8 +6,8 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from httpx import ASGITransport, AsyncClient
 
-import limiter as limiter_module
-from cache import redis_client
+import core.limiter as limiter_module
+from core.cache import redis_client
 from core.rate_limit_middleware import IPRateLimitMiddleware
 
 

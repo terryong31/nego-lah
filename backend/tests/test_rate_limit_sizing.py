@@ -12,7 +12,7 @@ NAT address produced 10 × 429.
 
 So these ceilings are deliberately coarse. They exist to stop one scripted
 laptop saturating the box, and nothing else — per-person fairness is the job of
-the per-user limiter in `cache.check_rate_limit`, which keys on the
+the per-user limiter in `core.cache.check_rate_limit`, which keys on the
 authenticated user and is unaffected by how many people share an address.
 
 The env overrides matter for the same reason: a venue that turns out to be
@@ -28,7 +28,7 @@ import pytest
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import limiter as limiter_module  # noqa: E402
+import core.limiter as limiter_module  # noqa: E402
 
 
 def _per_minute(value: str) -> int:
@@ -69,7 +69,7 @@ def test_checkout_ceiling_survives_a_room_on_one_ip():
 def test_each_ceiling_can_be_retuned_without_a_rebuild(env_var, attr):
     """Imported in a subprocess deliberately.
 
-    Reloading `limiter` in-process rebinds the module's `limiter` object, but
+    Reloading `core.limiter` in-process rebinds the module's `limiter` object, but
     every `@limiter.limit(...)` already applied to a route still refers to the
     old instance — so the reloaded one has no registered limits and
     `app.state.limiter` no longer matches the decorators. That silently breaks
@@ -78,7 +78,7 @@ def test_each_ceiling_can_be_retuned_without_a_rebuild(env_var, attr):
     env = {**os.environ, env_var: "4321/minute"}
     # S603: the argv is this test's own literals, not user input.
     result = subprocess.run(  # noqa: S603
-        [sys.executable, "-c", f"import limiter; print(limiter.{attr})"],
+        [sys.executable, "-c", f"import core.limiter; print(core.limiter.{attr})"],
         cwd=pathlib.Path(__file__).resolve().parents[1],
         env=env,
         capture_output=True,

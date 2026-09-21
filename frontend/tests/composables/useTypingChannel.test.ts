@@ -1,43 +1,77 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+/**
+ * SPEC-094 — typing presence over the authenticated broker.
+ *
+ * This used to be a Supabase Realtime broadcast channel, `chat:{userId}`,
+ * created with no `private: true` and with no policy on `realtime.messages`.
+ * The anon key ships in this bundle, so that channel was readable by anyone
+ * holding it and a user id: a stranger could watch a buyer's negotiation live.
+ *
+ * The protocol did not change — a role on each ping, a 3s idle expiry, a 1.5s
+ * send throttle — only what carries it. So these tests are about the transport:
+ * the buyer rides the stream `useNotifications` already holds, the admin console
+ * opens its own against the admin cookie, and neither can address a conversation
+ * that is not theirs.
+ */
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
 import { mockNuxtImport, mountSuspended } from '@nuxt/test-utils/runtime'
 import { useTypingChannel } from '../../app/composables/useTypingChannel'
 
-// A minimal chainable fake standing in for a Supabase RealtimeChannel: records
-// the handlers registered via `.on(...)` and the callback passed to
-// `.subscribe(...)` so tests can trigger them manually.
-function createFakeChannel() {
-  const handlers: Record<string, (arg: unknown) => void> = {}
-  const fake: {
-    on: ReturnType<typeof vi.fn>
-    subscribe: ReturnType<typeof vi.fn>
-    send: ReturnType<typeof vi.fn>
-    handlers: Record<string, (arg: unknown) => void>
-    subscribeCb?: (status: string) => void
-  } = {
-    on: vi.fn((_type: string, filter: { event: string }, cb: (arg: unknown) => void) => {
-      handlers[filter.event] = cb
-      return fake
-    }),
-    subscribe: vi.fn((cb: (status: string) => void) => {
-      fake.subscribeCb = cb
-      return fake
-    }),
-    send: vi.fn(),
-    handlers
+// The bus `useNotifications` fans its stream out on. Captured so a test can
+// push events at the composable the way the server would.
+const { handlers, onChatStreamEventMock } = vi.hoisted(() => {
+  const handlers: ((event: Record<string, unknown>) => void)[] = []
+  return {
+    handlers,
+    onChatStreamEventMock: vi.fn((handler: (event: Record<string, unknown>) => void) => {
+      handlers.push(handler)
+      return () => {
+        const i = handlers.indexOf(handler)
+        if (i >= 0) handlers.splice(i, 1)
+      }
+    })
   }
-  return fake
+})
+
+vi.mock('../../app/composables/useNotifications', () => ({
+  onChatStreamEvent: onChatStreamEventMock
+}))
+
+mockNuxtImport('getCsrfToken', () => () => 'admin-csrf')
+
+const fetchMock = vi.fn()
+const streams: FakeEventSource[] = []
+
+class FakeEventSource {
+  url: string
+  withCredentials: boolean
+  closed = false
+  onerror: (() => void) | null = null
+  private listeners: Record<string, ((e: { data: string }) => void)[]> = {}
+
+  constructor(url: string, init?: { withCredentials?: boolean }) {
+    this.url = url
+    this.withCredentials = Boolean(init?.withCredentials)
+    streams.push(this)
+  }
+
+  addEventListener(type: string, fn: (e: { data: string }) => void) {
+    (this.listeners[type] ||= []).push(fn)
+  }
+
+  emit(payload: Record<string, unknown>) {
+    for (const fn of this.listeners.message || []) fn({ data: JSON.stringify(payload) })
+  }
+
+  close() {
+    this.closed = true
+  }
 }
 
-let currentChannel: ReturnType<typeof createFakeChannel>
-
-const fakeSupabase = {
-  channel: vi.fn(),
-  removeChannel: vi.fn(),
-  realtime: { setAuth: vi.fn() }
+/** Push an event down the buyer's shared stream. */
+function emitToBus(payload: Record<string, unknown>) {
+  for (const handler of [...handlers]) handler(payload)
 }
-
-mockNuxtImport('useSupabaseClient', () => () => fakeSupabase)
 
 const Host = defineComponent({
   setup() {
@@ -49,231 +83,145 @@ const Host = defineComponent({
 describe('composables/useTypingChannel', () => {
   beforeEach(() => {
     vi.useFakeTimers()
-    fakeSupabase.channel.mockReset()
-    fakeSupabase.removeChannel.mockReset()
-    fakeSupabase.realtime.setAuth.mockReset()
-    fakeSupabase.channel.mockImplementation(() => {
-      currentChannel = createFakeChannel()
-      return currentChannel
+    handlers.length = 0
+    streams.length = 0
+    onChatStreamEventMock.mockClear()
+    fetchMock.mockReset().mockResolvedValue({})
+    ;(globalThis as unknown as Record<string, unknown>).$fetch = fetchMock
+    ;(window as unknown as Record<string, unknown>).EventSource = FakeEventSource
+    document.cookie = 'nl_csrf=buyer-csrf'
+  })
+
+  describe('the buyer side', () => {
+    it('listens on the stream the session already holds open, opening none of its own', async () => {
+      const wrapper = await mountSuspended(Host)
+
+      wrapper.vm.join('buyer-1', { listenFor: 'seller', sendAs: 'customer' })
+
+      expect(onChatStreamEventMock).toHaveBeenCalledTimes(1)
+      expect(streams).toHaveLength(0)
+    })
+
+    it('raises the indicator for the other party and expires it after an idle window', async () => {
+      const wrapper = await mountSuspended(Host)
+      wrapper.vm.join('buyer-1', { listenFor: 'seller', sendAs: 'customer' })
+
+      emitToBus({ type: 'typing', role: 'seller' })
+      expect(wrapper.vm.remoteTyping).toBe(true)
+
+      vi.advanceTimersByTime(3000)
+      expect(wrapper.vm.remoteTyping, 'typing carries no "stopped" signal').toBe(false)
+    })
+
+    it('ignores its own ping coming back down the same stream', async () => {
+      // Both parties are on one per-user channel, so everything published to it
+      // is echoed to the sender too — the role is what tells them apart.
+      const wrapper = await mountSuspended(Host)
+      wrapper.vm.join('buyer-1', { listenFor: 'seller', sendAs: 'customer' })
+
+      emitToBus({ type: 'typing', role: 'customer' })
+
+      expect(wrapper.vm.remoteTyping).toBe(false)
+    })
+
+    it('hands live messages to the caller', async () => {
+      const onMessage = vi.fn()
+      const wrapper = await mountSuspended(Host)
+      wrapper.vm.join('buyer-1', { listenFor: 'seller', sendAs: 'customer', onMessage })
+
+      emitToBus({ type: 'new_message', message: 'RM240 can lah', source: 'ai' })
+
+      expect(onMessage).toHaveBeenCalledWith({ type: 'new_message', message: 'RM240 can lah', source: 'ai' })
+    })
+
+    it('pings the conversation it is signed in as, with no id to tamper with', async () => {
+      const wrapper = await mountSuspended(Host)
+      wrapper.vm.join('buyer-1', { listenFor: 'seller', sendAs: 'customer' })
+
+      wrapper.vm.ping()
+
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      const [url, options] = fetchMock.mock.calls[0]!
+      expect(url).toBe('http://localhost:8000/chat/typing')
+      expect(url).not.toContain('buyer-1')
+      expect(options.method).toBe('POST')
+      expect(options.credentials).toBe('include')
+      expect(options.headers['X-CSRF-Token']).toBe('buyer-csrf')
+    })
+
+    it('throttles pings, because every keystroke would otherwise be a request', async () => {
+      const wrapper = await mountSuspended(Host)
+      wrapper.vm.join('buyer-1', { listenFor: 'seller', sendAs: 'customer' })
+
+      wrapper.vm.ping()
+      wrapper.vm.ping()
+      wrapper.vm.ping()
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+
+      vi.advanceTimersByTime(1500)
+      wrapper.vm.ping()
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+    })
+
+    it('drops a ping when no conversation has been joined', async () => {
+      const wrapper = await mountSuspended(Host)
+
+      wrapper.vm.ping()
+
+      expect(fetchMock).not.toHaveBeenCalled()
+    })
+
+    it('detaches from the bus on leave, so a stale conversation stops being heard', async () => {
+      const wrapper = await mountSuspended(Host)
+      wrapper.vm.join('buyer-1', { listenFor: 'seller', sendAs: 'customer' })
+
+      wrapper.vm.leave()
+      emitToBus({ type: 'typing', role: 'seller' })
+
+      expect(wrapper.vm.remoteTyping).toBe(false)
     })
   })
 
-  afterEach(() => {
-    vi.useRealTimers()
-  })
+  describe('the admin side', () => {
+    it('opens its own stream, on the admin session', async () => {
+      const wrapper = await mountSuspended(Host)
 
-  it('creates a channel named after the conversation with broadcast self disabled', async () => {
-    const wrapper = await mountSuspended(Host)
-    wrapper.vm.join('conv1', { listenFor: 'seller', sendAs: 'customer' })
+      wrapper.vm.join('buyer-1', { listenFor: 'customer', sendAs: 'seller' })
 
-    expect(fakeSupabase.channel).toHaveBeenCalledWith('chat:conv1', {
-      config: { broadcast: { self: false } }
-    })
-    expect(currentChannel.on).toHaveBeenCalledWith('broadcast', { event: 'typing' }, expect.any(Function))
-    expect(currentChannel.on).toHaveBeenCalledWith('broadcast', { event: 'new_message' }, expect.any(Function))
-    expect(currentChannel.subscribe).toHaveBeenCalledWith(expect.any(Function))
-  })
-
-  it('sets remoteTyping on a matching broadcast and clears it 3000ms after the last one', async () => {
-    const wrapper = await mountSuspended(Host)
-    wrapper.vm.join('conv1', { listenFor: 'seller', sendAs: 'customer' })
-    currentChannel.subscribeCb?.('SUBSCRIBED')
-
-    currentChannel.handlers.typing({ payload: { role: 'seller' } })
-    expect(wrapper.vm.remoteTyping).toBe(true)
-
-    vi.advanceTimersByTime(2999)
-    expect(wrapper.vm.remoteTyping).toBe(true)
-
-    vi.advanceTimersByTime(1)
-    expect(wrapper.vm.remoteTyping).toBe(false)
-  })
-
-  it('restarts the 3000ms clear window on each new matching broadcast', async () => {
-    const wrapper = await mountSuspended(Host)
-    wrapper.vm.join('conv1', { listenFor: 'seller', sendAs: 'customer' })
-    currentChannel.subscribeCb?.('SUBSCRIBED')
-
-    currentChannel.handlers.typing({ payload: { role: 'seller' } })
-    vi.advanceTimersByTime(2000)
-    expect(wrapper.vm.remoteTyping).toBe(true)
-
-    // A fresh broadcast before the first timer fires should push the deadline out.
-    currentChannel.handlers.typing({ payload: { role: 'seller' } })
-    vi.advanceTimersByTime(2000)
-    expect(wrapper.vm.remoteTyping).toBe(true)
-
-    vi.advanceTimersByTime(1000)
-    expect(wrapper.vm.remoteTyping).toBe(false)
-  })
-
-  it('ignores broadcasts whose role does not match listenFor', async () => {
-    const wrapper = await mountSuspended(Host)
-    wrapper.vm.join('conv1', { listenFor: 'seller', sendAs: 'customer' })
-    currentChannel.subscribeCb?.('SUBSCRIBED')
-
-    // "customer" is our own outgoing role, not the one we listen for.
-    currentChannel.handlers.typing({ payload: { role: 'customer' } })
-    expect(wrapper.vm.remoteTyping).toBe(false)
-
-    vi.advanceTimersByTime(3000)
-    expect(wrapper.vm.remoteTyping).toBe(false)
-  })
-
-  it('ignores broadcasts with no role at all', async () => {
-    const wrapper = await mountSuspended(Host)
-    wrapper.vm.join('conv1', { listenFor: 'seller', sendAs: 'customer' })
-    currentChannel.subscribeCb?.('SUBSCRIBED')
-
-    currentChannel.handlers.typing({ payload: {} })
-    expect(wrapper.vm.remoteTyping).toBe(false)
-  })
-
-  it('invokes onMessage for new_message broadcasts and tolerates a missing callback', async () => {
-    const onMessage = vi.fn()
-    const wrapper = await mountSuspended(Host)
-    wrapper.vm.join('conv1', { listenFor: 'seller', sendAs: 'customer', onMessage })
-    currentChannel.subscribeCb?.('SUBSCRIBED')
-
-    currentChannel.handlers.new_message({ payload: { text: 'hi' } })
-    expect(onMessage).toHaveBeenCalledWith({ text: 'hi' })
-
-    // Re-join without an onMessage handler — must not throw when a message arrives.
-    wrapper.vm.join('conv2', { listenFor: 'seller', sendAs: 'customer' })
-    expect(() => currentChannel.handlers.new_message({ payload: { text: 'again' } })).not.toThrow()
-  })
-
-  it('does not send a ping until the channel is ready (SUBSCRIBED)', async () => {
-    const wrapper = await mountSuspended(Host)
-    wrapper.vm.join('conv1', { listenFor: 'seller', sendAs: 'customer' })
-
-    wrapper.vm.ping()
-    expect(currentChannel.send).not.toHaveBeenCalled()
-
-    currentChannel.subscribeCb?.('SUBSCRIBED')
-    wrapper.vm.ping()
-    expect(currentChannel.send).toHaveBeenCalledTimes(1)
-    expect(currentChannel.send).toHaveBeenCalledWith({
-      type: 'broadcast',
-      event: 'typing',
-      payload: { role: 'customer' }
-    })
-  })
-
-  it('does not become ready (and does not send) on CHANNEL_ERROR / TIMED_OUT, and warns', async () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const wrapper = await mountSuspended(Host)
-    wrapper.vm.join('conv1', { listenFor: 'seller', sendAs: 'customer' })
-
-    currentChannel.subscribeCb?.('CHANNEL_ERROR')
-    wrapper.vm.ping()
-    expect(currentChannel.send).not.toHaveBeenCalled()
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('CHANNEL_ERROR'))
-
-    warnSpy.mockClear()
-    currentChannel.subscribeCb?.('TIMED_OUT')
-    wrapper.vm.ping()
-    expect(currentChannel.send).not.toHaveBeenCalled()
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('TIMED_OUT'))
-  })
-
-  it('throttles ping() to once per 1500ms', async () => {
-    const wrapper = await mountSuspended(Host)
-    wrapper.vm.join('conv1', { listenFor: 'seller', sendAs: 'customer' })
-    currentChannel.subscribeCb?.('SUBSCRIBED')
-
-    wrapper.vm.ping()
-    expect(currentChannel.send).toHaveBeenCalledTimes(1)
-
-    // Immediate follow-up pings within the window are dropped.
-    vi.advanceTimersByTime(1000)
-    wrapper.vm.ping()
-    expect(currentChannel.send).toHaveBeenCalledTimes(1)
-
-    // Once the throttle window elapses, the next ping goes through.
-    vi.advanceTimersByTime(500)
-    wrapper.vm.ping()
-    expect(currentChannel.send).toHaveBeenCalledTimes(2)
-  })
-
-  it('setAuth is called with the access token when provided, and swallows errors', async () => {
-    const wrapper = await mountSuspended(Host)
-    wrapper.vm.join('conv1', { listenFor: 'seller', sendAs: 'customer', accessToken: 'tok-123' })
-    expect(fakeSupabase.realtime.setAuth).toHaveBeenCalledWith('tok-123')
-
-    fakeSupabase.realtime.setAuth.mockImplementationOnce(() => {
-      throw new Error('boom')
-    })
-    expect(() =>
-      wrapper.vm.join('conv2', { listenFor: 'seller', sendAs: 'customer', accessToken: 'tok-456' })
-    ).not.toThrow()
-  })
-
-  it('does not call setAuth when no accessToken is supplied (anon admin side)', async () => {
-    const wrapper = await mountSuspended(Host)
-    wrapper.vm.join('conv1', { listenFor: 'customer', sendAs: 'seller' })
-    expect(fakeSupabase.realtime.setAuth).not.toHaveBeenCalled()
-  })
-
-  it('join() calls leave() first: re-joining tears down the previous channel and resets state', async () => {
-    const wrapper = await mountSuspended(Host)
-    wrapper.vm.join('conv1', { listenFor: 'seller', sendAs: 'customer' })
-    const firstChannel = currentChannel
-    firstChannel.subscribeCb?.('SUBSCRIBED')
-    firstChannel.handlers.typing({ payload: { role: 'seller' } })
-    expect(wrapper.vm.remoteTyping).toBe(true)
-
-    wrapper.vm.join('conv2', { listenFor: 'seller', sendAs: 'customer' })
-
-    expect(fakeSupabase.removeChannel).toHaveBeenCalledWith(firstChannel)
-    expect(wrapper.vm.remoteTyping).toBe(false)
-    expect(fakeSupabase.channel).toHaveBeenCalledTimes(2)
-    expect(fakeSupabase.channel).toHaveBeenNthCalledWith(2, 'chat:conv2', {
-      config: { broadcast: { self: false } }
+      expect(streams).toHaveLength(1)
+      expect(streams[0]!.url).toBe('http://localhost:8000/admin/chats/buyer-1/stream')
+      expect(streams[0]!.withCredentials, 'the admin cookie is what authorises this').toBe(true)
+      // It must not ride the buyer's bus — the console is not signed in as them.
+      expect(onChatStreamEventMock).not.toHaveBeenCalled()
     })
 
-    // The pending clear-timer from the first channel must have been cancelled —
-    // advancing past its deadline shouldn't do anything odd to the new state.
-    vi.advanceTimersByTime(3000)
-    expect(wrapper.vm.remoteTyping).toBe(false)
-  })
+    it('reacts to the customer typing on its own stream', async () => {
+      const wrapper = await mountSuspended(Host)
+      wrapper.vm.join('buyer-1', { listenFor: 'customer', sendAs: 'seller' })
 
-  it('leave() is idempotent and safe to call before any join()', async () => {
-    const wrapper = await mountSuspended(Host)
-    expect(() => wrapper.vm.leave()).not.toThrow()
-    expect(fakeSupabase.removeChannel).not.toHaveBeenCalled()
-    expect(wrapper.vm.remoteTyping).toBe(false)
+      streams[0]!.emit({ type: 'typing', role: 'customer' })
 
-    // Calling it again should also be a no-op.
-    expect(() => wrapper.vm.leave()).not.toThrow()
-    expect(fakeSupabase.removeChannel).not.toHaveBeenCalled()
-  })
+      expect(wrapper.vm.remoteTyping).toBe(true)
+    })
 
-  it('leave() removes the channel, resets remoteTyping, and blocks further pings', async () => {
-    const wrapper = await mountSuspended(Host)
-    wrapper.vm.join('conv1', { listenFor: 'seller', sendAs: 'customer' })
-    const joinedChannel = currentChannel
-    joinedChannel.subscribeCb?.('SUBSCRIBED')
-    joinedChannel.handlers.typing({ payload: { role: 'seller' } })
-    expect(wrapper.vm.remoteTyping).toBe(true)
+    it('pings through the admin route with the admin CSRF token', async () => {
+      const wrapper = await mountSuspended(Host)
+      wrapper.vm.join('buyer-1', { listenFor: 'customer', sendAs: 'seller' })
 
-    wrapper.vm.leave()
+      wrapper.vm.ping()
 
-    expect(fakeSupabase.removeChannel).toHaveBeenCalledWith(joinedChannel)
-    expect(wrapper.vm.remoteTyping).toBe(false)
+      const [url, options] = fetchMock.mock.calls[0]!
+      expect(url).toBe('http://localhost:8000/admin/chats/buyer-1/typing')
+      expect(options.headers['X-CSRF-Token']).toBe('admin-csrf')
+    })
 
-    wrapper.vm.ping()
-    expect(joinedChannel.send).not.toHaveBeenCalled()
-  })
+    it('closes its stream on leave', async () => {
+      const wrapper = await mountSuspended(Host)
+      wrapper.vm.join('buyer-1', { listenFor: 'customer', sendAs: 'seller' })
 
-  it('calls leave() (removeChannel + state reset) when the host component unmounts', async () => {
-    const wrapper = await mountSuspended(Host)
-    wrapper.vm.join('conv1', { listenFor: 'seller', sendAs: 'customer' })
-    const joinedChannel = currentChannel
-    joinedChannel.subscribeCb?.('SUBSCRIBED')
+      wrapper.vm.leave()
 
-    wrapper.unmount()
-
-    expect(fakeSupabase.removeChannel).toHaveBeenCalledWith(joinedChannel)
+      expect(streams[0]!.closed).toBe(true)
+    })
   })
 })

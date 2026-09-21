@@ -41,10 +41,9 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-Permitted-Cross-Domain-Policies"] = "none"
 
         # Strict-Transport-Security (HSTS) in production
-        is_prod = (
-            os.getenv("ENV", "development").lower() in ("production", "prod")
-            or os.getenv("ENVIRONMENT", "development").lower() in ("production", "prod")
-        )
+        is_prod = os.getenv("ENV", "development").lower() in ("production", "prod") or os.getenv(
+            "ENVIRONMENT", "development"
+        ).lower() in ("production", "prod")
         if is_prod:
             response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains; preload"
 
@@ -76,11 +75,7 @@ class RequestDefenseMiddleware:
         self.max_upload_content_length = max_upload_content_length
 
     def _limit_for(self, path: str) -> int:
-        return (
-            self.max_upload_content_length
-            if path.startswith(self.upload_path_prefix)
-            else self.max_content_length
-        )
+        return self.max_upload_content_length if path.startswith(self.upload_path_prefix) else self.max_content_length
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":

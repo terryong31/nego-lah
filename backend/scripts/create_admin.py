@@ -15,14 +15,15 @@ Login afterwards uses 2FA: password (this one) + a 6-digit email OTP. For the OT
 to be a code (not a magic link), the Supabase Magic Link email template must
 include {{ .Token }}.
 """
+
 import os
 import sys
 
 # Allow `python scripts/create_admin.py ...` as well as `-m scripts.create_admin`.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from admin_session import grant_admin
-from connector import admin_supabase
+from core.connector import admin_supabase
+from domains.identity.admin_session import grant_admin
 
 
 def _find_user(email: str):
@@ -53,20 +54,25 @@ def main():
 
     existing = _find_user(email)
     if existing:
-        admin_supabase.auth.admin.update_user_by_id(existing.id, {
-            "password": password,
-            "email_confirm": True,
-            "app_metadata": {**(existing.app_metadata or {}), "role": "admin"},
-        })
+        admin_supabase.auth.admin.update_user_by_id(
+            existing.id,
+            {
+                "password": password,
+                "email_confirm": True,
+                "app_metadata": {**(existing.app_metadata or {}), "role": "admin"},
+            },
+        )
         user_id = existing.id
         print(f"♻️  Updated existing user {email} ({user_id}) and set role=admin.")
     else:
-        created = admin_supabase.auth.admin.create_user({
-            "email": email,
-            "password": password,
-            "email_confirm": True,
-            "app_metadata": {"role": "admin"},
-        })
+        created = admin_supabase.auth.admin.create_user(
+            {
+                "email": email,
+                "password": password,
+                "email_confirm": True,
+                "app_metadata": {"role": "admin"},
+            }
+        )
         user_id = created.user.id
         print(f"✅ Created user {email} ({user_id}) with role=admin.")
 

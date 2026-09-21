@@ -33,3 +33,7 @@ changes an earlier one, add a new ADR and mark the old one's status.
 | [0024](0024-what-a-tool-hands-back-and-when-the-buyer-sees-it.md) | What a Tool Hands Back, and When the Buyer Sees It | Accepted |
 | [0025](0025-edge-proxy-pre-auth-rate-limiting-local-jwt.md) | Edge Proxy Lockdown, Pre-Routing ASGI Rate Limiting, and Local JWT Verification | Accepted |
 | [0026](0026-unified-single-agent-architecture.md) | Unified Single-Agent Architecture with Direct Tool Calling | Accepted |
+| [0027](0027-code-relocation-into-domain-packages.md) | Move the Code into the Domain Packages (Modular Monolith Realized) | Accepted |
+| [0028](0028-buyer-sessions-move-behind-the-api.md) | Buyer Sessions Move Behind the API, Not Into an SSR Server | Accepted |
+| [0029](0029-ci-owns-production-migrations.md) | CI Owns Production Migrations | Accepted |
+| [0030](0030-the-domain-graph-is-acyclic.md) | The Domain Graph Is Acyclic (Layering, Bus, Composition Root) | Accepted |

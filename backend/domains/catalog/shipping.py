@@ -58,9 +58,7 @@ COURIER_CHOICES: tuple[str, ...] = tuple(_REGISTRY)
 
 # Every alias, plus each canonical name lowercased, resolving to the canonical name.
 _ALIASES: dict[str, str] = {
-    alias: canonical
-    for canonical, (_template, aliases) in _REGISTRY.items()
-    for alias in (*aliases, canonical.lower())
+    alias: canonical for canonical, (_template, aliases) in _REGISTRY.items() for alias in (*aliases, canonical.lower())
 }
 
 

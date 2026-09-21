@@ -8,7 +8,7 @@ so these assert both shapes (real Stripe resources and plain dicts).
 
 import stripe
 
-from payment.stripe_compat import stripe_get
+from domains.billing.stripe_compat import stripe_get
 
 
 def _session(payload):

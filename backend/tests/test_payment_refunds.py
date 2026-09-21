@@ -37,7 +37,7 @@ import pytest
 # import the conftest module directly to reuse the same result-builder logic
 # inside plain helper functions below.
 import conftest as _conftest  # noqa: E402
-from payment.refunds import process_refund
+from domains.billing.refunds import process_refund
 
 
 def _txn_result(data):
@@ -48,8 +48,9 @@ def _txn_result(data):
 # Early-exit / validation paths (no Stripe call should happen)
 # ---------------------------------------------------------------------------
 
+
 def test_no_transaction_found_returns_error_without_calling_stripe(patch_supabase, fake_supabase, fake_stripe):
-    patch_supabase("payment.refunds", admin=fake_supabase)
+    patch_supabase("domains.billing.refunds", admin=fake_supabase)
     fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = _txn_result([])
 
     result = process_refund("item-1")
@@ -59,7 +60,7 @@ def test_no_transaction_found_returns_error_without_calling_stripe(patch_supabas
 
 
 def test_transaction_already_refunded_returns_error_without_calling_stripe(patch_supabase, fake_supabase, fake_stripe):
-    patch_supabase("payment.refunds", admin=fake_supabase)
+    patch_supabase("domains.billing.refunds", admin=fake_supabase)
     fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = _txn_result(
         [{"status": "refunded", "stripe_payment_id": "pi_123"}]
     )
@@ -71,7 +72,7 @@ def test_transaction_already_refunded_returns_error_without_calling_stripe(patch
 
 
 def test_missing_stripe_payment_id_returns_error_without_calling_stripe(patch_supabase, fake_supabase, fake_stripe):
-    patch_supabase("payment.refunds", admin=fake_supabase)
+    patch_supabase("domains.billing.refunds", admin=fake_supabase)
     fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = _txn_result(
         [{"status": "completed"}]  # no stripe_payment_id key at all
     )
@@ -84,7 +85,7 @@ def test_missing_stripe_payment_id_returns_error_without_calling_stripe(patch_su
 
 def test_missing_stripe_payment_id_when_value_is_falsy(patch_supabase, fake_supabase, fake_stripe):
     """stripe_payment_id present but empty/None should also be treated as missing."""
-    patch_supabase("payment.refunds", admin=fake_supabase)
+    patch_supabase("domains.billing.refunds", admin=fake_supabase)
     fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = _txn_result(
         [{"status": "completed", "stripe_payment_id": None}]
     )
@@ -99,8 +100,9 @@ def test_missing_stripe_payment_id_when_value_is_falsy(patch_supabase, fake_supa
 # Success path
 # ---------------------------------------------------------------------------
 
+
 def test_success_path_updates_tables_and_invalidates_cache(patch_supabase, fake_supabase, fake_stripe, monkeypatch):
-    patch_supabase("payment.refunds", admin=fake_supabase)
+    patch_supabase("domains.billing.refunds", admin=fake_supabase)
     fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = _txn_result(
         [{"status": "completed", "stripe_payment_id": "pi_123", "amount": 4999}]
     )
@@ -110,7 +112,7 @@ def test_success_path_updates_tables_and_invalidates_cache(patch_supabase, fake_
 
     invalidate_calls = []
     monkeypatch.setattr(
-        "cache.invalidate_item_cache",
+        "core.cache.invalidate_item_cache",
         lambda item_id=None: invalidate_calls.append(item_id),
     )
 
@@ -152,12 +154,12 @@ def test_success_path_updates_tables_and_invalidates_cache(patch_supabase, fake_
 
 
 def test_success_path_defaults_reason_to_requested_by_customer(patch_supabase, fake_supabase, fake_stripe, monkeypatch):
-    patch_supabase("payment.refunds", admin=fake_supabase)
+    patch_supabase("domains.billing.refunds", admin=fake_supabase)
     fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = _txn_result(
         [{"status": "completed", "stripe_payment_id": "pi_999", "amount": 100}]
     )
     fake_stripe.Refund.create.return_value = type("FakeRefund", (), {"id": "re_default"})()
-    monkeypatch.setattr("cache.invalidate_item_cache", lambda item_id=None: None)
+    monkeypatch.setattr("core.cache.invalidate_item_cache", lambda item_id=None: None)
 
     result = process_refund("item-7")  # no reason passed
 
@@ -168,7 +170,7 @@ def test_success_path_defaults_reason_to_requested_by_customer(patch_supabase, f
 def test_success_path_survives_cache_invalidation_failure(patch_supabase, fake_supabase, fake_stripe, monkeypatch):
     """If invalidate_item_cache blows up, the refund should still be reported as successful
     (the function wraps the cache invalidation call in its own try/except)."""
-    patch_supabase("payment.refunds", admin=fake_supabase)
+    patch_supabase("domains.billing.refunds", admin=fake_supabase)
     fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = _txn_result(
         [{"status": "completed", "stripe_payment_id": "pi_555", "amount": 250}]
     )
@@ -177,7 +179,7 @@ def test_success_path_survives_cache_invalidation_failure(patch_supabase, fake_s
     def _boom(item_id=None):
         raise RuntimeError("cache backend down")
 
-    monkeypatch.setattr("cache.invalidate_item_cache", _boom)
+    monkeypatch.setattr("core.cache.invalidate_item_cache", _boom)
 
     result = process_refund("item-99")
 
@@ -190,7 +192,7 @@ def test_db_write_failure_after_stripe_refund_returns_success_with_warning(
     """If a DB update raises AFTER Stripe already refunded the money, the
     function must NOT propagate (a retry would double-refund). It returns
     success with a `db_sync_warning` for manual reconciliation instead."""
-    patch_supabase("payment.refunds", admin=fake_supabase)
+    patch_supabase("domains.billing.refunds", admin=fake_supabase)
     fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = _txn_result(
         [{"status": "completed", "stripe_payment_id": "pi_777", "amount": 1500}]
     )
@@ -199,7 +201,7 @@ def test_db_write_failure_after_stripe_refund_returns_success_with_warning(
         "supabase unreachable"
     )
     fake_stripe.Refund.create.return_value = type("FakeRefund", (), {"id": "re_777"})()
-    monkeypatch.setattr("cache.invalidate_item_cache", lambda item_id=None: None)
+    monkeypatch.setattr("core.cache.invalidate_item_cache", lambda item_id=None: None)
 
     result = process_refund("item-777")
 
@@ -215,10 +217,11 @@ def test_db_write_failure_after_stripe_refund_returns_success_with_warning(
 # Stripe error handling
 # ---------------------------------------------------------------------------
 
+
 def test_stripe_error_is_caught_and_returns_failure_dict(patch_supabase, fake_supabase, fake_stripe):
     import stripe
 
-    patch_supabase("payment.refunds", admin=fake_supabase)
+    patch_supabase("domains.billing.refunds", admin=fake_supabase)
     fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = _txn_result(
         [{"status": "completed", "stripe_payment_id": "pi_bad", "amount": 10}]
     )
@@ -235,7 +238,7 @@ def test_stripe_error_is_caught_and_returns_failure_dict(patch_supabase, fake_su
 
 
 def test_non_stripe_exception_propagates_uncaught(patch_supabase, fake_supabase, fake_stripe):
-    patch_supabase("payment.refunds", admin=fake_supabase)
+    patch_supabase("domains.billing.refunds", admin=fake_supabase)
     fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = _txn_result(
         [{"status": "completed", "stripe_payment_id": "pi_weird", "amount": 10}]
     )

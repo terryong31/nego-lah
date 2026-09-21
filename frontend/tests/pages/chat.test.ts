@@ -4,6 +4,8 @@ import { flushPromises } from '@vue/test-utils'
 import { mockNuxtImport, mountSuspended } from '@nuxt/test-utils/runtime'
 import ChatPage from '~/pages/chat.vue'
 import { useItemStore } from '~/stores/item'
+import type { Ref } from 'vue'
+import { makeAuthStub } from '../helpers/auth'
 
 // ---------------------------------------------------------------------------
 // @ai-sdk/vue is a plain npm package (not a Nuxt auto-import), so it's mocked
@@ -21,7 +23,7 @@ import { useItemStore } from '~/stores/item'
 // ---------------------------------------------------------------------------
 const { messagesRef, statusRef, stopMock, sendMessageMock, useChatConfigHolder } = vi.hoisted(() => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const vue = require('vue')
+  const vue: typeof import('vue') = require('vue')
   return {
     messagesRef: vue.ref([] as UIMessageLike[]),
     statusRef: vue.ref('ready' as string),
@@ -79,7 +81,7 @@ vi.mock('ai', async (importOriginal) => {
 interface UIMessageLike {
   id: string
   role: 'user' | 'assistant' | 'system'
-  parts: { type: string, text?: string }[]
+  parts: { type: string, text?: string, data?: unknown }[]
 }
 
 interface ChatItem {
@@ -99,23 +101,30 @@ interface ChatVm {
   loadingHistory: boolean
   loadingMore: boolean
   offset: number
-  accessToken: string
   buyLoading: boolean
   aiStatusText: string
   aiWorking: boolean
   aiEnabled: boolean
   effectiveStatus: string
   shownText: string
+  indicatorText: string
   scroller: HTMLElement | null
   contextItem: ChatItem | null
   contextImage: string | null
   displayMessages: UIMessageLike[]
+  cooldown: {
+    isCoolingDown: { value: boolean }
+    secondsLeft: { value: number }
+    start: (seconds: number) => void
+    dismissTimeout: () => void
+  }
   send: (text: string) => Promise<void>
   loadMore: () => Promise<void>
   handleBuyNow: () => Promise<void>
+  retryLastTurn: () => Promise<void>
   getMessageText: (message: Partial<UIMessageLike>) => string
   systemLabel: (message: Partial<UIMessageLike>) => string
-  messageBlocks: (message: Partial<UIMessageLike>) => unknown[]
+  blocksFor: (message: Partial<UIMessageLike>) => unknown[]
 }
 
 function vm(wrapper: Awaited<ReturnType<typeof mountSuspended>>) {
@@ -126,6 +135,7 @@ function vm(wrapper: Awaited<ReturnType<typeof mountSuspended>>) {
 // (mocked) useChat() — see useChatConfigHolder above.
 interface CapturedTransport {
   headers: () => Record<string, string>
+  fetch: (url: string, init?: RequestInit) => Promise<Response>
   prepareSendMessagesRequest: (args: {
     messages: { parts?: { type: string, text?: string }[] }[]
     body: Record<string, unknown>
@@ -153,18 +163,8 @@ const toastAddMock = vi.fn()
 mockNuxtImport('useToast', () => () => ({ add: toastAddMock }))
 
 const userRef: { value: { id: string } | null } = { value: null }
-mockNuxtImport('useSupabaseUser', () => () => userRef)
-
-const getSessionMock = vi.fn()
-const onAuthStateChangeMock = vi.fn()
-const signOutMock = vi.fn()
-mockNuxtImport('useSupabaseClient', () => () => ({
-  auth: {
-    getSession: getSessionMock,
-    onAuthStateChange: onAuthStateChangeMock,
-    signOut: signOutMock
-  }
-}))
+const authStub = makeAuthStub(userRef as unknown as Ref<{ id: string } | null>)
+mockNuxtImport('useAuth', () => () => authStub)
 
 const typingState = {
   remoteTyping: ref(false),
@@ -185,12 +185,12 @@ mockNuxtImport('useRoute', () => () => routeStub)
 const { navigateToMock } = vi.hoisted(() => ({ navigateToMock: vi.fn() }))
 mockNuxtImport('navigateTo', () => navigateToMock)
 
-let activeWrapper: Awaited<ReturnType<typeof mountSuspended>> | undefined
+let activeWrapper: Awaited<ReturnType<typeof mountSuspended<typeof ChatPage>>> | undefined
 
 async function mountPage() {
   activeWrapper = await mountSuspended(ChatPage)
   await flushPromises()
-  return activeWrapper
+  return activeWrapper!
 }
 
 describe('pages/chat.vue', () => {
@@ -210,9 +210,7 @@ describe('pages/chat.vue', () => {
     toastAddMock.mockReset()
 
     userRef.value = null
-    getSessionMock.mockReset().mockResolvedValue({ data: { session: null } })
-    onAuthStateChangeMock.mockReset()
-    signOutMock.mockReset()
+    authStub.clearSession.mockReset()
 
     typingState.join.mockReset()
     typingState.ping.mockReset()
@@ -237,7 +235,6 @@ describe('pages/chat.vue', () => {
   describe('loadInitial / mapMessages', () => {
     it('does not fetch history and stops the loading skeleton when nobody is logged in', async () => {
       userRef.value = null
-      getSessionMock.mockResolvedValue({ data: { session: null } })
 
       const wrapper = await mountPage()
 
@@ -325,7 +322,7 @@ describe('pages/chat.vue', () => {
 
     it('swallows a failed history fetch (console.error) and still clears the loading flag', async () => {
       userRef.value = { id: 'user-1' }
-      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => { })
       callMock.mockImplementation((path: string) => {
         if (path.startsWith('/chat/history/')) return Promise.reject(new Error('network down'))
         return Promise.resolve({})
@@ -339,7 +336,7 @@ describe('pages/chat.vue', () => {
   })
 
   describe('currentUserId resolution', () => {
-    it('prefers the reactive useSupabaseUser id and never needs a second getSession call for it', async () => {
+    it('reads the buyer from the session the server confirmed', async () => {
       userRef.value = { id: 'reactive-uid' }
       callMock.mockImplementation((path: string) =>
         path === '/chat/history/reactive-uid?limit=20&offset=0' ? Promise.resolve({ messages: [] }) : Promise.resolve({}))
@@ -347,17 +344,6 @@ describe('pages/chat.vue', () => {
       await mountPage()
 
       expect(callMock).toHaveBeenCalledWith('/chat/history/reactive-uid?limit=20&offset=0')
-    })
-
-    it('falls back to session.user.id when the reactive user ref has no id', async () => {
-      userRef.value = null
-      getSessionMock.mockResolvedValue({ data: { session: { user: { id: 'session-uid' }, access_token: 'tok' } } })
-      callMock.mockImplementation((path: string) =>
-        path === '/chat/history/session-uid?limit=20&offset=0' ? Promise.resolve({ messages: [] }) : Promise.resolve({}))
-
-      await mountPage()
-
-      expect(callMock).toHaveBeenCalledWith('/chat/history/session-uid?limit=20&offset=0')
     })
   })
 
@@ -440,7 +426,6 @@ describe('pages/chat.vue', () => {
       const wrapper = await mountWithFirstPage()
       callMock.mockClear()
       userRef.value = null
-      getSessionMock.mockResolvedValue({ data: { session: null } })
 
       await vm(wrapper).loadMore()
 
@@ -474,41 +459,22 @@ describe('pages/chat.vue', () => {
   })
 
   describe('onMounted wiring', () => {
-    it('seeds accessToken from the initial session and subscribes to onAuthStateChange', async () => {
-      userRef.value = { id: 'user-1' }
-      getSessionMock.mockResolvedValue({ data: { session: { access_token: 'tok-1' } } })
-
-      const wrapper = await mountPage()
-
-      expect(vm(wrapper).accessToken).toBe('tok-1')
-      expect(onAuthStateChangeMock).toHaveBeenCalledTimes(1)
-
-      // The subscribed callback keeps accessToken in sync with future auth events.
-      const onChange = onAuthStateChangeMock.mock.calls[0]![0] as (event: string, session: unknown) => void
-      onChange('TOKEN_REFRESHED', { access_token: 'tok-2' })
-      expect(vm(wrapper).accessToken).toBe('tok-2')
-
-      onChange('SIGNED_OUT', null)
-      expect(vm(wrapper).accessToken).toBe('')
-    })
-
     it('joins the typing channel as the customer once the user id resolves', async () => {
       userRef.value = { id: 'user-1' }
-      getSessionMock.mockResolvedValue({ data: { session: { access_token: 'tok-1' } } })
 
       await mountPage()
 
-      expect(typingState.join).toHaveBeenCalledWith('user-1', expect.objectContaining({
+      // No `accessToken` any more: the buyer's channel rides the stream the
+      // session already holds open, authorised by the cookie (SPEC-094).
+      expect(typingState.join).toHaveBeenCalledWith('user-1', {
         listenFor: 'seller',
         sendAs: 'customer',
-        accessToken: 'tok-1',
         onMessage: expect.any(Function)
-      }))
+      })
     })
 
     it('does not join the typing channel when nobody is logged in', async () => {
       userRef.value = null
-      getSessionMock.mockResolvedValue({ data: { session: null } })
 
       await mountPage()
 
@@ -642,7 +608,7 @@ describe('pages/chat.vue', () => {
       const { onMessage } = await mountAndGetOnMessage()
       const before = messagesRef.value.length
 
-      onMessage({ role: 'assistant', content: 'Seller: I can do RM45' })
+      onMessage({ role: 'assistant', message: 'Seller: I can do RM45' })
       await nextTick()
 
       expect(messagesRef.value).toHaveLength(before + 1)
@@ -655,12 +621,12 @@ describe('pages/chat.vue', () => {
     it('maps role/source "system" to a system-role message', async () => {
       const { onMessage } = await mountAndGetOnMessage()
 
-      onMessage({ role: 'system', content: 'Terry has joined the chat' })
+      onMessage({ role: 'system', message: 'Terry has joined the chat' })
       await nextTick()
 
       expect(messagesRef.value.at(-1)!.role).toBe('system')
 
-      onMessage({ role: 'assistant', source: 'system', content: 'Terry has left the chat' })
+      onMessage({ role: 'assistant', source: 'system', message: 'Terry has left the chat' })
       await nextTick()
 
       expect(messagesRef.value.at(-1)!.role).toBe('system')
@@ -710,7 +676,7 @@ describe('pages/chat.vue', () => {
     it('holds a mid-turn separator back, leaving the streaming reply on the tail', async () => {
       const { onMessage } = await mountMidTurn()
 
-      onMessage({ role: 'system', source: 'system', content: '--- transferred to Terry ---' })
+      onMessage({ role: 'system', source: 'system', message: '--- transferred to Terry ---' })
       await nextTick()
 
       expect(messagesRef.value).toHaveLength(2)
@@ -730,8 +696,8 @@ describe('pages/chat.vue', () => {
       const { onMessage } = await mountMidTurn()
       const before = messagesRef.value
 
-      onMessage({ role: 'system', source: 'system', content: '--- transferred to Terry ---' })
-      onMessage({ role: 'assistant', source: 'admin', content: 'Terry here — where you staying?' })
+      onMessage({ role: 'system', source: 'system', message: '--- transferred to Terry ---' })
+      onMessage({ role: 'assistant', source: 'admin', message: 'Terry here — where you staying?' })
       await settle()
 
       // A new array, not a push: `messages` is a shallowRef, so an in-place
@@ -745,7 +711,7 @@ describe('pages/chat.vue', () => {
       const { onMessage } = await mountMidTurn()
       callMock.mockClear()
 
-      onMessage({ role: 'system', source: 'system', content: '--- transferred to Terry ---' })
+      onMessage({ role: 'system', source: 'system', message: '--- transferred to Terry ---' })
       await flushPromises()
 
       expect(callMock).toHaveBeenCalledWith('/chat/settings/user-1')
@@ -754,13 +720,13 @@ describe('pages/chat.vue', () => {
     it('drops the agent echoing its own reply, whether it lands during the turn or after it', async () => {
       const { onMessage } = await mountMidTurn()
 
-      onMessage({ role: 'assistant', source: 'ai', content: REPLY })
+      onMessage({ role: 'assistant', source: 'ai', message: REPLY })
       await settle()
       expect(messagesRef.value).toHaveLength(2)
 
       // The broadcast that syncs the seller's console can also arrive a beat
       // after the SSE stream closes — same words, same duplicate.
-      onMessage({ role: 'assistant', source: 'ai', content: REPLY })
+      onMessage({ role: 'assistant', source: 'ai', message: REPLY })
       await nextTick()
       expect(messagesRef.value).toHaveLength(2)
     })
@@ -770,7 +736,6 @@ describe('pages/chat.vue', () => {
       // onto the tail mid-reveal cuts it short and pops the rest of the reply
       // in at once — which is the same jolt, one frame long, this fixes.
       userRef.value = { id: 'user-1' }
-      getSessionMock.mockResolvedValue({ data: { session: { access_token: 'live-token' } } })
       const wrapper = await mountPage()
 
       await wrapper.find('textarea').setValue('boleh cod x?')
@@ -785,7 +750,7 @@ describe('pages/chat.vue', () => {
       await nextTick()
 
       const onMessage = typingState.join.mock.calls[0]![1].onMessage as (payload: unknown) => void
-      onMessage({ role: 'system', source: 'system', content: '--- transferred to Terry ---' })
+      onMessage({ role: 'system', source: 'system', message: '--- transferred to Terry ---' })
 
       // Stream done, reveal still going: 'S' of 'Sure' at 20ms/char.
       await vi.advanceTimersByTimeAsync(20)
@@ -803,7 +768,6 @@ describe('pages/chat.vue', () => {
       // broadcast after the reply has been delivered, so it lands with the
       // stream already settled and the typewriter still running.
       userRef.value = { id: 'user-1' }
-      getSessionMock.mockResolvedValue({ data: { session: { access_token: 'live-token' } } })
       const wrapper = await mountPage()
 
       await wrapper.find('textarea').setValue('boleh cod x?')
@@ -820,7 +784,7 @@ describe('pages/chat.vue', () => {
       statusRef.value = 'ready'
 
       const onMessage = typingState.join.mock.calls[0]![1].onMessage as (payload: unknown) => void
-      onMessage({ role: 'system', source: 'system', content: '--- transferred to Terry ---' })
+      onMessage({ role: 'system', source: 'system', message: '--- transferred to Terry ---' })
       await nextTick()
 
       expect(messagesRef.value).toHaveLength(2)
@@ -835,7 +799,7 @@ describe('pages/chat.vue', () => {
       const { onMessage } = await mountMidTurn()
       await settle()
 
-      onMessage({ role: 'assistant', source: 'admin', content: 'Terry here' })
+      onMessage({ role: 'assistant', source: 'admin', message: 'Terry here' })
       await nextTick()
 
       expect(messagesRef.value.at(-1)!.parts[0]!.text).toBe('Terry here')
@@ -846,42 +810,36 @@ describe('pages/chat.vue', () => {
     it('does nothing for blank/whitespace-only text', async () => {
       userRef.value = { id: 'user-1' }
       const wrapper = await mountPage()
-      getSessionMock.mockClear()
 
       await vm(wrapper).send('    ')
 
-      expect(getSessionMock).not.toHaveBeenCalled()
       expect(sendMessageMock).not.toHaveBeenCalled()
     })
 
-    it('via the prompt form: refreshes the access token, clears the textarea, and forwards the trimmed text', async () => {
+    it('via the prompt form: clears the textarea and forwards the trimmed text', async () => {
       userRef.value = { id: 'user-1' }
-      getSessionMock.mockResolvedValueOnce({ data: { session: { access_token: 'initial-token' } } })
       const wrapper = await mountPage()
 
-      getSessionMock.mockResolvedValueOnce({ data: { session: { access_token: 'fresh-token' } } })
       const textarea = wrapper.find('textarea')
       await textarea.setValue('  Will you take RM50?  ')
       await wrapper.find('form').trigger('submit')
       await flushPromises()
 
-      expect(getSessionMock).toHaveBeenCalled()
-      expect(vm(wrapper).accessToken).toBe('fresh-token')
       expect(sendMessageMock).toHaveBeenCalledWith({ text: 'Will you take RM50?' })
       expect((wrapper.find('textarea').element as HTMLTextAreaElement).value).toBe('')
     })
 
-    it('bounces to login carrying the chat URL when the session has lapsed, instead of posting an empty Bearer token', async () => {
+    it('bounces to login carrying the chat URL when the session has lapsed', async () => {
       userRef.value = { id: 'user-1' }
       routeStub.query = { item_id: 'item-9' }
       routeStub.fullPath = '/chat?item_id=item-9'
       const wrapper = await mountPage()
-      getSessionMock.mockClear().mockResolvedValue({ data: { session: null } })
+      userRef.value = null
 
       await vm(wrapper).send('Can you do RM50?')
 
       expect(sendMessageMock).not.toHaveBeenCalled()
-      expect(signOutMock).toHaveBeenCalledTimes(1)
+      expect(authStub.clearSession).toHaveBeenCalledTimes(1)
       expect(navigateToMock).toHaveBeenCalledWith({
         path: '/login',
         query: { redirect: '/chat?item_id=item-9' }
@@ -892,7 +850,7 @@ describe('pages/chat.vue', () => {
     it('keeps the typed message in the box when the send is refused for a lapsed session', async () => {
       userRef.value = { id: 'user-1' }
       const wrapper = await mountPage()
-      getSessionMock.mockClear().mockResolvedValue({ data: { session: null } })
+      userRef.value = null
       vm(wrapper).input = 'Can you do RM50?'
 
       await vm(wrapper).send('Can you do RM50?')
@@ -903,23 +861,10 @@ describe('pages/chat.vue', () => {
     it('sends normally (no bounce) when the session is still alive', async () => {
       userRef.value = { id: 'user-1' }
       const wrapper = await mountPage()
-      getSessionMock.mockClear().mockResolvedValue({ data: { session: { access_token: 'still-good' } } })
 
       await vm(wrapper).send('Deal?')
 
       expect(navigateToMock).not.toHaveBeenCalled()
-      expect(sendMessageMock).toHaveBeenCalledWith({ text: 'Deal?' })
-    })
-
-    it('directly: always fetches a fresh token even if one is already cached (the stale-token 401 guard)', async () => {
-      userRef.value = { id: 'user-1' }
-      const wrapper = await mountPage()
-      getSessionMock.mockClear().mockResolvedValue({ data: { session: { access_token: 'brand-new' } } })
-
-      await vm(wrapper).send('Deal?')
-
-      expect(getSessionMock).toHaveBeenCalledTimes(1)
-      expect(vm(wrapper).accessToken).toBe('brand-new')
       expect(sendMessageMock).toHaveBeenCalledWith({ text: 'Deal?' })
     })
   })
@@ -930,20 +875,16 @@ describe('pages/chat.vue', () => {
   // calls them — so we grab the actual transport instance chat.vue built via
   // useChatConfigHolder and invoke its callbacks directly.
   describe('useChat transport config (headers / prepareSendMessagesRequest)', () => {
-    it('headers() returns a Bearer header built from the current accessToken', async () => {
+    it('headers() carries the CSRF token, and no bearer token at all', async () => {
+      // SPEC-093: the stream POST is authenticated by the session cookie, which
+      // the custom fetch sends with `credentials: 'include'`. A cookie is
+      // auto-sent cross-site, which a bearer header never was — so the CSRF
+      // token is what proves the request came from this app.
+      document.cookie = 'nl_csrf=csrf-abc'
       userRef.value = { id: 'user-1' }
-      getSessionMock.mockResolvedValue({ data: { session: { access_token: 'tok-abc' } } })
       await mountPage()
 
-      expect(chatTransport().headers()).toEqual({ Authorization: 'Bearer tok-abc' })
-    })
-
-    it('headers() falls back to an empty-token Bearer header when there is no session', async () => {
-      userRef.value = null
-      getSessionMock.mockResolvedValue({ data: { session: null } })
-      await mountPage()
-
-      expect(chatTransport().headers()).toEqual({ Authorization: 'Bearer ' })
+      expect(chatTransport().headers()).toEqual({ 'X-CSRF-Token': 'csrf-abc' })
     })
 
     it('prepareSendMessagesRequest joins the last message\'s text parts (ignoring non-text parts) and merges user_id/item_id into the body', async () => {
@@ -1008,7 +949,6 @@ describe('pages/chat.vue', () => {
       const wrapper = await mountPage()
       const text = vm(wrapper).getMessageText({
         role: 'assistant',
-        // @ts-expect-error deliberately mixing part types like the SDK would
         parts: [{ type: 'tool-call' }, { type: 'text', text: 'hello' }]
       })
       expect(text).toBe('hello')
@@ -1270,7 +1210,6 @@ describe('pages/chat.vue', () => {
     // refuses to send (and bounces to login) without a live session — the
     // suite-wide default is a logged-out one.
     beforeEach(() => {
-      getSessionMock.mockResolvedValue({ data: { session: { access_token: 'live-token' } } })
     })
 
     it('reveals the assistant reply one character at a time at CHAR_RATE (50/s = 20ms/char) while streaming', async () => {
@@ -1476,7 +1415,7 @@ describe('pages/chat.vue', () => {
 
       aiOn = false
       const onMessage = typingState.join.mock.calls[0]![1].onMessage as (p: unknown) => void
-      onMessage({ role: 'system', source: 'system', content: '--- Terry has joined the chat ---' })
+      onMessage({ role: 'system', source: 'system', message: '--- Terry has joined the chat ---' })
       await flushPromises()
 
       expect(vm(wrapper).aiEnabled).toBe(false)
@@ -1703,7 +1642,6 @@ describe('pages/chat.vue', () => {
 
     it('resends the last message when the buyer retries a timed-out turn', async () => {
       userRef.value = { id: 'user-1' }
-      getSessionMock.mockResolvedValue({ data: { session: { access_token: 'tok', user: { id: 'user-1' } } } })
       const wrapper = await mountPage()
 
       await vm(wrapper).send('is 800 ok?')

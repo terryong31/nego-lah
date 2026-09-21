@@ -27,7 +27,7 @@ import pytest
 from fastapi import HTTPException
 
 from core.uploads import MAX_AVATAR_IMAGE_BYTES, sniff_image, validate_image_upload
-from routes.admin import users as admin_users
+from domains.identity import admin_users
 
 
 def _encode(fmt: str, size=(8, 8), mode="RGB", color=(200, 30, 30)) -> bytes:
@@ -72,6 +72,7 @@ SVG = b'<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'
 
 # --- the sniffer -------------------------------------------------------------
 
+
 @pytest.mark.parametrize(
     "data,expected",
     [
@@ -102,6 +103,7 @@ def test_webp_needs_more_than_the_riff_container():
 
 
 # --- the validator -----------------------------------------------------------
+
 
 def test_validator_returns_the_sniffed_type_and_extension():
     assert validate_image_upload(PNG) == ("image/png", "png")
@@ -150,6 +152,7 @@ def test_size_is_checked_before_type():
 # PUT /user/{user_id}/profile
 # ---------------------------------------------------------------------------
 
+
 def _existing_user(metadata=None):
     result = MagicMock()
     result.user.user_metadata = metadata if metadata is not None else {}
@@ -163,14 +166,12 @@ def _user_admin_client():
     return fake
 
 
-async def test_profile_avatar_rejects_html_wearing_an_image_filename(
-    client, auth_user, patch_supabase
-):
+async def test_profile_avatar_rejects_html_wearing_an_image_filename(client, auth_user, patch_supabase):
     """The upload the finding is about: HTML bytes under `photo.png` and
     `image/png`. Nothing may reach the public bucket."""
     auth_user("user-1")
     fake_admin = _user_admin_client()
-    patch_supabase("routes.user", admin=fake_admin, user=MagicMock())
+    patch_supabase("domains.identity.routes", admin=fake_admin, user=MagicMock())
 
     resp = await client.put(
         "/user/user-1/profile",
@@ -185,7 +186,7 @@ async def test_profile_avatar_rejects_html_wearing_an_image_filename(
 async def test_profile_avatar_rejects_svg(client, auth_user, patch_supabase):
     auth_user("user-1")
     fake_admin = _user_admin_client()
-    patch_supabase("routes.user", admin=fake_admin, user=MagicMock())
+    patch_supabase("domains.identity.routes", admin=fake_admin, user=MagicMock())
 
     resp = await client.put(
         "/user/user-1/profile",
@@ -196,15 +197,13 @@ async def test_profile_avatar_rejects_svg(client, auth_user, patch_supabase):
     fake_admin.storage.from_.return_value.upload.assert_not_called()
 
 
-async def test_profile_avatar_stores_the_sniffed_type_not_the_declared_one(
-    client, auth_user, patch_supabase
-):
+async def test_profile_avatar_stores_the_sniffed_type_not_the_declared_one(client, auth_user, patch_supabase):
     """A real PNG declared as `text/html` is still stored as `image/png`. The
     declared value is never consulted, so it can't be used to pick how the
     file will later be served."""
     auth_user("user-1")
     fake_admin = _user_admin_client()
-    patch_supabase("routes.user", admin=fake_admin, user=MagicMock())
+    patch_supabase("domains.identity.routes", admin=fake_admin, user=MagicMock())
 
     resp = await client.put(
         "/user/user-1/profile",
@@ -216,15 +215,13 @@ async def test_profile_avatar_stores_the_sniffed_type_not_the_declared_one(
     assert upload_args[2]["content-type"] == "image/png"
 
 
-async def test_profile_avatar_accepts_a_heic_photo_and_stores_it_as_jpeg(
-    client, auth_user, patch_supabase
-):
+async def test_profile_avatar_accepts_a_heic_photo_and_stores_it_as_jpeg(client, auth_user, patch_supabase):
     """SPEC-054: HEIC is what an iPhone actually produces. It used to be
     rejected by the sniffer, and would have been unrenderable by every browser
     but Safari if it had got through — so it is accepted and converted."""
     auth_user("user-1")
     fake_admin = _user_admin_client()
-    patch_supabase("routes.user", admin=fake_admin, user=MagicMock())
+    patch_supabase("domains.identity.routes", admin=fake_admin, user=MagicMock())
 
     resp = await client.put(
         "/user/user-1/profile",
@@ -239,15 +236,13 @@ async def test_profile_avatar_accepts_a_heic_photo_and_stores_it_as_jpeg(
     assert upload_args[1] != HEIC
 
 
-async def test_profile_avatar_extension_comes_from_the_bytes(
-    client, auth_user, patch_supabase
-):
+async def test_profile_avatar_extension_comes_from_the_bytes(client, auth_user, patch_supabase):
     """A JPEG named `.php` is stored as `.jpg`. Storage serves by the
     content-type we set, but the extension is what a human reads in the URL and
     what a misconfigured proxy might key off."""
     auth_user("user-1")
     fake_admin = _user_admin_client()
-    patch_supabase("routes.user", admin=fake_admin, user=MagicMock())
+    patch_supabase("domains.identity.routes", admin=fake_admin, user=MagicMock())
 
     resp = await client.put(
         "/user/user-1/profile",
@@ -260,14 +255,12 @@ async def test_profile_avatar_extension_comes_from_the_bytes(
     assert "php" not in file_path
 
 
-async def test_profile_avatar_filename_cannot_escape_the_user_prefix(
-    client, auth_user, patch_supabase
-):
+async def test_profile_avatar_filename_cannot_escape_the_user_prefix(client, auth_user, patch_supabase):
     """`avatars/<user_id>/` is the layout every other part of the system
     assumes. A filename with slashes in it used to walk straight out of it."""
     auth_user("user-1")
     fake_admin = _user_admin_client()
-    patch_supabase("routes.user", admin=fake_admin, user=MagicMock())
+    patch_supabase("domains.identity.routes", admin=fake_admin, user=MagicMock())
 
     resp = await client.put(
         "/user/user-1/profile",
@@ -285,14 +278,13 @@ async def test_profile_avatar_filename_cannot_escape_the_user_prefix(
 # POST /admin/users/{user_id}/avatar
 # ---------------------------------------------------------------------------
 
-async def test_admin_avatar_rejects_non_images(
-    client, admin_user, fake_supabase, patch_supabase, monkeypatch
-):
+
+async def test_admin_avatar_rejects_non_images(client, admin_user, fake_supabase, patch_supabase, monkeypatch):
     """The admin route had no validation and no size limit at all. Being
     behind an admin session makes it lower-risk, not correct — it writes to
     the same public bucket."""
     admin_user()
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
     monkeypatch.setattr(admin_users, "write_audit", MagicMock())
 
     resp = await client.post(
@@ -312,7 +304,7 @@ async def test_admin_avatar_does_not_fall_back_to_base64_for_a_rejected_file(
     try/except, or a rejected file comes back as a `data:text/html` URL stored
     on the profile."""
     admin_user()
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
     monkeypatch.setattr(admin_users, "write_audit", MagicMock())
     fake_supabase.storage.from_.return_value.upload.side_effect = Exception("down")
 
@@ -329,7 +321,7 @@ async def test_admin_avatar_base64_fallback_uses_the_sniffed_type(
     client, admin_user, fake_supabase, patch_supabase, monkeypatch
 ):
     admin_user()
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
     monkeypatch.setattr(admin_users, "write_audit", MagicMock())
     fake_supabase.storage.from_.return_value.upload.side_effect = Exception("down")
 
@@ -342,11 +334,9 @@ async def test_admin_avatar_base64_fallback_uses_the_sniffed_type(
     assert resp.json()["avatar_url"].startswith("data:image/gif;base64,")
 
 
-async def test_admin_avatar_enforces_a_size_ceiling(
-    client, admin_user, fake_supabase, patch_supabase, monkeypatch
-):
+async def test_admin_avatar_enforces_a_size_ceiling(client, admin_user, fake_supabase, patch_supabase, monkeypatch):
     admin_user()
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
     monkeypatch.setattr(admin_users, "write_audit", MagicMock())
 
     resp = await client.post(
@@ -363,7 +353,7 @@ async def test_admin_avatar_path_is_built_only_from_server_chosen_values(
 ):
     """This route interpolated the raw filename into the storage key."""
     admin_user()
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
     monkeypatch.setattr(admin_users, "write_audit", MagicMock())
     fake_supabase.storage.from_.return_value.get_public_url.return_value = "https://cdn/x"
 

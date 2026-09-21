@@ -2,8 +2,8 @@ from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
 
-from agent.tools.image_analyzer import image_analyzer
-from auth_middleware import verify_user_token
+from domains.identity.auth_middleware import verify_user_token
+from domains.negotiation.tools.image_analyzer import image_analyzer
 from main import app
 
 client = TestClient(app)
@@ -19,13 +19,11 @@ def test_update_language_success():
 
     app.dependency_overrides[verify_user_token] = lambda: USER_ID
     try:
-        with patch("routes.user.admin_supabase") as mock_supabase:
+        with patch("domains.identity.routes.admin_supabase") as mock_supabase:
             mock_supabase.auth.admin.get_user_by_id.return_value = mock_response
 
             res = client.put(
-                f"/user/{USER_ID}/language",
-                headers={"Authorization": "Bearer valid_token"},
-                json={"language": "ms"}
+                f"/user/{USER_ID}/language", headers={"Authorization": "Bearer valid_token"}, json={"language": "ms"}
             )
 
             assert res.status_code == 200
@@ -34,8 +32,7 @@ def test_update_language_success():
             assert data["message"] == "Language updated"
 
             mock_supabase.auth.admin.update_user_by_id.assert_called_once_with(
-                USER_ID,
-                {"user_metadata": {"display_name": "Test User", "preferred_language": "ms"}}
+                USER_ID, {"user_metadata": {"display_name": "Test User", "preferred_language": "ms"}}
             )
     finally:
         app.dependency_overrides.pop(verify_user_token, None)
@@ -46,9 +43,7 @@ def test_update_language_unsupported_locale():
     app.dependency_overrides[verify_user_token] = lambda: USER_ID
     try:
         res = client.put(
-            f"/user/{USER_ID}/language",
-            headers={"Authorization": "Bearer valid_token"},
-            json={"language": "fr"}
+            f"/user/{USER_ID}/language", headers={"Authorization": "Bearer valid_token"}, json={"language": "fr"}
         )
         assert res.status_code == 400
         assert "Unsupported language" in res.json()["detail"]
@@ -58,10 +53,7 @@ def test_update_language_unsupported_locale():
 
 def test_update_language_unauthorized():
     """Missing or invalid token returns 401."""
-    res = client.put(
-        f"/user/{USER_ID}/language",
-        json={"language": "zh"}
-    )
+    res = client.put(f"/user/{USER_ID}/language", json={"language": "zh"})
     assert res.status_code == 401
 
 
@@ -79,25 +71,28 @@ def test_image_analyzer_multilingual_prompts():
 
 def test_get_user_preferred_language_none():
     """None or empty user_id defaults safely to 'en'."""
-    from routes.user import get_user_preferred_language
+    from domains.identity.routes import get_user_preferred_language
+
     assert get_user_preferred_language(None) == "en"
     assert get_user_preferred_language("") == "en"
 
 
 def test_get_user_preferred_language_redis_cache():
     """Hits Redis cache directly when key exists."""
-    from routes.user import get_user_preferred_language
+    from domains.identity.routes import get_user_preferred_language
+
     mock_redis = MagicMock()
     mock_redis.get.return_value = b"ms"
 
-    with patch("cache.redis_client", mock_redis):
+    with patch("core.cache.redis_client", mock_redis):
         assert get_user_preferred_language("user-123") == "ms"
         mock_redis.get.assert_called_once_with("user:user-123:lang")
 
 
 def test_get_user_preferred_language_supabase_fallback():
     """Fetches from Supabase user_metadata on Redis miss, then sets cache."""
-    from routes.user import get_user_preferred_language
+    from domains.identity.routes import get_user_preferred_language
+
     mock_redis = MagicMock()
     mock_redis.get.return_value = None
 
@@ -105,8 +100,7 @@ def test_get_user_preferred_language_supabase_fallback():
     mock_user.user_metadata = {"preferred_language": "zh"}
     mock_res = MagicMock(user=mock_user)
 
-    with patch("cache.redis_client", mock_redis), \
-         patch("routes.user.admin_supabase") as mock_supabase:
+    with patch("core.cache.redis_client", mock_redis), patch("domains.identity.routes.admin_supabase") as mock_supabase:
         mock_supabase.auth.admin.get_user_by_id.return_value = mock_res
         assert get_user_preferred_language("user-456") == "zh"
         mock_redis.set.assert_called_once_with("user:user-456:lang", "zh", ex=86400)
@@ -114,19 +108,20 @@ def test_get_user_preferred_language_supabase_fallback():
 
 def test_get_user_preferred_language_fallback_on_error():
     """Defaults to 'en' when lookup encounters unexpected exceptions."""
-    from routes.user import get_user_preferred_language
+    from domains.identity.routes import get_user_preferred_language
+
     mock_redis = MagicMock()
     mock_redis.get.side_effect = RuntimeError("Redis down")
 
-    with patch("cache.redis_client", mock_redis), \
-         patch("routes.user.admin_supabase") as mock_supabase:
+    with patch("core.cache.redis_client", mock_redis), patch("domains.identity.routes.admin_supabase") as mock_supabase:
         mock_supabase.auth.admin.get_user_by_id.side_effect = RuntimeError("Supabase down")
         assert get_user_preferred_language("user-789") == "en"
 
 
 def test_agent_context_language():
     """Context tracks active language isolated per execution."""
-    from agent.context import get_user_language, set_context
+    from domains.negotiation.context import get_user_language, set_context
+
     set_context(user_id="u1", item_id="item-1", language="ms")
     assert get_user_language() == "ms"
 
@@ -139,7 +134,8 @@ def test_agent_context_language():
 
 def test_agent_build_messages_language_directives(monkeypatch):
     """_build_messages injects explicit directives for ms, zh, en when specified."""
-    from agent import bot
+    from domains.negotiation import bot
+
     monkeypatch.setattr(bot.conversation_memory, "get_history", lambda uid, limit=10, include_tool_calls=False: [])
 
     # Malay
@@ -157,12 +153,12 @@ def test_agent_build_messages_language_directives(monkeypatch):
 
 def test_agent_build_messages_with_context_language(monkeypatch):
     """_build_messages respects context language when language parameter is omitted."""
-    from agent import bot
-    from agent.context import set_context
+    from domains.negotiation import bot
+    from domains.negotiation.context import set_context
+
     monkeypatch.setattr(bot.conversation_memory, "get_history", lambda uid, limit=10, include_tool_calls=False: [])
 
     set_context(user_id="u1", language="ms")
     msgs = bot._build_messages("u1", "harga berapa?")
     assert any("Bahasa Melayu" in str(m.content) for m in msgs)
     set_context(user_id="u1", language="en")
-

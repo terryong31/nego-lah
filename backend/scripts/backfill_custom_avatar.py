@@ -28,8 +28,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from connector import admin_supabase  # noqa: E402
-from env import STORAGE_BUCKET, SUPABASE_URL  # noqa: E402
+from core.connector import admin_supabase  # noqa: E402
+from core.env import STORAGE_BUCKET, SUPABASE_URL  # noqa: E402
 
 PAGE_SIZE = 200
 
@@ -94,9 +94,7 @@ def backfill(apply_changes: bool = False) -> dict:
         # own, and the clients already prefer `custom_avatar_url` over it.
         metadata["custom_avatar_url"] = avatar_url
         try:
-            admin_supabase.auth.admin.update_user_by_id(
-                user.id, {"user_metadata": metadata}
-            )
+            admin_supabase.auth.admin.update_user_by_id(user.id, {"user_metadata": metadata})
             migrated += 1
         except Exception as e:
             print(f"  !! failed for {user.id}: {e}")

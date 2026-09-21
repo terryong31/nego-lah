@@ -34,7 +34,12 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - ENV=production
-      - REDIS_URL=redis://redis:6379/0
+      # REDIS_URL deliberately NOT set here. Compose's `environment:` overrides
+      # `env_file:`, so pinning it here silently outranked whatever Infisical
+      # exported into backend/.env — prod would keep talking to the sidecar
+      # below no matter what the secret said. It now comes from the env file, so
+      # the managed endpoint (Upstash, `rediss://`) is a secret change and a
+      # redeploy, not a code change. redis-py reads the TLS scheme itself.
       # Pinned rather than inherited: the Dockerfile's fallback is 4, which put
       # four worker processes on a box with one or two cores. Matching the
       # worker count to the cores means less context-switching between workers
@@ -54,6 +59,10 @@ services:
       retries: 3
       start_period: 20s
 
+  # Kept as the fallback for a rollback (point REDIS_URL back at
+  # `redis://redis:6379/0` and redeploy) and because `depends_on` below still
+  # gates backend startup on it. It is NOT what prod talks to any more — see the
+  # note on REDIS_URL above and ADR-0028.
   redis:
     image: redis:alpine
     container_name: nego-lah-redis

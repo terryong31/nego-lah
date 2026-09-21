@@ -111,17 +111,34 @@ export interface UserIdLike {
 /**
  * The signed-in user's id, from whichever shape the caller happens to hold.
  *
- * `@nuxtjs/supabase` populates `useSupabaseUser()` from `client.auth.getClaims()`,
- * so that ref is a JWT payload and the id lives on `sub` — `RequiredClaims` is
- * `{iss, sub, aud, exp, iat, role, aal, session_id}` and there is no `id` on it.
- * Reading `.id` off it yields `undefined`, and typechecks only because
- * `JwtPayload` declares `[key: string]: any`. Every guard written as
- * `if (!user.value?.id)` therefore failed shut: the SSE notification stream never
- * opened and a language choice was never persisted to the account.
- *
- * `id` is still accepted because `supabase.auth.getSession()` hands back a real
- * `User`, which does carry it — `profile.vue` and `orders.vue` pass one in.
+ * `useAuth()`'s `user` carries `id`, and since SPEC-093 that is the only shape
+ * this app produces. `sub` is still accepted because that is where the id lived
+ * while the session was a Supabase JWT read client-side: `useSupabaseUser()` was
+ * populated from `getClaims()`, whose `RequiredClaims` is
+ * `{iss, sub, aud, exp, iat, role, aal, session_id}` with no `id` on it at all.
+ * Reading `.id` off one of those yielded `undefined` and typechecked anyway,
+ * because `JwtPayload` declares `[key: string]: any` — so every guard written as
+ * `if (!user.value?.id)` failed shut, and the SSE stream never opened. Keeping
+ * both spellings here is what makes that class of bug impossible to reintroduce
+ * from either direction.
  */
 export function resolveUserId(user: UserIdLike | null | undefined): string | null {
   return user?.sub ?? user?.id ?? null
+}
+
+/**
+ * Read a cookie the browser will let JavaScript see.
+ *
+ * Only the CSRF tokens qualify: the session cookies (`nl_sid`, `admin_sid`) are
+ * httpOnly and will never appear here, which is the entire point of SPEC-093.
+ */
+export function readCookie(name: string): string {
+  if (typeof document === 'undefined') return ''
+  const match = document.cookie.match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`))
+  return (match && match[1]) ? decodeURIComponent(match[1]) : ''
+}
+
+/** The buyer session's CSRF token, echoed back on every mutating request. */
+export function getUserCsrfToken(): string {
+  return readCookie('nl_csrf')
 }

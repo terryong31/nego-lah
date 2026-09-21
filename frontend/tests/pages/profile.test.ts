@@ -3,6 +3,7 @@ import { mockNuxtImport, mountSuspended } from '@nuxt/test-utils/runtime'
 import { flushPromises, type VueWrapper } from '@vue/test-utils'
 import { ref } from 'vue'
 import ProfilePage from '~/pages/profile.vue'
+import { makeAuthStub } from '../helpers/auth'
 
 // Loose typing for reaching into <script setup> internals via wrapper.vm.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -44,20 +45,9 @@ const { toastAddMock } = vi.hoisted(() => ({
   toastAddMock: vi.fn()
 }))
 
-const { getSessionMock, refreshSessionMock, signOutMock } = vi.hoisted(() => ({
-  getSessionMock: vi.fn(),
-  refreshSessionMock: vi.fn(),
-  signOutMock: vi.fn()
-}))
+const authStub = makeAuthStub(userRef)
 
-mockNuxtImport('useSupabaseUser', () => () => userRef)
-mockNuxtImport('useSupabaseClient', () => () => ({
-  auth: {
-    getSession: getSessionMock,
-    refreshSession: refreshSessionMock,
-    signOut: signOutMock
-  }
-}))
+mockNuxtImport('useAuth', () => () => authStub)
 mockNuxtImport('useApi', () => () => ({ call: callMock }))
 mockNuxtImport('useToast', () => () => ({ add: toastAddMock }))
 
@@ -129,9 +119,8 @@ describe('pages/profile.vue', () => {
     }
     callMock.mockReset()
     toastAddMock.mockReset()
-    getSessionMock.mockReset().mockResolvedValue({ data: { session: { user: { id: 'session-uid' } } } })
-    refreshSessionMock.mockReset().mockResolvedValue({ data: { session: null } })
-    signOutMock.mockReset().mockResolvedValue({ error: null })
+    authStub.fetchSession.mockReset().mockImplementation(async () => userRef.value)
+    authStub.clearSession.mockReset()
     // happy-dom's URL.createObjectURL rejects a `File` constructed from this
     // realm's globals with "must be an instance of Blob" in this environment;
     // stub it so onAvatarChange's preview-URL branch is exercised without
@@ -211,32 +200,35 @@ describe('pages/profile.vue', () => {
     })
   })
 
-  describe('getUserId preference (session over reactive user)', () => {
-    it('prefers the live session user id over useSupabaseUser when both are present', async () => {
-      getSessionMock.mockResolvedValue({ data: { session: { user: { id: 'session-uid' } } } })
-      userRef.value!.id = 'reactive-uid'
+  describe('getUserId', () => {
+    it('uses the session the server confirmed', async () => {
+      // SPEC-093: this used to prefer `getSession()` over the reactive ref
+      // because the ref could be truthy while its id was still undefined
+      // mid-hydration, which produced `/user/undefined/profile`. There is one
+      // source now, settled before any page renders.
+      userRef.value!.id = 'buyer-uid'
       callMock.mockResolvedValueOnce({ display_name: 'Alice', avatar_url: null })
       wrapper = await mountSuspended(ProfilePage)
 
       await (wrapper.vm as VmAny).onProfileSave()
 
-      expect(callMock).toHaveBeenCalledWith('/user/session-uid/profile', expect.objectContaining({ method: 'PUT' }))
+      expect(callMock).toHaveBeenCalledWith('/user/buyer-uid/profile', expect.objectContaining({ method: 'PUT' }))
     })
 
-    it('falls back to useSupabaseUser().value.id when the session has no user', async () => {
-      getSessionMock.mockResolvedValue({ data: { session: null } })
-      userRef.value!.id = 'reactive-uid'
-      callMock.mockResolvedValueOnce({ display_name: 'Alice', avatar_url: null })
-      wrapper = await mountSuspended(ProfilePage)
-
-      await (wrapper.vm as VmAny).onProfileSave()
-
-      expect(callMock).toHaveBeenCalledWith('/user/reactive-uid/profile', expect.objectContaining({ method: 'PUT' }))
-    })
-
-    it('does nothing when neither the session nor the reactive user has an id', async () => {
-      getSessionMock.mockResolvedValue({ data: { session: null } })
+    it('re-asks the server rather than sending `undefined` in the path', async () => {
       userRef.value = null
+      authStub.fetchSession.mockResolvedValue({ id: 'refetched-uid' })
+      callMock.mockResolvedValueOnce({ display_name: 'Alice', avatar_url: null })
+      wrapper = await mountSuspended(ProfilePage)
+
+      await (wrapper.vm as VmAny).onProfileSave()
+
+      expect(callMock).toHaveBeenCalledWith('/user/refetched-uid/profile', expect.objectContaining({ method: 'PUT' }))
+    })
+
+    it('does nothing when nobody is signed in', async () => {
+      userRef.value = null
+      authStub.fetchSession.mockResolvedValue(null)
       wrapper = await mountSuspended(ProfilePage)
 
       await (wrapper.vm as VmAny).onProfileSave()
@@ -331,7 +323,7 @@ describe('pages/profile.vue', () => {
 
       expect(callMock).toHaveBeenCalledTimes(1)
       const [path, opts] = callMock.mock.calls[0]!
-      expect(path).toBe('/user/session-uid/profile')
+      expect(path).toBe('/user/reactive-uid/profile')
       expect(opts.method).toBe('PUT')
       expect(opts.body).toBeInstanceOf(FormData)
       const form = opts.body as FormData
@@ -360,7 +352,7 @@ describe('pages/profile.vue', () => {
       callMock.mockResolvedValueOnce({ display_name: 'Alice', avatar_url: 'https://cdn.example.com/new.png' })
       await vm.onProfileSave()
 
-      expect(refreshSessionMock).toHaveBeenCalledTimes(1)
+      expect(authStub.fetchSession).toHaveBeenCalled()
       expect(vm.avatarUrl).toBe('https://cdn.example.com/new.png')
       expect(vm.avatarFile).toBeNull()
       expect(vm.avatarPreview).toBe('')
@@ -438,7 +430,7 @@ describe('pages/profile.vue', () => {
 
       await fillAndSubmitEmail(wrapper, 'new@example.com')
 
-      expect(callMock).toHaveBeenCalledWith('/user/session-uid/email', {
+      expect(callMock).toHaveBeenCalledWith('/user/reactive-uid/email', {
         method: 'PUT',
         reauth: true,
         body: { new_email: 'new@example.com', current_password: 'oldpassword1' }
@@ -475,7 +467,7 @@ describe('pages/profile.vue', () => {
 
       await vm.onEmailSubmit({ data: { email: 'new@example.com', currentPassword: 'oldpassword1' } })
 
-      expect(callMock).toHaveBeenCalledWith('/user/session-uid/email', {
+      expect(callMock).toHaveBeenCalledWith('/user/reactive-uid/email', {
         method: 'PUT',
         reauth: true,
         body: { new_email: 'new@example.com', current_password: 'oldpassword1' }
@@ -537,8 +529,8 @@ describe('pages/profile.vue', () => {
     })
 
     it('does not submit when getUserId resolves to null', async () => {
-      getSessionMock.mockResolvedValue({ data: { session: null } })
       userRef.value = null
+      authStub.fetchSession.mockResolvedValue(null)
       wrapper = await mountSuspended(ProfilePage)
       const vm = wrapper.vm as VmAny
 
@@ -555,7 +547,7 @@ describe('pages/profile.vue', () => {
 
       await fillAndSubmitPassword(wrapper, 'oldpassword1', 'newpassword1', 'newpassword1')
 
-      expect(callMock).toHaveBeenCalledWith('/user/session-uid/password', {
+      expect(callMock).toHaveBeenCalledWith('/user/reactive-uid/password', {
         method: 'PUT',
         reauth: true,
         body: { current_password: 'oldpassword1', new_password: 'newpassword1' }
@@ -621,7 +613,7 @@ describe('pages/profile.vue', () => {
         data: { currentPassword: 'oldpassword1', newPassword: 'newpassword1', confirmPassword: 'newpassword1' }
       })
 
-      expect(callMock).toHaveBeenCalledWith('/user/session-uid/password', {
+      expect(callMock).toHaveBeenCalledWith('/user/reactive-uid/password', {
         method: 'PUT',
         reauth: true,
         body: { current_password: 'oldpassword1', new_password: 'newpassword1' }
@@ -689,8 +681,8 @@ describe('pages/profile.vue', () => {
     })
 
     it('does not submit when getUserId resolves to null', async () => {
-      getSessionMock.mockResolvedValue({ data: { session: null } })
       userRef.value = null
+      authStub.fetchSession.mockResolvedValue(null)
       wrapper = await mountSuspended(ProfilePage)
       const vm = wrapper.vm as VmAny
 
@@ -783,9 +775,9 @@ describe('pages/profile.vue', () => {
     // `document.body.innerHTML` after opening the modal, which stays just
     // `<div id="__nuxt">`. We instead exercise deleteModalOpen/handleDeleteAccount
     // at the state/method level, which is what's actually under test here.
-    it('handleDeleteAccount is a no-op (no DELETE, no signOut, no redirect) when getUserId resolves to null', async () => {
-      getSessionMock.mockResolvedValue({ data: { session: null } })
+    it('handleDeleteAccount is a no-op (no DELETE, no session drop, no redirect) when nobody is signed in', async () => {
       userRef.value = null
+      authStub.fetchSession.mockResolvedValue(null)
       wrapper = await mountSuspended(ProfilePage)
       const vm = wrapper.vm as VmAny
       vm.deleteModalOpen = true
@@ -793,7 +785,7 @@ describe('pages/profile.vue', () => {
       await vm.handleDeleteAccount()
 
       expect(callMock).not.toHaveBeenCalled()
-      expect(signOutMock).not.toHaveBeenCalled()
+      expect(authStub.clearSession).not.toHaveBeenCalled()
       // Early-return path never reaches the finally block that would reset it.
       expect(vm.deleteModalOpen).toBe(true)
     })
@@ -809,12 +801,12 @@ describe('pages/profile.vue', () => {
       callMock.mockResolvedValueOnce({})
       await vm.handleDeleteAccount()
 
-      expect(callMock).toHaveBeenCalledWith('/user/session-uid', {
+      expect(callMock).toHaveBeenCalledWith('/user/reactive-uid', {
         method: 'DELETE',
         reauth: true,
         body: { current_password: 'oldpassword1' }
       })
-      expect(signOutMock).toHaveBeenCalledTimes(1)
+      expect(authStub.clearSession).toHaveBeenCalledTimes(1)
       expect(toastAddMock).toHaveBeenCalledWith({
         title: 'Account deleted',
         description: 'Your account and data have been permanently removed.',
@@ -861,7 +853,7 @@ describe('pages/profile.vue', () => {
         description: 'cannot delete: active orders',
         color: 'error'
       })
-      expect(signOutMock).not.toHaveBeenCalled()
+      expect(authStub.clearSession).not.toHaveBeenCalled()
       expect(pushSpy).not.toHaveBeenCalled()
       // SPEC-056 #7: the likely failure is a mistyped password, and closing the
       // dialog would make the user reopen the danger zone to fix a typo.

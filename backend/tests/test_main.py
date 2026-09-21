@@ -23,6 +23,7 @@ async def test_health_check():
     assert response.status_code == 200
     assert response.json() == {"status": "healthy"}
 
+
 @pytest.mark.asyncio
 async def test_root():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
@@ -41,6 +42,7 @@ async def test_root():
 # to its baseline configuration before the next test runs -- other tests in
 # this file rely on a `main.app` that reflects the conftest baseline env.
 # ---------------------------------------------------------------------------
+
 
 def _reload_main():
     return importlib.reload(main)
@@ -100,6 +102,7 @@ async def test_cors_origins_unset_uses_default_list(monkeypatch):
 # invoked for real by module-level code during reload.
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_sentry_disabled_in_development_even_with_dsn(monkeypatch):
     import sentry_sdk
@@ -151,6 +154,7 @@ async def test_sentry_enforced_in_production_raises_without_dsn(monkeypatch):
 # IS_PROD gating of /docs, /redoc, /openapi.json
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_docs_reachable_when_not_prod():
     # conftest's baseline env sets ENV=test (not production), so the
@@ -167,6 +171,7 @@ async def test_docs_reachable_when_not_prod():
 @pytest.mark.asyncio
 async def test_docs_hidden_when_env_is_production(monkeypatch):
     import sentry_sdk
+
     monkeypatch.setattr(sentry_sdk, "init", MagicMock())
     monkeypatch.setenv("SENTRY_DSN", "https://fakekey@fake.ingest.sentry.io/123")
     monkeypatch.setenv("ENV", "production")
@@ -188,6 +193,7 @@ async def test_docs_hidden_when_env_is_production(monkeypatch):
 @pytest.mark.asyncio
 async def test_docs_hidden_when_env_is_prod_shorthand(monkeypatch):
     import sentry_sdk
+
     # IS_PROD accepts "prod" as well as "production" (case-insensitively).
     monkeypatch.setattr(sentry_sdk, "init", MagicMock())
     monkeypatch.setenv("SENTRY_DSN", "https://fakekey@fake.ingest.sentry.io/123")
@@ -210,6 +216,7 @@ async def test_docs_hidden_when_env_is_prod_shorthand(monkeypatch):
 # (inside the async function body), so these tests monkeypatch env vars and
 # invoke main.lifespan(...) directly -- no importlib.reload needed.
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_lifespan_no_background_task_when_cleanup_disabled():
@@ -268,9 +275,7 @@ async def test_lifespan_creates_background_tasks_when_enabled(monkeypatch):
         main.asyncio.create_task = orig_create_task
 
     # SPEC-052 added the digest sweeper alongside the payment cleanup worker.
-    assert _started_worker_names(mock_create_task) == {
-        "_payment_cleanup_loop", "_unread_digest_loop"
-    }
+    assert _started_worker_names(mock_create_task) == {"_payment_cleanup_loop", "_unread_digest_loop"}
 
 
 @pytest.mark.asyncio

@@ -2,12 +2,23 @@ import { runtimeCaching } from './pwa/runtime-caching'
 import { navigateFallbackDenylist } from './pwa/navigate-fallback-denylist'
 import { injectLegalDocument } from './build/legal-prerender'
 
+/**
+ * SPEC-045 / SPEC-099. The walkthrough recordings live on a zero-egress R2
+ * bucket behind this origin. It is the only cross-origin media the homepage
+ * fetches, and it is fetched the moment someone scrolls to `#how-it-works` —
+ * so the connection is opened up front to take DNS and the TLS handshake off
+ * that critical path. A static SPA bakes this at build time, same as the
+ * runtimeConfig default below.
+ */
+const MEDIA_CDN_ORIGIN = new URL(
+  process.env.NUXT_PUBLIC_MEDIA_CDN_URL || 'https://media.negolah.my'
+).origin
+
 export default defineNuxtConfig({
 
   modules: [
     '@nuxt/eslint',
     '@nuxt/ui',
-    '@nuxtjs/supabase',
     '@nuxtjs/mdc',
     '@nuxtjs/turnstile',
     '@nuxtjs/i18n',
@@ -55,7 +66,15 @@ export default defineNuxtConfig({
         { rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' },
         { rel: 'icon', type: 'image/x-icon', href: '/favicon.ico' },
         { rel: 'apple-touch-icon', sizes: '180x180', href: '/apple-touch-icon.png' },
-        { rel: 'canonical', href: 'https://negolah.my' }
+        { rel: 'canonical', href: 'https://negolah.my' },
+        // Deliberately WITHOUT `crossorigin`: the <video> carries no
+        // `crossorigin` attribute, so it fetches in no-cors mode. A preconnect
+        // that opens an anonymous CORS connection would be a different socket
+        // and the media request would not reuse it — a warm connection nobody
+        // uses is worse than none, because it looks like it is working.
+        { rel: 'preconnect', href: MEDIA_CDN_ORIGIN },
+        // For anything that ignores preconnect; resolves DNS at least.
+        { rel: 'dns-prefetch', href: MEDIA_CDN_ORIGIN }
       ]
     }
   },
@@ -99,7 +118,7 @@ export default defineNuxtConfig({
         'X-Frame-Options': 'DENY',
         'Referrer-Policy': 'strict-origin-when-cross-origin',
         'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
-        'Content-Security-Policy': 'default-src \'self\'; script-src \'self\' \'unsafe-inline\' \'unsafe-eval\' https://challenges.cloudflare.com https://static.cloudflareinsights.com https://www.googletagmanager.com https://*.google-analytics.com; worker-src \'self\' blob:; child-src \'self\' blob:; style-src \'self\' \'unsafe-inline\' https://fonts.googleapis.com; font-src \'self\' data: https://fonts.gstatic.com; img-src \'self\' data: blob: https:; media-src \'self\' https: blob:; connect-src \'self\' https://api.negolah.my http://localhost:8000 http://127.0.0.1:8000 https://*.supabase.co wss://*.supabase.co https://*.sentry.io https://challenges.cloudflare.com https://cloudflareinsights.com https://*.google-analytics.com https://*.analytics.google.com https://*.googletagmanager.com; frame-src \'self\' https://challenges.cloudflare.com https://js.stripe.com; object-src \'none\'; base-uri \'self\';'
+        'Content-Security-Policy': 'default-src \'self\'; script-src \'self\' \'unsafe-inline\' \'unsafe-eval\' https://challenges.cloudflare.com https://static.cloudflareinsights.com https://www.googletagmanager.com https://*.google-analytics.com; worker-src \'self\' blob:; child-src \'self\' blob:; style-src \'self\' \'unsafe-inline\' https://fonts.googleapis.com; font-src \'self\' data: https://fonts.gstatic.com; img-src \'self\' data: blob: https:; media-src \'self\' https: blob:; connect-src \'self\' https://api.negolah.my http://localhost:8000 http://127.0.0.1:8000 https://*.sentry.io https://challenges.cloudflare.com https://cloudflareinsights.com https://*.google-analytics.com https://*.analytics.google.com https://*.googletagmanager.com; frame-src \'self\' https://challenges.cloudflare.com https://js.stripe.com; object-src \'none\'; base-uri \'self\';'
       }
     }
   },
@@ -339,28 +358,6 @@ export default defineNuxtConfig({
     },
     sourcemaps: {
       filesToDeleteAfterUpload: ['.output/**/*.map']
-    }
-  },
-
-  supabase: {
-    url: process.env.NUXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL,
-    key: process.env.NUXT_PUBLIC_SUPABASE_KEY || process.env.SUPABASE_KEY,
-    cookieOptions: {
-      secure: process.env.NODE_ENV === 'production'
-    },
-    redirectOptions: {
-      login: '/login',
-      callback: '/confirm',
-      // This module's guard runs before any page middleware, so on a lapsed
-      // session it — not our own `auth` middleware — is what redirects, and it
-      // has no way to attach a `?redirect=` query. Letting it stash the blocked
-      // page in a cookie is the module's own answer to that; `pages/login.vue`
-      // plucks it so the visitor lands back where they were kicked off.
-      saveRedirectToCookie: true,
-      // Public routes that don't require auth.
-      // /_console is the admin area; it has its OWN cookie-based auth (handled by
-      // the backend), so it must be excluded from the Supabase-user redirect.
-      exclude: ['/', '/items', '/items/*', '/login', '/register', '/forgot-password', '/reset-password', '/privacy', '/terms', '/_console', '/_console/*']
     }
   },
 

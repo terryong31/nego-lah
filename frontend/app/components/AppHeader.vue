@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { loginRedirect, resolveAvatarUrl } from '~/utils/auth'
 
-const user = useSupabaseUser()
-const supabase = useSupabaseClient()
+const { user, logout } = useAuth()
 const router = useRouter()
 const route = useRoute()
 const toast = useToast()
@@ -57,14 +56,20 @@ const dropdownItems = computed(() => {
         label: t('header.signOut'),
         icon: 'i-lucide-log-out',
         onSelect: async () => {
-          const { error } = await supabase.auth.signOut()
-          if (error) {
-            toast.add({ title: t('header.logoutFailed'), description: error.message, color: 'error' })
-          } else {
+          try {
+            await logout()
             toast.add({ title: t('header.signedOut'), description: t('header.seeYouAgain'), color: 'success' })
-            if (isAuthGuarded(route)) {
-              await router.push('/')
-            }
+          } catch (err) {
+            // `logout` clears the local session either way, so the button always
+            // does what it says — the toast just admits the server did not hear.
+            toast.add({
+              title: t('header.logoutFailed'),
+              description: err instanceof Error ? err.message : '',
+              color: 'error'
+            })
+          }
+          if (isAuthGuarded(route)) {
+            await router.push('/')
           }
         }
       }

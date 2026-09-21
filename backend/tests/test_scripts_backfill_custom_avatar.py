@@ -16,10 +16,7 @@ from unittest.mock import MagicMock
 
 from scripts import backfill_custom_avatar as backfill
 
-SELF_HOSTED = (
-    "https://test-project.supabase.co/storage/v1/object/public/"
-    "test-images/avatars/user-1/abc.png"
-)
+SELF_HOSTED = "https://test-project.supabase.co/storage/v1/object/public/test-images/avatars/user-1/abc.png"
 GOOGLE_PHOTO = "https://lh3.googleusercontent.com/a/google-photo"
 
 
@@ -42,6 +39,7 @@ def fake_admin(*pages):
 # is_self_hosted_avatar
 # ---------------------------------------------------------------------------
 
+
 def test_recognises_our_own_storage_url():
     assert backfill.is_self_hosted_avatar(SELF_HOSTED) is True
 
@@ -52,18 +50,25 @@ def test_rejects_provider_photos_and_junk():
     assert backfill.is_self_hosted_avatar(None) is False
     assert backfill.is_self_hosted_avatar(12345) is False
     # Right host and bucket, but not the avatars/ folder — an item image.
-    assert backfill.is_self_hosted_avatar(
-        "https://test-project.supabase.co/storage/v1/object/public/test-images/items/x.png"
-    ) is False
+    assert (
+        backfill.is_self_hosted_avatar(
+            "https://test-project.supabase.co/storage/v1/object/public/test-images/items/x.png"
+        )
+        is False
+    )
     # A different Supabase project must never be treated as ours.
-    assert backfill.is_self_hosted_avatar(
-        "https://other-project.supabase.co/storage/v1/object/public/test-images/avatars/x.png"
-    ) is False
+    assert (
+        backfill.is_self_hosted_avatar(
+            "https://other-project.supabase.co/storage/v1/object/public/test-images/avatars/x.png"
+        )
+        is False
+    )
 
 
 # ---------------------------------------------------------------------------
 # backfill()
 # ---------------------------------------------------------------------------
+
 
 def test_dry_run_reports_without_writing(monkeypatch):
     admin = fake_admin([make_user("u1", {"avatar_url": SELF_HOSTED})])
@@ -77,13 +82,18 @@ def test_dry_run_reports_without_writing(monkeypatch):
 
 
 def test_apply_copies_upload_to_custom_key_preserving_everything_else(monkeypatch):
-    admin = fake_admin([
-        make_user("u1", {
-            "avatar_url": SELF_HOSTED,
-            "display_name": "Terry",
-            "preferred_language": "en",
-        }),
-    ])
+    admin = fake_admin(
+        [
+            make_user(
+                "u1",
+                {
+                    "avatar_url": SELF_HOSTED,
+                    "display_name": "Terry",
+                    "preferred_language": "en",
+                },
+            ),
+        ]
+    )
     monkeypatch.setattr(backfill, "admin_supabase", admin)
 
     result = backfill.backfill(apply_changes=True)
@@ -102,9 +112,11 @@ def test_apply_copies_upload_to_custom_key_preserving_everything_else(monkeypatc
 
 
 def test_skips_users_already_backfilled(monkeypatch):
-    admin = fake_admin([
-        make_user("u1", {"avatar_url": SELF_HOSTED, "custom_avatar_url": SELF_HOSTED}),
-    ])
+    admin = fake_admin(
+        [
+            make_user("u1", {"avatar_url": SELF_HOSTED, "custom_avatar_url": SELF_HOSTED}),
+        ]
+    )
     monkeypatch.setattr(backfill, "admin_supabase", admin)
 
     result = backfill.backfill(apply_changes=True)
@@ -115,11 +127,13 @@ def test_skips_users_already_backfilled(monkeypatch):
 
 
 def test_skips_provider_photos_and_users_with_no_avatar(monkeypatch):
-    admin = fake_admin([
-        make_user("u1", {"avatar_url": GOOGLE_PHOTO}),
-        make_user("u2", {}),
-        make_user("u3", {"display_name": "No Avatar"}),
-    ])
+    admin = fake_admin(
+        [
+            make_user("u1", {"avatar_url": GOOGLE_PHOTO}),
+            make_user("u2", {}),
+            make_user("u3", {"display_name": "No Avatar"}),
+        ]
+    )
     monkeypatch.setattr(backfill, "admin_supabase", admin)
 
     result = backfill.backfill(apply_changes=True)
@@ -152,10 +166,12 @@ def test_stops_on_an_empty_page(monkeypatch):
 
 
 def test_a_failing_user_does_not_abort_the_run(monkeypatch):
-    admin = fake_admin([
-        make_user("u1", {"avatar_url": SELF_HOSTED}),
-        make_user("u2", {"avatar_url": SELF_HOSTED}),
-    ])
+    admin = fake_admin(
+        [
+            make_user("u1", {"avatar_url": SELF_HOSTED}),
+            make_user("u2", {"avatar_url": SELF_HOSTED}),
+        ]
+    )
     admin.auth.admin.update_user_by_id.side_effect = [RuntimeError("supabase down"), None]
     monkeypatch.setattr(backfill, "admin_supabase", admin)
 
@@ -180,6 +196,7 @@ def test_handles_a_paginated_response_object(monkeypatch):
 # ---------------------------------------------------------------------------
 # main()
 # ---------------------------------------------------------------------------
+
 
 def test_main_defaults_to_dry_run(monkeypatch):
     admin = fake_admin([make_user("u1", {"avatar_url": SELF_HOSTED})])

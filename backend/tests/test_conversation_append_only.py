@@ -24,7 +24,7 @@ import pytest
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from agent.memory import ConversationMemory  # noqa: E402
+from domains.negotiation.memory import ConversationMemory  # noqa: E402
 
 
 class FakeMessagesTable:
@@ -61,9 +61,7 @@ class FakeMessagesTable:
         return _Delete(self)
 
     def update(self, _payload):  # pragma: no cover - must never be reached
-        raise AssertionError(
-            "history is append-only: an UPDATE means the old rewrite crept back"
-        )
+        raise AssertionError("history is append-only: an UPDATE means the old rewrite crept back")
 
 
 class _Query:
@@ -82,7 +80,7 @@ class _Query:
         return self
 
     def range(self, start, end):
-        self.rows = self.rows[start:end + 1]
+        self.rows = self.rows[start : end + 1]
         return self
 
     def limit(self, count):
@@ -103,10 +101,7 @@ class _Delete:
         return self
 
     def execute(self):
-        kept = [
-            r for r in self.table.rows
-            if not all(r.get(c) == v for c, v in self._filters)
-        ]
+        kept = [r for r in self.table.rows if not all(r.get(c) == v for c, v in self._filters)]
         removed = len(self.table.rows) - len(kept)
         self.table.rows[:] = kept
         return _Result([{"removed": removed}])
@@ -150,13 +145,12 @@ def memory(messages_table):
 # B1 — a write is an append, not a rewrite
 # ---------------------------------------------------------------------------
 
+
 def test_add_message_inserts_once_and_reads_nothing(memory, messages_table):
     memory.add_message("user-1", "human", "is 800 ok?", item_id=None, source="human")
 
     assert messages_table.insert_calls == 1
-    assert messages_table.select_calls == 0, (
-        "a write that reads first is the read-modify-write this spec removes"
-    )
+    assert messages_table.select_calls == 0, "a write that reads first is the read-modify-write this spec removes"
 
 
 def test_write_cost_does_not_grow_with_history_length(memory, messages_table):
@@ -196,6 +190,7 @@ def test_list_content_is_serialised_like_before(memory, messages_table):
 # B2 — the lost-update bug is gone
 # ---------------------------------------------------------------------------
 
+
 def test_concurrent_writes_do_not_lose_a_message(memory, messages_table):
     """The bug this workstream exists to kill.
 
@@ -216,6 +211,7 @@ def test_concurrent_writes_do_not_lose_a_message(memory, messages_table):
 # ---------------------------------------------------------------------------
 # Reads: same contracts as before, now served by an indexed page
 # ---------------------------------------------------------------------------
+
 
 def test_get_history_returns_chronological_order(memory):
     for text in ["first", "second", "third"]:
@@ -297,7 +293,5 @@ def test_reads_degrade_to_empty_rather_than_raising(monkeypatch):
     mem._supabase = broken
 
     assert mem.get_history("user-1") == []
-    assert mem.get_history_page("user-1") == {
-        "messages": [], "has_more": False, "next_offset": 0
-    }
+    assert mem.get_history_page("user-1") == {"messages": [], "has_more": False, "next_offset": 0}
     assert mem.get_all_histories() == {}

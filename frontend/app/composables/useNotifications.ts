@@ -1,4 +1,44 @@
-import { resolveUserId } from '~/utils/auth'
+import { getUserCsrfToken, resolveUserId } from '~/utils/auth'
+
+/**
+ * One event, two audiences.
+ *
+ * SPEC-094 folded the chat's realtime channel into this stream, so what arrives
+ * here is no longer only "someone messaged you": it is every event in the
+ * buyer's conversation, including their own messages (echoed so the admin
+ * console stays in sync) and typing pings. This composable toasts the subset
+ * worth toasting; `useTypingChannel` renders the rest into the open chat.
+ *
+ * Subscribers live at module scope alongside the EventSource, because the
+ * stream belongs to the session rather than to whichever component is mounted.
+ */
+export interface ChatStreamEvent {
+  type?: string
+  role?: string
+  source?: string
+  message?: string
+  notify?: boolean
+}
+
+type ChatStreamHandler = (event: ChatStreamEvent) => void
+
+const streamHandlers = new Set<ChatStreamHandler>()
+
+/** Listen to the buyer's own conversation stream. Returns an unsubscribe. */
+export function onChatStreamEvent(handler: ChatStreamHandler): () => void {
+  streamHandlers.add(handler)
+  return () => streamHandlers.delete(handler)
+}
+
+function fanOut(event: ChatStreamEvent) {
+  for (const handler of [...streamHandlers]) {
+    try {
+      handler(event)
+    } catch (err) {
+      console.debug('A chat stream subscriber threw:', err)
+    }
+  }
+}
 // --- Session-wide stream state -------------------------------------------
 // The notification stream belongs to the browser session, not to whichever
 // component happens to be mounted. `AppHeader` re-mounts on every layout change
@@ -16,6 +56,7 @@ let authListenerBound = false
 let visibilityListenerBound = false
 let livenessTimer: ReturnType<typeof setInterval> | null = null
 let routeWatchScope: ReturnType<typeof effectScope> | null = null
+let authWatchScope: ReturnType<typeof effectScope> | null = null
 let stamping: Promise<void> | null = null
 
 // --- Reconnect backoff ----------------------------------------------------
@@ -82,8 +123,7 @@ if (import.meta.hot) {
 
 export function useNotifications() {
   const config = useRuntimeConfig()
-  const user = useSupabaseUser()
-  const supabase = useSupabaseClient()
+  const { user } = useAuth()
   const route = useRoute()
   const toast = useToast()
 
@@ -98,12 +138,6 @@ export function useNotifications() {
         // best effort
       }
     }
-  }
-
-  /** The buyer's Supabase access token, or null when there is no session. */
-  async function accessToken(): Promise<string | null> {
-    const { data: { session } } = await supabase.auth.getSession()
-    return session?.access_token ?? null
   }
 
   /**
@@ -149,14 +183,14 @@ export function useNotifications() {
   }
 
   async function writeReadWatermark() {
-    const token = await accessToken()
-    if (!token) {
+    if (!resolveUserId(user.value)) {
       return
     }
     try {
       await $fetch(`${config.public.apiBaseUrl}/chat/read`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` }
+        credentials: 'include',
+        headers: { 'X-CSRF-Token': getUserCsrfToken() }
       })
     } catch (err) {
       // The badge is already clear on screen; a failed write means it comes
@@ -179,14 +213,13 @@ export function useNotifications() {
     if (isChatPath(route.path) && typeof document !== 'undefined' && !document.hidden) {
       return
     }
-    const token = await accessToken()
-    if (!token) {
+    if (!resolveUserId(user.value)) {
       return
     }
     try {
       const res = await $fetch<{ count?: number, has_unread?: boolean }>(
         `${config.public.apiBaseUrl}/chat/unread`,
-        { headers: { Authorization: `Bearer ${token}` } }
+        { credentials: 'include' }
       )
       unreadCount.value = res?.count ?? 0
       hasUnread.value = Boolean(res?.has_unread)
@@ -260,43 +293,37 @@ export function useNotifications() {
   }
 
   async function openStream() {
-    const token = await accessToken()
-    if (!token) {
-      // Signed in but no session in hand yet — the auth listener will call back,
-      // and this covers the case where it doesn't.
+    if (!resolveUserId(user.value)) {
+      // Nobody to open a stream for. The watcher below calls back when that
+      // changes; this covers the case where it doesn't.
       scheduleReconnect()
       return
     }
 
-    // SPEC-056 #6. `EventSource` cannot set headers, which is why this used to
-    // append the Supabase access token to the URL — where it was copied into the
-    // reverse proxy's access log, Cloudflare's, the browser's history and the
-    // Referer of whatever the page loaded next, all for a credential good for
-    // the next hour of API calls. So the token stays in a header on this POST,
-    // and the URL carries a ticket that is worth one stream for thirty seconds.
-    let ticket: string
+    // SPEC-056 #6 put a single-use ticket in this URL because `EventSource`
+    // cannot set an `Authorization` header, and the access token it replaced was
+    // being copied into the reverse proxy's access log, Cloudflare's, the
+    // browser's history and the Referer of whatever the page loaded next.
+    // SPEC-093 removed the need for either: the session is a cookie now, and
+    // `withCredentials` is what sends it. The URL carries nothing at all.
     try {
-      const minted = await $fetch<{ ticket: string }>(
-        `${config.public.apiBaseUrl}/chat/notifications/ticket`,
-        { method: 'POST', headers: { Authorization: `Bearer ${token}` } }
-      )
-      ticket = minted.ticket
-    } catch (err) {
-      console.error('Could not mint a notification stream ticket:', err)
-      scheduleReconnect()
-      return
-    }
-
-    try {
-      const streamUrl = `${config.public.apiBaseUrl}/chat/notifications/stream?ticket=${encodeURIComponent(ticket)}`
-      eventSource = new EventSource(streamUrl)
+      const streamUrl = `${config.public.apiBaseUrl}/chat/notifications/stream`
+      eventSource = new EventSource(streamUrl, { withCredentials: true })
 
       eventSource.addEventListener('message', (event) => {
         try {
-          const data = JSON.parse(event.data) as {
-            type?: string
-            message?: string
-            source?: string
+          const data = JSON.parse(event.data) as ChatStreamEvent
+
+          // Hand every event to the chat page first — it renders the live
+          // message and the typing indicator, and it needs the ones this
+          // function goes on to ignore (SPEC-094).
+          fanOut(data)
+
+          // Typing pings, the buyer's own echoed messages and the system
+          // separators all travel on this stream now, and none of them is
+          // "someone messaged you". The server decides which are, and says so.
+          if (data.type !== 'new_message' || data.notify !== true) {
+            return
           }
 
           // If user is currently actively viewing /chat (tab is active), don't show notifications
@@ -343,16 +370,14 @@ export function useNotifications() {
       })
 
       eventSource.onerror = () => {
-        // `EventSource` retries the URL by itself, and the ticket in it is
-        // single-use — so its own attempt is guaranteed a 401. Close it and
-        // come back with a fresh ticket instead.
+        // `EventSource` retries the URL by itself, but on its own schedule and
+        // without the backoff below — and a 401 (revoked session) would have it
+        // retrying forever. Close it and let `scheduleReconnect` decide.
         disconnect()
         scheduleReconnect()
       }
 
       // Catch up on whatever arrived while this session had no stream at all.
-      // After the ticket, deliberately: a stream that cannot be opened is the
-      // one case where the reconnect timer will bring us back here anyway.
       void hydrate()
     } catch (err) {
       console.error('Failed to establish notification stream:', err)
@@ -438,36 +463,40 @@ export function useNotifications() {
     })
   }
 
-  // Bound once per session: a listener per composable call leaked both the
+  // Bound once per session: a watcher per composable call leaked both the
   // subscription and the closure holding its EventSource.
+  //
+  // One signal, not a stream of them. `@nuxtjs/supabase` used to emit plenty of
+  // events carrying no session — a refresh in flight, a re-read on navigation —
+  // and reading each one as "the buyer is gone" closed perfectly healthy
+  // streams about four seconds before every send, which is exactly the shape of
+  // "no toast, no chip, and a reload fixes it". The session ref only changes
+  // when the session actually changes (SPEC-093), so there is nothing left to
+  // disambiguate.
   if (import.meta.client && !authListenerBound) {
     authListenerBound = true
-    try {
-      supabase.auth.onAuthStateChange((event, session) => {
-        // Only an actual sign-out takes the stream down.
-        //
-        // Supabase emits plenty of events carrying no session — a refresh in
-        // flight, a re-read on navigation — and this used to read every one of
-        // them as "the buyer is gone" and close a perfectly healthy stream.
-        // Measured on the live stack, that landed about four seconds before
-        // each send, because navigating INTO the conversation is what provoked
-        // the event: the agent's reply two seconds later then had nowhere to
-        // go, no error was raised, and nothing on the client had any reason to
-        // reconnect. Which is exactly the shape of "no toast, no chip, and a
-        // reload fixes it".
-        if (event === 'SIGNED_OUT') {
-          disconnect()
-          clearUnread({ stamp: false })
-          return
+    // Detached, for the same reason the route watcher below is: a watcher
+    // created in a component's setup is disposed when that component unmounts,
+    // and `AppHeader` unmounts on every layout change. Bound once at module
+    // scope but owned by the first component to ask, it would stop watching the
+    // session the moment the buyer walked into /chat — and never rebind,
+    // because the flag says it is already bound.
+    authWatchScope = effectScope(true)
+    authWatchScope.run(() => {
+      watch(
+        () => resolveUserId(user.value),
+        (userId, previous) => {
+          if (userId) {
+            void connect()
+            return
+          }
+          if (previous) {
+            disconnect()
+            clearUnread({ stamp: false })
+          }
         }
-        if (session?.user) {
-          connect()
-        }
-      })
-    } catch {
-      authListenerBound = false
-      // safe fallback if supabase is not initialized
-    }
+      )
+    })
   }
 
   return {

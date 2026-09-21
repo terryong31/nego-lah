@@ -10,7 +10,7 @@ import { loginRedirect } from '~/utils/auth'
  * point — the interesting half of this product (negotiation, checkout,
  * tracking) is behind auth, and a visitor who never signs in never sees it.
  */
-const user = useSupabaseUser()
+const { user } = useAuth()
 const { locale } = useI18n()
 
 const enterStore = computed(() =>

@@ -4,7 +4,7 @@ import pytest
 from postgrest._sync.request_builder import SyncQueryRequestBuilder
 from postgrest.exceptions import APIError
 
-import connector
+import core.connector as connector
 
 
 def test_resilient_execute_retries_on_jwt_future(monkeypatch):

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useChat } from '@ai-sdk/vue'
 import { DefaultChatTransport } from 'ai'
-import { loginRedirect, resolveUserId } from '~/utils/auth'
+import { getUserCsrfToken, loginRedirect, resolveUserId } from '~/utils/auth'
 import { useItemStore } from '~/stores/item'
 
 definePageMeta({
@@ -14,12 +14,9 @@ const PAGE_SIZE = 20
 const { call } = useApi()
 const route = useRoute()
 const config = useRuntimeConfig()
-const user = useSupabaseUser()
-const supabase = useSupabaseClient()
+const { user, clearSession } = useAuth()
 const toast = useToast()
 const { locale, t } = useI18n()
-
-const accessToken = ref('')
 
 // Optional item context: when the customer arrives from an item's "Negotiate"
 // button we pass that item_id along so the AI knows what's being discussed.
@@ -96,7 +93,10 @@ const lastSentText = ref('')
  * cleanly instead of leaving the composer stuck mid-send.
  */
 async function fetchWithCooldown(input: RequestInfo | URL, init?: RequestInit) {
-  const response = await globalThis.fetch(input, init)
+  // SPEC-093: the session cookie authenticates this, so it has to be sent —
+  // `fetch` omits cookies cross-origin unless asked, and api.negolah.my is a
+  // different origin from negolah.my.
+  const response = await globalThis.fetch(input, { ...init, credentials: 'include' })
   if (response.status !== 429) return response
 
   const headerSeconds = Number(response.headers.get('Retry-After'))
@@ -128,7 +128,7 @@ const { messages, status, stop, sendMessage } = useChat({
     api: `${config.public.apiBaseUrl}/chat/stream`,
     fetch: fetchWithCooldown,
     headers: () => ({
-      Authorization: `Bearer ${accessToken.value}`
+      'X-CSRF-Token': getUserCsrfToken()
     }),
     prepareSendMessagesRequest: ({ messages: sdkMessages, body }) => {
       const last = sdkMessages[sdkMessages.length - 1]
@@ -342,11 +342,10 @@ watch(input, (val) => {
 })
 
 async function currentUserId(): Promise<string | null> {
-  const fromClaims = resolveUserId(user.value)
-  if (fromClaims) return fromClaims
-  // user ref can lag on a hard refresh — fall back to the session directly.
-  const { data: { session } } = await supabase.auth.getSession()
-  return resolveUserId(session?.user)
+  // `plugins/auth.client.ts` resolves the session before the first route guard
+  // runs, so by the time this page mounts the ref is settled — the hard-refresh
+  // lag that needed a second session read is gone with the client-side session.
+  return resolveUserId(user.value)
 }
 
 async function loadInitial() {
@@ -402,7 +401,9 @@ async function loadMore() {
 // every time, which is how a COD conversation ended up reading the same reply
 // on both sides of the divider. So nothing lands in `messages` while a turn is
 // in flight; it waits here and lands once the reply is finished.
-interface LivePayload { content?: string, role?: string, source?: string }
+// SPEC-094: this arrives from the notification broker rather than a Supabase
+// Realtime broadcast, and the broker calls the text `message`.
+interface LivePayload { message?: string, role?: string, source?: string }
 
 const turnInFlight = computed(() => status.value === 'streaming' || status.value === 'submitted')
 const pendingLive = ref<ReturnType<typeof liveMessage>[]>([])
@@ -414,7 +415,7 @@ function liveMessage(msg: LivePayload) {
     id: uid(),
     role,
     parts: [
-      { type: 'text' as const, text: msg.content ?? '' },
+      { type: 'text' as const, text: msg.message ?? '' },
       ...(msg.source ? [{ type: 'data-source' as const, data: msg.source }] : [])
     ]
   }
@@ -445,12 +446,12 @@ function flushPendingLive() {
 function receiveLive(payload: unknown) {
   const msg = payload as LivePayload
   // Drop any empty messages just to be safe
-  if (!msg || !msg.content) return
+  if (!msg || !msg.message) return
 
   // Customer already has their own message rendered locally
   if (msg.source === 'human' || msg.role === 'user') return
 
-  if (msg.source === 'ai' && (turnInFlight.value || echoesTail(msg.content))) return
+  if (msg.source === 'ai' && (turnInFlight.value || echoesTail(msg.message))) return
 
   // A system separator means the AI was just handed over or handed back. Read
   // back now rather than on flush: the indicator must not go on promising an
@@ -472,13 +473,6 @@ function receiveLive(payload: unknown) {
 }
 
 onMounted(async () => {
-  const { data: { session } } = await supabase.auth.getSession()
-  accessToken.value = session?.access_token || ''
-
-  supabase.auth.onAuthStateChange((_event, session) => {
-    accessToken.value = session?.access_token || ''
-  })
-
   await loadInitial()
 
   const uid = await currentUserId()
@@ -486,7 +480,6 @@ onMounted(async () => {
     joinTyping(uid, {
       listenFor: 'seller',
       sendAs: 'customer',
-      accessToken: accessToken.value,
       onMessage: receiveLive
     })
   }
@@ -531,26 +524,24 @@ async function send(text: string) {
   const trimmed = text.trim()
   if (!trimmed) return
 
-  // Always send a fresh, valid token (the cached ref can be empty/expired,
-  // which makes the stream endpoint return 401).
-  const { data: { session } } = await supabase.auth.getSession()
-
-  // No session left to refresh: the buyer was logged out by inactivity while
-  // sitting on this page. Posting anyway would just 401 the stream and look
-  // like the message vanished, so bounce to login carrying this chat's URL
-  // (item_id included) — they come straight back here after signing in.
-  if (!session?.access_token) {
+  // The buyer can be logged out by inactivity while sitting on this page.
+  // Posting anyway would just 401 the stream and look like the message
+  // vanished, so bounce to login carrying this chat's URL (item_id included) —
+  // they come straight back here after signing in.
+  //
+  // The cookie itself cannot be inspected from here, so this checks the session
+  // the server last confirmed; a revocation in between is caught by `useApi`'s
+  // 401 handler, which lands in the same place.
+  if (!resolveUserId(user.value)) {
     toast.add({
       title: t('auth.sessionExpired'),
       description: t('auth.sessionExpiredDesc'),
       color: 'warning'
     })
-    await supabase.auth.signOut()
+    clearSession()
     await navigateTo(loginRedirect(route.fullPath))
     return
   }
-
-  accessToken.value = session.access_token
 
   input.value = ''
   lastSentText.value = trimmed

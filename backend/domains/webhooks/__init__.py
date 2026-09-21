@@ -1,6 +1,8 @@
-"""
-Webhooks domain: Inbound webhook handlers for Stripe and Resend.
-"""
-from routes.webhooks import router as webhooks_router
+"""Webhooks domain: inbound webhook handlers (Resend inbound email)."""
 
-__all__ = ["webhooks_router"]
+from domains._lazy import lazy_getattr
+
+_EXPORTS = {"webhooks_router": ("domains.webhooks.routes", "router")}
+
+__getattr__ = lazy_getattr(__name__, _EXPORTS)
+__all__ = list(_EXPORTS)

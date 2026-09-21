@@ -20,9 +20,9 @@ from unittest.mock import patch
 
 import pytest
 
-from agent import context
-from agent.tools.negotiation import evaluate_offer
 from conftest import make_supabase_result
+from domains.negotiation import context
+from domains.negotiation.tools.negotiation import evaluate_offer
 
 ITEM = {"id": "i", "name": "Casio", "price": 180.0, "min_price": 120.0}
 
@@ -42,9 +42,9 @@ def _reset_context_vars():
 
 @pytest.fixture
 def item(fake_supabase, patch_supabase):
-    patch_supabase("connector", admin=fake_supabase)
-    fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = (
-        make_supabase_result([ITEM])
+    patch_supabase("core.connector", admin=fake_supabase)
+    fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = make_supabase_result(
+        [ITEM]
     )
     context.set_context(user_id="buyer-1", item_id="i")
     return fake_supabase
@@ -56,12 +56,13 @@ def _offer(price, current_price=0.0):
 
 def _standing(value):
     """Stub the server's record of what this buyer was last quoted."""
-    return patch("payment.pricing.active_negotiated_price", lambda _u, _i: value)
+    return patch("domains.billing.pricing.active_negotiated_price", lambda _u, _i: value)
 
 
 # ---------------------------------------------------------------------------
 # S1 — the production bug, in one test
 # ---------------------------------------------------------------------------
+
 
 def test_a_below_floor_lowball_holds_the_conceded_price_not_the_list_price(item):
     """The eval transcript, in one test. `current_price=0` is what the model
@@ -90,6 +91,7 @@ def test_the_agent_is_never_told_to_go_back_up(item):
 # S2/S3 — the model argument can only lower the anchor
 # ---------------------------------------------------------------------------
 
+
 def test_a_model_argument_above_the_standing_price_cannot_raise_the_anchor(item):
     """A hallucinated or optimistic `current_price` must not undo a concession."""
     with _standing(150.0):
@@ -112,6 +114,7 @@ def test_a_model_argument_below_the_standing_price_still_wins(item):
 # S4/S5/S6 — fall back safely
 # ---------------------------------------------------------------------------
 
+
 def test_no_standing_price_behaves_exactly_as_before(item):
     with _standing(None):
         result = _offer(150.0, current_price=0.0)
@@ -131,10 +134,11 @@ def test_a_standing_price_below_the_floor_is_clamped_up_to_the_floor(item):
 def test_a_lookup_failure_degrades_to_the_listed_price_anchor(item):
     """A Redis hiccup must not break a negotiation — `active_negotiated_price`
     is documented never to raise, but the caller does not rely on that."""
+
     def boom(_u, _i):
         raise RuntimeError("redis down")
 
-    with patch("payment.pricing.active_negotiated_price", boom):
+    with patch("domains.billing.pricing.active_negotiated_price", boom):
         result = _offer(150.0, current_price=0.0)
 
     assert "COUNTER" in result or "HOLD" in result
@@ -143,6 +147,7 @@ def test_a_lookup_failure_degrades_to_the_listed_price_anchor(item):
 # ---------------------------------------------------------------------------
 # S7 — meeting the standing price closes the deal
 # ---------------------------------------------------------------------------
+
 
 def test_an_offer_matching_the_standing_price_is_accepted(item):
     with _standing(165.0):

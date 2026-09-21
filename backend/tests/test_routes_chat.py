@@ -37,6 +37,7 @@ from conftest import make_supabase_result
 # helpers
 # ---------------------------------------------------------------------------
 
+
 def parse_sse(text: str):
     """Split a raw SSE response body into a list of parsed frames.
 
@@ -49,7 +50,7 @@ def parse_sse(text: str):
         if not chunk:
             continue
         assert chunk.startswith("data: ")
-        payload = chunk[len("data: "):]
+        payload = chunk[len("data: ") :]
         if payload == "[DONE]":
             frames.append("[DONE]")
         else:
@@ -59,15 +60,15 @@ def parse_sse(text: str):
 
 def set_chat_settings_select(fake_supabase, data):
     """Wire up admin_supabase.table('chat_settings').select(...).eq(...).execute()"""
-    (
-        fake_supabase.table.return_value.select.return_value.eq.return_value
-        .execute.return_value
-    ) = make_supabase_result(data)
+    (fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value) = make_supabase_result(
+        data
+    )
 
 
 async def fake_verify_user_token_factory(user_id):
     async def _fake(request):
         return user_id
+
     return _fake
 
 
@@ -75,17 +76,17 @@ async def fake_verify_user_token_factory(user_id):
 # GET /chat/history/{user_id}
 # ---------------------------------------------------------------------------
 
+
 async def test_get_chat_history_success(client, auth_user, monkeypatch):
     auth_user("user-1")
-    page = {"messages": [{"role": "human", "content": "hi", "source": "human"}],
-            "has_more": False, "next_offset": 1}
+    page = {"messages": [{"role": "human", "content": "hi", "source": "human"}], "has_more": False, "next_offset": 1}
     calls = {}
 
     def fake_get_history_page(user_id, limit=20, offset=0):
         calls["args"] = (user_id, limit, offset)
         return page
 
-    monkeypatch.setattr("agent.memory.conversation_memory.get_history_page", fake_get_history_page)
+    monkeypatch.setattr("domains.negotiation.memory.conversation_memory.get_history_page", fake_get_history_page)
 
     resp = await client.get("/chat/history/user-1")
 
@@ -102,7 +103,7 @@ async def test_get_chat_history_custom_pagination(client, auth_user, monkeypatch
         calls["args"] = (user_id, limit, offset)
         return {"messages": [], "has_more": True, "next_offset": offset + limit}
 
-    monkeypatch.setattr("agent.memory.conversation_memory.get_history_page", fake_get_history_page)
+    monkeypatch.setattr("domains.negotiation.memory.conversation_memory.get_history_page", fake_get_history_page)
 
     resp = await client.get("/chat/history/user-1?limit=5&offset=10")
 
@@ -113,7 +114,7 @@ async def test_get_chat_history_custom_pagination(client, auth_user, monkeypatch
 
 async def test_get_chat_history_id_mismatch(client, auth_user, monkeypatch):
     auth_user("user-1")
-    monkeypatch.setattr("agent.memory.conversation_memory.get_history_page", lambda *a, **k: {})
+    monkeypatch.setattr("domains.negotiation.memory.conversation_memory.get_history_page", lambda *a, **k: {})
 
     resp = await client.get("/chat/history/someone-else")
 
@@ -127,7 +128,7 @@ async def test_get_chat_history_exception_returns_500(client, auth_user, monkeyp
     def boom(*a, **k):
         raise RuntimeError("db exploded")
 
-    monkeypatch.setattr("agent.memory.conversation_memory.get_history_page", boom)
+    monkeypatch.setattr("domains.negotiation.memory.conversation_memory.get_history_page", boom)
 
     resp = await client.get("/chat/history/user-1")
 
@@ -139,11 +140,12 @@ async def test_get_chat_history_exception_returns_500(client, auth_user, monkeyp
 # DELETE /chat/history/{user_id}
 # ---------------------------------------------------------------------------
 
+
 async def test_clear_chat_history_success(client, auth_user, monkeypatch):
     auth_user("user-1")
     calls = []
     monkeypatch.setattr(
-        "agent.memory.conversation_memory.clear_history",
+        "domains.negotiation.memory.conversation_memory.clear_history",
         lambda user_id: calls.append(user_id),
     )
 
@@ -156,7 +158,7 @@ async def test_clear_chat_history_success(client, auth_user, monkeypatch):
 
 async def test_clear_chat_history_id_mismatch(client, auth_user, monkeypatch):
     auth_user("user-1")
-    monkeypatch.setattr("agent.memory.conversation_memory.clear_history", lambda user_id: None)
+    monkeypatch.setattr("domains.negotiation.memory.conversation_memory.clear_history", lambda user_id: None)
 
     resp = await client.delete("/chat/history/someone-else")
 
@@ -169,7 +171,7 @@ async def test_clear_chat_history_exception_returns_500(client, auth_user, monke
     def boom(user_id):
         raise RuntimeError("cannot delete")
 
-    monkeypatch.setattr("agent.memory.conversation_memory.clear_history", boom)
+    monkeypatch.setattr("domains.negotiation.memory.conversation_memory.clear_history", boom)
 
     resp = await client.delete("/chat/history/user-1")
 
@@ -181,10 +183,11 @@ async def test_clear_chat_history_exception_returns_500(client, auth_user, monke
 # GET /chat/settings/{user_id}
 # ---------------------------------------------------------------------------
 
+
 async def test_get_chat_settings_defaults_true_when_no_row(client, auth_user, patch_supabase, fake_supabase):
     auth_user("user-1")
     set_chat_settings_select(fake_supabase, [])
-    patch_supabase("routes.chat", admin=fake_supabase)
+    patch_supabase("domains.negotiation.routes", admin=fake_supabase)
 
     resp = await client.get("/chat/settings/user-1")
 
@@ -195,7 +198,7 @@ async def test_get_chat_settings_defaults_true_when_no_row(client, auth_user, pa
 async def test_get_chat_settings_returns_stored_false(client, auth_user, patch_supabase, fake_supabase):
     auth_user("user-1")
     set_chat_settings_select(fake_supabase, [{"ai_enabled": False}])
-    patch_supabase("routes.chat", admin=fake_supabase)
+    patch_supabase("domains.negotiation.routes", admin=fake_supabase)
 
     resp = await client.get("/chat/settings/user-1")
 
@@ -206,7 +209,7 @@ async def test_get_chat_settings_returns_stored_false(client, auth_user, patch_s
 async def test_get_chat_settings_row_missing_key_defaults_true(client, auth_user, patch_supabase, fake_supabase):
     auth_user("user-1")
     set_chat_settings_select(fake_supabase, [{}])
-    patch_supabase("routes.chat", admin=fake_supabase)
+    patch_supabase("domains.negotiation.routes", admin=fake_supabase)
 
     resp = await client.get("/chat/settings/user-1")
 
@@ -217,7 +220,7 @@ async def test_get_chat_settings_row_missing_key_defaults_true(client, auth_user
 async def test_get_chat_settings_exception_defaults_true(client, auth_user, patch_supabase, fake_supabase):
     auth_user("user-1")
     fake_supabase.table.side_effect = RuntimeError("supabase down")
-    patch_supabase("routes.chat", admin=fake_supabase)
+    patch_supabase("domains.negotiation.routes", admin=fake_supabase)
 
     resp = await client.get("/chat/settings/user-1")
 
@@ -227,7 +230,7 @@ async def test_get_chat_settings_exception_defaults_true(client, auth_user, patc
 
 async def test_get_chat_settings_id_mismatch(client, auth_user, patch_supabase, fake_supabase):
     auth_user("user-1")
-    patch_supabase("routes.chat", admin=fake_supabase)
+    patch_supabase("domains.negotiation.routes", admin=fake_supabase)
 
     resp = await client.get("/chat/settings/someone-else")
 
@@ -238,13 +241,14 @@ async def test_get_chat_settings_id_mismatch(client, auth_user, patch_supabase, 
 # POST /chat/stream
 # ---------------------------------------------------------------------------
 
+
 async def test_chat_stream_happy_path(client, monkeypatch, patch_supabase, fake_supabase):
     user_id = "user-happy"
-    monkeypatch.setattr("routes.chat.verify_user_token", await fake_verify_user_token_factory(user_id))
+    monkeypatch.setattr("domains.negotiation.routes.verify_user_token", await fake_verify_user_token_factory(user_id))
 
     # ai_enabled check inside generate(): no row -> defaults to enabled.
     set_chat_settings_select(fake_supabase, [])
-    patch_supabase("routes.chat", admin=fake_supabase)
+    patch_supabase("domains.negotiation.routes", admin=fake_supabase)
 
     recorded_calls = []
 
@@ -254,11 +258,11 @@ async def test_chat_stream_happy_path(client, monkeypatch, patch_supabase, fake_
         yield "Hello "
         yield "world!"
 
-    monkeypatch.setattr("agent.bot.chat_stream", fake_chat_stream)
+    monkeypatch.setattr("domains.negotiation.bot.chat_stream", fake_chat_stream)
 
     track_calls = []
     monkeypatch.setattr(
-        "routes.chat.track_ai_tokens",
+        "domains.negotiation.routes.track_ai_tokens",
         lambda uid, inp, out: track_calls.append((uid, inp, out)),
     )
 
@@ -282,9 +286,7 @@ async def test_chat_stream_happy_path(client, monkeypatch, patch_supabase, fake_
     assert frames[-2] == {"type": "finish"}
     assert frames[-1] == "[DONE]"
 
-    assert recorded_calls == [
-        {"user_id": user_id, "message": "Hi there", "item_id": "item-1", "files": None}
-    ]
+    assert recorded_calls == [{"user_id": user_id, "message": "Hi there", "item_id": "item-1", "files": None}]
     assert len(track_calls) == 1
     assert track_calls[0][0] == user_id
 
@@ -293,21 +295,23 @@ async def test_chat_stream_forwards_provider_attribution(client, monkeypatch, pa
     """SPEC-020: the engine that served the turn reaches the UI as an AI SDK
     `data-provider` part, emitted before any token and never as message text."""
     user_id = "user-provider"
-    monkeypatch.setattr("routes.chat.verify_user_token", await fake_verify_user_token_factory(user_id))
+    monkeypatch.setattr("domains.negotiation.routes.verify_user_token", await fake_verify_user_token_factory(user_id))
 
     set_chat_settings_select(fake_supabase, [])
-    patch_supabase("routes.chat", admin=fake_supabase)
+    patch_supabase("domains.negotiation.routes", admin=fake_supabase)
 
     async def fake_chat_stream(user_id, message, item_id=None, files=None):
-        yield {"provider": {
-            "provider": "local_qwen",
-            "model": "mlx-community/Qwen3.6-35B-A3B-4bit",
-            "hardware": "Apple M5 (Self-Hosted)",
-        }}
+        yield {
+            "provider": {
+                "provider": "local_qwen",
+                "model": "mlx-community/Qwen3.6-35B-A3B-4bit",
+                "hardware": "Apple M5 (Self-Hosted)",
+            }
+        }
         yield "Sure!"
 
-    monkeypatch.setattr("agent.bot.chat_stream", fake_chat_stream)
-    monkeypatch.setattr("routes.chat.track_ai_tokens", lambda uid, inp, out: None)
+    monkeypatch.setattr("domains.negotiation.bot.chat_stream", fake_chat_stream)
+    monkeypatch.setattr("domains.negotiation.routes.track_ai_tokens", lambda uid, inp, out: None)
 
     resp = await client.post(
         "/chat/stream",
@@ -319,15 +323,17 @@ async def test_chat_stream_forwards_provider_attribution(client, monkeypatch, pa
     frames = parse_sse(resp.text)
 
     provider_frames = [f for f in frames if isinstance(f, dict) and f.get("type") == "data-provider"]
-    assert provider_frames == [{
-        "type": "data-provider",
-        "id": "provider",
-        "data": {
-            "provider": "local_qwen",
-            "model": "mlx-community/Qwen3.6-35B-A3B-4bit",
-            "hardware": "Apple M5 (Self-Hosted)",
-        },
-    }]
+    assert provider_frames == [
+        {
+            "type": "data-provider",
+            "id": "provider",
+            "data": {
+                "provider": "local_qwen",
+                "model": "mlx-community/Qwen3.6-35B-A3B-4bit",
+                "hardware": "Apple M5 (Self-Hosted)",
+            },
+        }
+    ]
 
     # It lands before the first token...
     assert frames.index(provider_frames[0]) < frames.index({"type": "text-start", "id": "0"})
@@ -338,10 +344,10 @@ async def test_chat_stream_forwards_provider_attribution(client, monkeypatch, pa
 
 async def test_chat_stream_multipart_with_file_and_empty_message(client, monkeypatch, patch_supabase, fake_supabase):
     user_id = "user-multipart"
-    monkeypatch.setattr("routes.chat.verify_user_token", await fake_verify_user_token_factory(user_id))
+    monkeypatch.setattr("domains.negotiation.routes.verify_user_token", await fake_verify_user_token_factory(user_id))
 
     set_chat_settings_select(fake_supabase, [])
-    patch_supabase("routes.chat", admin=fake_supabase)
+    patch_supabase("domains.negotiation.routes", admin=fake_supabase)
 
     recorded_calls = []
 
@@ -349,8 +355,8 @@ async def test_chat_stream_multipart_with_file_and_empty_message(client, monkeyp
         recorded_calls.append({"user_id": user_id, "message": message, "item_id": item_id, "files": files})
         yield "ok"
 
-    monkeypatch.setattr("agent.bot.chat_stream", fake_chat_stream)
-    monkeypatch.setattr("routes.chat.track_ai_tokens", lambda *a, **k: None)
+    monkeypatch.setattr("domains.negotiation.bot.chat_stream", fake_chat_stream)
+    monkeypatch.setattr("domains.negotiation.routes.track_ai_tokens", lambda *a, **k: None)
 
     resp = await client.post(
         "/chat/stream",
@@ -370,14 +376,12 @@ async def test_chat_stream_multipart_with_file_and_empty_message(client, monkeyp
     # Empty message + files present falls back to the canned analyze message.
     assert call["message"] == "Please analyze these files."
     assert call["item_id"] == "item-42"
-    assert call["files"] == [
-        {"name": "test.png", "type": "image/png", "data": "YmluYXJ5LWNvbnRlbnQ="}
-    ]
+    assert call["files"] == [{"name": "test.png", "type": "image/png", "data": "YmluYXJ5LWNvbnRlbnQ="}]
 
 
 async def test_chat_stream_missing_message_and_files_returns_400(client, monkeypatch):
     user_id = "user-empty"
-    monkeypatch.setattr("routes.chat.verify_user_token", await fake_verify_user_token_factory(user_id))
+    monkeypatch.setattr("domains.negotiation.routes.verify_user_token", await fake_verify_user_token_factory(user_id))
 
     resp = await client.post(
         "/chat/stream",
@@ -390,7 +394,9 @@ async def test_chat_stream_missing_message_and_files_returns_400(client, monkeyp
 
 
 async def test_chat_stream_user_id_mismatch_returns_403(client, monkeypatch):
-    monkeypatch.setattr("routes.chat.verify_user_token", await fake_verify_user_token_factory("token-user"))
+    monkeypatch.setattr(
+        "domains.negotiation.routes.verify_user_token", await fake_verify_user_token_factory("token-user")
+    )
 
     resp = await client.post(
         "/chat/stream",
@@ -407,7 +413,7 @@ async def test_chat_stream_invalid_token_propagates_401(client, monkeypatch):
     async def fake_verify(request):
         raise HTTPException(status_code=401, detail="Invalid token")
 
-    monkeypatch.setattr("routes.chat.verify_user_token", fake_verify)
+    monkeypatch.setattr("domains.negotiation.routes.verify_user_token", fake_verify)
 
     resp = await client.post(
         "/chat/stream",
@@ -422,9 +428,9 @@ async def test_chat_stream_rate_limit_exceeded(client, monkeypatch):
     in the body and in `Retry-After`, so the UI can count down instead of
     guessing."""
     user_id = "user-ratelimited"
-    monkeypatch.setattr("routes.chat.verify_user_token", await fake_verify_user_token_factory(user_id))
-    monkeypatch.setattr("routes.chat.check_rate_limit", lambda *a, **k: False)
-    monkeypatch.setattr("routes.chat.get_rate_limit_retry_after", lambda *a, **k: 42)
+    monkeypatch.setattr("domains.negotiation.routes.verify_user_token", await fake_verify_user_token_factory(user_id))
+    monkeypatch.setattr("domains.negotiation.routes.check_rate_limit", lambda *a, **k: False)
+    monkeypatch.setattr("domains.negotiation.routes.get_rate_limit_retry_after", lambda *a, **k: 42)
 
     resp = await client.post(
         "/chat/stream",
@@ -441,23 +447,21 @@ async def test_chat_stream_rate_limit_exceeded(client, monkeypatch):
     assert "Too many messages" in detail["message"]
 
 
-async def test_chat_stream_warns_when_close_to_the_cooldown(
-    client, monkeypatch, patch_supabase, fake_supabase
-):
+async def test_chat_stream_warns_when_close_to_the_cooldown(client, monkeypatch, patch_supabase, fake_supabase):
     """SPEC-043: the buyer gets a heads-up before the wall, as a data part —
     a UI state, not words the assistant appears to have said."""
     user_id = "user-nearly-capped"
-    monkeypatch.setattr("routes.chat.verify_user_token", await fake_verify_user_token_factory(user_id))
-    monkeypatch.setattr("routes.chat.check_rate_limit", lambda *a, **k: True)
-    monkeypatch.setattr("routes.chat.get_rate_limit_remaining", lambda *a, **k: 2)
+    monkeypatch.setattr("domains.negotiation.routes.verify_user_token", await fake_verify_user_token_factory(user_id))
+    monkeypatch.setattr("domains.negotiation.routes.check_rate_limit", lambda *a, **k: True)
+    monkeypatch.setattr("domains.negotiation.routes.get_rate_limit_remaining", lambda *a, **k: 2)
     set_chat_settings_select(fake_supabase, [])
-    patch_supabase("routes.chat", admin=fake_supabase)
+    patch_supabase("domains.negotiation.routes", admin=fake_supabase)
 
     async def fake_chat_stream(user_id, message, item_id=None, files=None):
         yield "sure"
 
-    monkeypatch.setattr("agent.bot.chat_stream", fake_chat_stream)
-    monkeypatch.setattr("routes.chat.track_ai_tokens", lambda *a, **k: None)
+    monkeypatch.setattr("domains.negotiation.bot.chat_stream", fake_chat_stream)
+    monkeypatch.setattr("domains.negotiation.routes.track_ai_tokens", lambda *a, **k: None)
 
     resp = await client.post(
         "/chat/stream",
@@ -475,21 +479,19 @@ async def test_chat_stream_warns_when_close_to_the_cooldown(
     assert {"type": "text-delta", "id": "0", "delta": "sure"} in frames
 
 
-async def test_chat_stream_stays_quiet_when_far_from_the_cooldown(
-    client, monkeypatch, patch_supabase, fake_supabase
-):
+async def test_chat_stream_stays_quiet_when_far_from_the_cooldown(client, monkeypatch, patch_supabase, fake_supabase):
     user_id = "user-plenty-left"
-    monkeypatch.setattr("routes.chat.verify_user_token", await fake_verify_user_token_factory(user_id))
-    monkeypatch.setattr("routes.chat.check_rate_limit", lambda *a, **k: True)
-    monkeypatch.setattr("routes.chat.get_rate_limit_remaining", lambda *a, **k: 9)
+    monkeypatch.setattr("domains.negotiation.routes.verify_user_token", await fake_verify_user_token_factory(user_id))
+    monkeypatch.setattr("domains.negotiation.routes.check_rate_limit", lambda *a, **k: True)
+    monkeypatch.setattr("domains.negotiation.routes.get_rate_limit_remaining", lambda *a, **k: 9)
     set_chat_settings_select(fake_supabase, [])
-    patch_supabase("routes.chat", admin=fake_supabase)
+    patch_supabase("domains.negotiation.routes", admin=fake_supabase)
 
     async def fake_chat_stream(user_id, message, item_id=None, files=None):
         yield "sure"
 
-    monkeypatch.setattr("agent.bot.chat_stream", fake_chat_stream)
-    monkeypatch.setattr("routes.chat.track_ai_tokens", lambda *a, **k: None)
+    monkeypatch.setattr("domains.negotiation.bot.chat_stream", fake_chat_stream)
+    monkeypatch.setattr("domains.negotiation.routes.track_ai_tokens", lambda *a, **k: None)
 
     resp = await client.post(
         "/chat/stream",
@@ -498,29 +500,25 @@ async def test_chat_stream_stays_quiet_when_far_from_the_cooldown(
     )
 
     frames = parse_sse(resp.text)
-    assert not any(
-        isinstance(f, dict) and f.get("type") == "data-cooldown-warning" for f in frames
-    )
+    assert not any(isinstance(f, dict) and f.get("type") == "data-cooldown-warning" for f in frames)
 
 
-async def test_chat_stream_bounds_a_turn_that_never_finishes(
-    client, monkeypatch, patch_supabase, fake_supabase
-):
+async def test_chat_stream_bounds_a_turn_that_never_finishes(client, monkeypatch, patch_supabase, fake_supabase):
     """SPEC-043 workstream A: a hung turn ends in a clear, distinct frame
     instead of holding the connection open forever."""
     user_id = "user-hung"
-    monkeypatch.setattr("routes.chat.verify_user_token", await fake_verify_user_token_factory(user_id))
-    monkeypatch.setattr("routes.chat.CHAT_TURN_DEADLINE_SECONDS", 0.15)
+    monkeypatch.setattr("domains.negotiation.routes.verify_user_token", await fake_verify_user_token_factory(user_id))
+    monkeypatch.setattr("domains.negotiation.routes.CHAT_TURN_DEADLINE_SECONDS", 0.15)
     set_chat_settings_select(fake_supabase, [])
-    patch_supabase("routes.chat", admin=fake_supabase)
+    patch_supabase("domains.negotiation.routes", admin=fake_supabase)
 
     async def hanging_stream(user_id, message, item_id=None, files=None):
         yield {"status": "thinking"}
         await asyncio.sleep(30)  # never returns within the deadline
         yield "too late"
 
-    monkeypatch.setattr("agent.bot.chat_stream", hanging_stream)
-    monkeypatch.setattr("routes.chat.track_ai_tokens", lambda *a, **k: None)
+    monkeypatch.setattr("domains.negotiation.bot.chat_stream", hanging_stream)
+    monkeypatch.setattr("domains.negotiation.routes.track_ai_tokens", lambda *a, **k: None)
 
     resp = await client.post(
         "/chat/stream",
@@ -531,37 +529,32 @@ async def test_chat_stream_bounds_a_turn_that_never_finishes(
     assert resp.status_code == 200
     frames = parse_sse(resp.text)
 
-    timeouts = [
-        f for f in frames
-        if isinstance(f, dict) and f.get("type") == "data-turn-timeout"
-    ]
+    timeouts = [f for f in frames if isinstance(f, dict) and f.get("type") == "data-turn-timeout"]
     assert len(timeouts) == 1
 
     # The stream still terminates cleanly, so the client settles instead of
     # sitting on a half-open response.
     assert frames[-2] == {"type": "finish"}
     assert frames[-1] == "[DONE]"
-    assert not any(
-        isinstance(f, dict) and f.get("delta") == "too late" for f in frames
-    )
+    assert not any(isinstance(f, dict) and f.get("delta") == "too late" for f in frames)
 
 
 async def test_chat_stream_ai_disabled_short_circuits(client, monkeypatch, patch_supabase, fake_supabase):
     user_id = "user-ai-disabled"
-    monkeypatch.setattr("routes.chat.verify_user_token", await fake_verify_user_token_factory(user_id))
+    monkeypatch.setattr("domains.negotiation.routes.verify_user_token", await fake_verify_user_token_factory(user_id))
 
     set_chat_settings_select(fake_supabase, [{"ai_enabled": False}])
-    patch_supabase("routes.chat", admin=fake_supabase)
+    patch_supabase("domains.negotiation.routes", admin=fake_supabase)
 
     add_message_calls = []
     monkeypatch.setattr(
-        "agent.memory.conversation_memory.add_message",
+        "domains.negotiation.memory.conversation_memory.add_message",
         lambda *a, **k: add_message_calls.append((a, k)),
     )
 
     # chat_stream should never be reached on this path -- if it were called,
     # this would blow up (not an async generator), failing the test loudly.
-    monkeypatch.setattr("agent.bot.chat_stream", object())
+    monkeypatch.setattr("domains.negotiation.bot.chat_stream", object())
 
     resp = await client.post(
         "/chat/stream",
@@ -583,22 +576,22 @@ async def test_chat_stream_ai_disabled_short_circuits(client, monkeypatch, patch
 
 async def test_chat_stream_ai_token_limit_exceeded(client, monkeypatch, patch_supabase, fake_supabase):
     user_id = "user-token-limited"
-    monkeypatch.setattr("routes.chat.verify_user_token", await fake_verify_user_token_factory(user_id))
+    monkeypatch.setattr("domains.negotiation.routes.verify_user_token", await fake_verify_user_token_factory(user_id))
 
     # ai_enabled check passes (defaults True), but the upsert() call later in
     # this path shares the same fake_supabase.table(...) chain.
     set_chat_settings_select(fake_supabase, [])
-    patch_supabase("routes.chat", admin=fake_supabase)
+    patch_supabase("domains.negotiation.routes", admin=fake_supabase)
 
-    monkeypatch.setattr("routes.chat.check_ai_token_limit", lambda user_id: (False, 1_500_000))
+    monkeypatch.setattr("domains.negotiation.routes.check_ai_token_limit", lambda user_id: (False, 1_500_000))
 
     add_message_calls = []
     monkeypatch.setattr(
-        "agent.memory.conversation_memory.add_message",
+        "domains.negotiation.memory.conversation_memory.add_message",
         lambda *a, **k: add_message_calls.append((a, k)),
     )
 
-    monkeypatch.setattr("agent.bot.chat_stream", object())  # must not be reached
+    monkeypatch.setattr("domains.negotiation.bot.chat_stream", object())  # must not be reached
 
     resp = await client.post(
         "/chat/stream",
@@ -634,17 +627,17 @@ async def test_chat_stream_ai_token_limit_exceeded(client, monkeypatch, patch_su
 
 async def test_chat_stream_exception_before_any_content(client, monkeypatch, patch_supabase, fake_supabase):
     user_id = "user-error-early"
-    monkeypatch.setattr("routes.chat.verify_user_token", await fake_verify_user_token_factory(user_id))
+    monkeypatch.setattr("domains.negotiation.routes.verify_user_token", await fake_verify_user_token_factory(user_id))
 
     set_chat_settings_select(fake_supabase, [])
-    patch_supabase("routes.chat", admin=fake_supabase)
+    patch_supabase("domains.negotiation.routes", admin=fake_supabase)
 
     async def failing_chat_stream(user_id, message, item_id=None, files=None):
         raise RuntimeError("agent blew up")
         yield "unreachable"  # noqa - keeps this an async generator
 
-    monkeypatch.setattr("agent.bot.chat_stream", failing_chat_stream)
-    monkeypatch.setattr("routes.chat.track_ai_tokens", lambda *a, **k: None)
+    monkeypatch.setattr("domains.negotiation.bot.chat_stream", failing_chat_stream)
+    monkeypatch.setattr("domains.negotiation.routes.track_ai_tokens", lambda *a, **k: None)
 
     resp = await client.post(
         "/chat/stream",
@@ -665,17 +658,17 @@ async def test_chat_stream_exception_before_any_content(client, monkeypatch, pat
 
 async def test_chat_stream_exception_after_partial_content(client, monkeypatch, patch_supabase, fake_supabase):
     user_id = "user-error-late"
-    monkeypatch.setattr("routes.chat.verify_user_token", await fake_verify_user_token_factory(user_id))
+    monkeypatch.setattr("domains.negotiation.routes.verify_user_token", await fake_verify_user_token_factory(user_id))
 
     set_chat_settings_select(fake_supabase, [])
-    patch_supabase("routes.chat", admin=fake_supabase)
+    patch_supabase("domains.negotiation.routes", admin=fake_supabase)
 
     async def failing_chat_stream(user_id, message, item_id=None, files=None):
         yield "partial text"
         raise RuntimeError("stream interrupted")
 
-    monkeypatch.setattr("agent.bot.chat_stream", failing_chat_stream)
-    monkeypatch.setattr("routes.chat.track_ai_tokens", lambda *a, **k: None)
+    monkeypatch.setattr("domains.negotiation.bot.chat_stream", failing_chat_stream)
+    monkeypatch.setattr("domains.negotiation.routes.track_ai_tokens", lambda *a, **k: None)
 
     resp = await client.post(
         "/chat/stream",
@@ -698,20 +691,22 @@ async def test_chat_stream_exception_after_partial_content(client, monkeypatch, 
     ]
 
 
-async def test_chat_stream_settings_check_exception_defaults_ai_enabled(client, monkeypatch, patch_supabase, fake_supabase):
+async def test_chat_stream_settings_check_exception_defaults_ai_enabled(
+    client, monkeypatch, patch_supabase, fake_supabase
+):
     """If the ai_enabled lookup inside generate() itself raises, the stream
     should still proceed as if AI were enabled (broad except -> pass)."""
     user_id = "user-settings-error"
-    monkeypatch.setattr("routes.chat.verify_user_token", await fake_verify_user_token_factory(user_id))
+    monkeypatch.setattr("domains.negotiation.routes.verify_user_token", await fake_verify_user_token_factory(user_id))
 
     fake_supabase.table.side_effect = RuntimeError("settings lookup exploded")
-    patch_supabase("routes.chat", admin=fake_supabase)
+    patch_supabase("domains.negotiation.routes", admin=fake_supabase)
 
     async def fake_chat_stream(user_id, message, item_id=None, files=None):
         yield "still works"
 
-    monkeypatch.setattr("agent.bot.chat_stream", fake_chat_stream)
-    monkeypatch.setattr("routes.chat.track_ai_tokens", lambda *a, **k: None)
+    monkeypatch.setattr("domains.negotiation.bot.chat_stream", fake_chat_stream)
+    monkeypatch.setattr("domains.negotiation.routes.track_ai_tokens", lambda *a, **k: None)
 
     resp = await client.post(
         "/chat/stream",
@@ -731,10 +726,10 @@ async def test_chat_stream_skips_falsy_and_statusless_deltas(client, monkeypatch
     status delta (once `started` is already True) skips re-emitting
     text-start."""
     user_id = "user-mixed-deltas"
-    monkeypatch.setattr("routes.chat.verify_user_token", await fake_verify_user_token_factory(user_id))
+    monkeypatch.setattr("domains.negotiation.routes.verify_user_token", await fake_verify_user_token_factory(user_id))
 
     set_chat_settings_select(fake_supabase, [])
-    patch_supabase("routes.chat", admin=fake_supabase)
+    patch_supabase("domains.negotiation.routes", admin=fake_supabase)
 
     async def fake_chat_stream(user_id, message, item_id=None, files=None):
         yield ""  # falsy -> skipped entirely (never even reaches the dict check)
@@ -743,8 +738,8 @@ async def test_chat_stream_skips_falsy_and_statusless_deltas(client, monkeypatch
         yield {"status": "still-thinking"}  # second status -> started already True
         yield "final answer"
 
-    monkeypatch.setattr("agent.bot.chat_stream", fake_chat_stream)
-    monkeypatch.setattr("routes.chat.track_ai_tokens", lambda *a, **k: None)
+    monkeypatch.setattr("domains.negotiation.bot.chat_stream", fake_chat_stream)
+    monkeypatch.setattr("domains.negotiation.routes.track_ai_tokens", lambda *a, **k: None)
 
     resp = await client.post(
         "/chat/stream",
@@ -765,17 +760,17 @@ async def test_chat_stream_empty_response_skips_text_end(client, monkeypatch, pa
     """If the agent yields nothing at all, `started` stays False and the
     normal completion path must skip the text-end frame."""
     user_id = "user-empty-response"
-    monkeypatch.setattr("routes.chat.verify_user_token", await fake_verify_user_token_factory(user_id))
+    monkeypatch.setattr("domains.negotiation.routes.verify_user_token", await fake_verify_user_token_factory(user_id))
 
     set_chat_settings_select(fake_supabase, [])
-    patch_supabase("routes.chat", admin=fake_supabase)
+    patch_supabase("domains.negotiation.routes", admin=fake_supabase)
 
     async def fake_chat_stream(user_id, message, item_id=None, files=None):
         return
         yield  # pragma: no cover - makes this an async generator
 
-    monkeypatch.setattr("agent.bot.chat_stream", fake_chat_stream)
-    monkeypatch.setattr("routes.chat.track_ai_tokens", lambda *a, **k: None)
+    monkeypatch.setattr("domains.negotiation.bot.chat_stream", fake_chat_stream)
+    monkeypatch.setattr("domains.negotiation.routes.track_ai_tokens", lambda *a, **k: None)
 
     resp = await client.post(
         "/chat/stream",
@@ -788,15 +783,17 @@ async def test_chat_stream_empty_response_skips_text_end(client, monkeypatch, pa
     assert frames == [{"type": "start"}, {"type": "finish"}, "[DONE]"]
 
 
-async def test_chat_stream_multipart_ignores_non_file_field_under_files_key(client, monkeypatch, patch_supabase, fake_supabase):
+async def test_chat_stream_multipart_ignores_non_file_field_under_files_key(
+    client, monkeypatch, patch_supabase, fake_supabase
+):
     """A plain (non-upload) form value under the "files" key has no `.read`,
     so it's skipped by the `hasattr(file, 'read')` guard; only the real
     upload alongside it is collected."""
     user_id = "user-mixed-files-field"
-    monkeypatch.setattr("routes.chat.verify_user_token", await fake_verify_user_token_factory(user_id))
+    monkeypatch.setattr("domains.negotiation.routes.verify_user_token", await fake_verify_user_token_factory(user_id))
 
     set_chat_settings_select(fake_supabase, [])
-    patch_supabase("routes.chat", admin=fake_supabase)
+    patch_supabase("domains.negotiation.routes", admin=fake_supabase)
 
     recorded = []
 
@@ -804,8 +801,8 @@ async def test_chat_stream_multipart_ignores_non_file_field_under_files_key(clie
         recorded.append(files)
         yield "ok"
 
-    monkeypatch.setattr("agent.bot.chat_stream", fake_chat_stream)
-    monkeypatch.setattr("routes.chat.track_ai_tokens", lambda *a, **k: None)
+    monkeypatch.setattr("domains.negotiation.bot.chat_stream", fake_chat_stream)
+    monkeypatch.setattr("domains.negotiation.routes.track_ai_tokens", lambda *a, **k: None)
 
     # httpx encodes `data` fields before `files` fields; both share the
     # "files" form key, so the plain string arrives as one part (no
@@ -822,13 +819,15 @@ async def test_chat_stream_multipart_ignores_non_file_field_under_files_key(clie
     assert recorded[0] == [{"name": "real.png", "type": "image/png", "data": "Ynl0ZXM="}]
 
 
-async def test_chat_stream_body_user_id_blank_falls_back_to_token_user(client, monkeypatch, patch_supabase, fake_supabase):
+async def test_chat_stream_body_user_id_blank_falls_back_to_token_user(
+    client, monkeypatch, patch_supabase, fake_supabase
+):
     """When the JSON body omits user_id, the token's user_id is used instead."""
     user_id = "user-from-token"
-    monkeypatch.setattr("routes.chat.verify_user_token", await fake_verify_user_token_factory(user_id))
+    monkeypatch.setattr("domains.negotiation.routes.verify_user_token", await fake_verify_user_token_factory(user_id))
 
     set_chat_settings_select(fake_supabase, [])
-    patch_supabase("routes.chat", admin=fake_supabase)
+    patch_supabase("domains.negotiation.routes", admin=fake_supabase)
 
     recorded = []
 
@@ -836,8 +835,8 @@ async def test_chat_stream_body_user_id_blank_falls_back_to_token_user(client, m
         recorded.append(user_id)
         yield "hi back"
 
-    monkeypatch.setattr("agent.bot.chat_stream", fake_chat_stream)
-    monkeypatch.setattr("routes.chat.track_ai_tokens", lambda *a, **k: None)
+    monkeypatch.setattr("domains.negotiation.bot.chat_stream", fake_chat_stream)
+    monkeypatch.setattr("domains.negotiation.routes.track_ai_tokens", lambda *a, **k: None)
 
     resp = await client.post(
         "/chat/stream",
@@ -864,16 +863,16 @@ async def test_chat_stream_is_not_turnstile_gated(client, monkeypatch, patch_sup
     monkeypatch.setenv("TURNSTILE_SECRET", "0x_not_a_testing_key")
 
     user_id = "user-no-turnstile"
-    monkeypatch.setattr("routes.chat.verify_user_token", await fake_verify_user_token_factory(user_id))
+    monkeypatch.setattr("domains.negotiation.routes.verify_user_token", await fake_verify_user_token_factory(user_id))
 
     set_chat_settings_select(fake_supabase, [])
-    patch_supabase("routes.chat", admin=fake_supabase)
+    patch_supabase("domains.negotiation.routes", admin=fake_supabase)
 
     async def fake_chat_stream(user_id, message, item_id=None, files=None):
         yield "pong"
 
-    monkeypatch.setattr("agent.bot.chat_stream", fake_chat_stream)
-    monkeypatch.setattr("routes.chat.track_ai_tokens", lambda uid, inp, out: None)
+    monkeypatch.setattr("domains.negotiation.bot.chat_stream", fake_chat_stream)
+    monkeypatch.setattr("domains.negotiation.routes.track_ai_tokens", lambda uid, inp, out: None)
 
     resp = await client.post(
         "/chat/stream",
@@ -890,6 +889,7 @@ async def test_chat_stream_is_not_turnstile_gated(client, monkeypatch, patch_sup
 # SPEC-041: real-time discount SSE signal
 # ---------------------------------------------------------------------------
 
+
 async def test_chat_stream_emits_discount_frame_when_tool_commits_price(
     client, monkeypatch, patch_supabase, fake_supabase
 ):
@@ -897,19 +897,20 @@ async def test_chat_stream_emits_discount_frame_when_tool_commits_price(
     emits exactly one `data-discount` frame with `discounted_price` before the
     next text-delta, and no internal keys (user_id / item_id) are exposed."""
     user_id = "user-discount-1"
-    monkeypatch.setattr("routes.chat.verify_user_token", await fake_verify_user_token_factory(user_id))
+    monkeypatch.setattr("domains.negotiation.routes.verify_user_token", await fake_verify_user_token_factory(user_id))
 
     set_chat_settings_select(fake_supabase, [])
-    patch_supabase("routes.chat", admin=fake_supabase)
+    patch_supabase("domains.negotiation.routes", admin=fake_supabase)
 
     async def fake_chat_stream_with_discount(user_id, message, item_id=None, files=None):
         # Simulate evaluate_offer writing to the ContextVar mid-stream.
-        from agent.context import pending_discount
+        from domains.negotiation.context import pending_discount
+
         pending_discount.set(900.0)
         yield "Great news — I can do RM900!"
 
-    monkeypatch.setattr("agent.bot.chat_stream", fake_chat_stream_with_discount)
-    monkeypatch.setattr("routes.chat.track_ai_tokens", lambda uid, inp, out: None)
+    monkeypatch.setattr("domains.negotiation.bot.chat_stream", fake_chat_stream_with_discount)
+    monkeypatch.setattr("domains.negotiation.routes.track_ai_tokens", lambda uid, inp, out: None)
 
     resp = await client.post(
         "/chat/stream",
@@ -945,16 +946,16 @@ async def test_chat_stream_emits_no_discount_frame_when_no_tool_runs(
     """Scenario 2: a normal turn with no evaluate_offer call produces zero
     `data-discount` frames."""
     user_id = "user-discount-2"
-    monkeypatch.setattr("routes.chat.verify_user_token", await fake_verify_user_token_factory(user_id))
+    monkeypatch.setattr("domains.negotiation.routes.verify_user_token", await fake_verify_user_token_factory(user_id))
 
     set_chat_settings_select(fake_supabase, [])
-    patch_supabase("routes.chat", admin=fake_supabase)
+    patch_supabase("domains.negotiation.routes", admin=fake_supabase)
 
     async def fake_chat_stream_no_discount(user_id, message, item_id=None, files=None):
         yield "Hello! How can I help?"
 
-    monkeypatch.setattr("agent.bot.chat_stream", fake_chat_stream_no_discount)
-    monkeypatch.setattr("routes.chat.track_ai_tokens", lambda uid, inp, out: None)
+    monkeypatch.setattr("domains.negotiation.bot.chat_stream", fake_chat_stream_no_discount)
+    monkeypatch.setattr("domains.negotiation.routes.track_ai_tokens", lambda uid, inp, out: None)
 
     resp = await client.post(
         "/chat/stream",
@@ -976,15 +977,16 @@ async def test_pending_discount_context_var_is_reset_between_sequential_turns(
     `set_context()` so a price committed in one turn cannot bleed into the next
     turn's stream on the same connection."""
     user_id = "user-discount-3"
-    monkeypatch.setattr("routes.chat.verify_user_token", await fake_verify_user_token_factory(user_id))
+    monkeypatch.setattr("domains.negotiation.routes.verify_user_token", await fake_verify_user_token_factory(user_id))
 
     set_chat_settings_select(fake_supabase, [])
-    patch_supabase("routes.chat", admin=fake_supabase)
+    patch_supabase("domains.negotiation.routes", admin=fake_supabase)
 
     call_count = {"n": 0}
 
     async def fake_chat_stream_alternating(user_id, message, item_id=None, files=None):
-        from agent.context import pending_discount
+        from domains.negotiation.context import pending_discount
+
         call_count["n"] += 1
         if call_count["n"] == 1:
             # First turn: tool commits a discount.
@@ -992,8 +994,8 @@ async def test_pending_discount_context_var_is_reset_between_sequential_turns(
         # Second turn: no tool call — pending_discount must be None (reset by set_context).
         yield "ok"
 
-    monkeypatch.setattr("agent.bot.chat_stream", fake_chat_stream_alternating)
-    monkeypatch.setattr("routes.chat.track_ai_tokens", lambda uid, inp, out: None)
+    monkeypatch.setattr("domains.negotiation.bot.chat_stream", fake_chat_stream_alternating)
+    monkeypatch.setattr("domains.negotiation.routes.track_ai_tokens", lambda uid, inp, out: None)
 
     # First turn — should emit a discount frame.
     resp1 = await client.post(
@@ -1013,9 +1015,7 @@ async def test_pending_discount_context_var_is_reset_between_sequential_turns(
     )
     frames2 = parse_sse(resp2.text)
     discount_frames_2 = [f for f in frames2 if isinstance(f, dict) and f.get("type") == "data-discount"]
-    assert discount_frames_2 == [], (
-        f"pending_discount bled from turn 1 into turn 2: {discount_frames_2}"
-    )
+    assert discount_frames_2 == [], f"pending_discount bled from turn 1 into turn 2: {discount_frames_2}"
 
 
 async def test_pending_discount_context_var_is_isolated_across_concurrent_requests(
@@ -1029,16 +1029,16 @@ async def test_pending_discount_context_var_is_isolated_across_concurrent_reques
     proves for `current_user_id`/`current_item_id` -- this test proves it end
     to end through the actual route rather than the ContextVar in isolation."""
     monkeypatch.setattr(
-        "routes.chat.verify_user_token", await fake_verify_user_token_factory("user-concurrent")
+        "domains.negotiation.routes.verify_user_token", await fake_verify_user_token_factory("user-concurrent")
     )
     set_chat_settings_select(fake_supabase, [])
-    patch_supabase("routes.chat", admin=fake_supabase)
-    monkeypatch.setattr("routes.chat.track_ai_tokens", lambda uid, inp, out: None)
+    patch_supabase("domains.negotiation.routes", admin=fake_supabase)
+    monkeypatch.setattr("domains.negotiation.routes.track_ai_tokens", lambda uid, inp, out: None)
 
     observed = {}
 
     async def fake_chat_stream(user_id, message, item_id=None, files=None):
-        from agent.context import pending_discount
+        from domains.negotiation.context import pending_discount
 
         if message == "sets-900":
             # Yield control first so "reads-only" (below) starts and takes its
@@ -1055,7 +1055,7 @@ async def test_pending_discount_context_var_is_isolated_across_concurrent_reques
             observed["mid_flight_read"] = pending_discount.get()
             yield "just chatting"
 
-    monkeypatch.setattr("agent.bot.chat_stream", fake_chat_stream)
+    monkeypatch.setattr("domains.negotiation.bot.chat_stream", fake_chat_stream)
 
     resp_discount, resp_plain = await asyncio.gather(
         client.post(
@@ -1078,11 +1078,13 @@ async def test_pending_discount_context_var_is_isolated_across_concurrent_reques
     discount_frames = [
         f for f in parse_sse(resp_discount.text) if isinstance(f, dict) and f.get("type") == "data-discount"
     ]
-    assert discount_frames == [{
-        "type": "data-discount",
-        "id": "discount",
-        "data": {"discounted_price": 900.0},
-    }]
+    assert discount_frames == [
+        {
+            "type": "data-discount",
+            "id": "discount",
+            "data": {"discounted_price": 900.0},
+        }
+    ]
 
     plain_discount_frames = [
         f for f in parse_sse(resp_plain.text) if isinstance(f, dict) and f.get("type") == "data-discount"
@@ -1099,10 +1101,11 @@ async def test_pending_discount_context_var_is_isolated_across_concurrent_reques
 # abuse vector for a public demo.
 # ---------------------------------------------------------------------------
 
+
 async def test_chat_stream_rejects_an_oversized_message(client, monkeypatch):
     user_id = "user-verbose"
-    monkeypatch.setattr("routes.chat.verify_user_token", await fake_verify_user_token_factory(user_id))
-    monkeypatch.setattr("routes.chat.check_rate_limit", lambda *a, **k: True)
+    monkeypatch.setattr("domains.negotiation.routes.verify_user_token", await fake_verify_user_token_factory(user_id))
+    monkeypatch.setattr("domains.negotiation.routes.check_rate_limit", lambda *a, **k: True)
 
     resp = await client.post(
         "/chat/stream",
@@ -1114,23 +1117,21 @@ async def test_chat_stream_rejects_an_oversized_message(client, monkeypatch):
     assert "too long" in resp.json()["detail"].lower()
 
 
-async def test_chat_stream_accepts_a_long_but_human_message(
-    client, monkeypatch, patch_supabase, fake_supabase
-):
+async def test_chat_stream_accepts_a_long_but_human_message(client, monkeypatch, patch_supabase, fake_supabase):
     """A few paragraphs of haggling must still go through — the cap is there
     for scripts, not for people who type a lot."""
     user_id = "user-chatty"
-    monkeypatch.setattr("routes.chat.verify_user_token", await fake_verify_user_token_factory(user_id))
-    monkeypatch.setattr("routes.chat.check_rate_limit", lambda *a, **k: True)
-    monkeypatch.setattr("routes.chat.get_rate_limit_remaining", lambda *a, **k: 9)
-    monkeypatch.setattr("routes.chat.track_ai_tokens", lambda *a, **k: None)
+    monkeypatch.setattr("domains.negotiation.routes.verify_user_token", await fake_verify_user_token_factory(user_id))
+    monkeypatch.setattr("domains.negotiation.routes.check_rate_limit", lambda *a, **k: True)
+    monkeypatch.setattr("domains.negotiation.routes.get_rate_limit_remaining", lambda *a, **k: 9)
+    monkeypatch.setattr("domains.negotiation.routes.track_ai_tokens", lambda *a, **k: None)
     set_chat_settings_select(fake_supabase, [])
-    patch_supabase("routes.chat", admin=fake_supabase)
+    patch_supabase("domains.negotiation.routes", admin=fake_supabase)
 
     async def fake_chat_stream(user_id, message, item_id=None, files=None):
         yield "sure"
 
-    monkeypatch.setattr("agent.bot.chat_stream", fake_chat_stream)
+    monkeypatch.setattr("domains.negotiation.bot.chat_stream", fake_chat_stream)
 
     resp = await client.post(
         "/chat/stream",
@@ -1141,17 +1142,15 @@ async def test_chat_stream_accepts_a_long_but_human_message(
     assert resp.status_code == 200
 
 
-async def test_chat_stream_propagates_request_language(
-    client, monkeypatch, patch_supabase, fake_supabase
-):
+async def test_chat_stream_propagates_request_language(client, monkeypatch, patch_supabase, fake_supabase):
     """Chat stream extracts language from body and passes it to agent."""
     user_id = "user-lang-1"
-    monkeypatch.setattr("routes.chat.verify_user_token", await fake_verify_user_token_factory(user_id))
-    monkeypatch.setattr("routes.chat.check_rate_limit", lambda *a, **k: True)
-    monkeypatch.setattr("routes.chat.get_rate_limit_remaining", lambda *a, **k: 9)
-    monkeypatch.setattr("routes.chat.track_ai_tokens", lambda *a, **k: None)
+    monkeypatch.setattr("domains.negotiation.routes.verify_user_token", await fake_verify_user_token_factory(user_id))
+    monkeypatch.setattr("domains.negotiation.routes.check_rate_limit", lambda *a, **k: True)
+    monkeypatch.setattr("domains.negotiation.routes.get_rate_limit_remaining", lambda *a, **k: 9)
+    monkeypatch.setattr("domains.negotiation.routes.track_ai_tokens", lambda *a, **k: None)
     set_chat_settings_select(fake_supabase, [])
-    patch_supabase("routes.chat", admin=fake_supabase)
+    patch_supabase("domains.negotiation.routes", admin=fake_supabase)
 
     passed_kwargs = {}
 
@@ -1160,7 +1159,7 @@ async def test_chat_stream_propagates_request_language(
         passed_kwargs["language"] = language
         yield "terbaik!"
 
-    monkeypatch.setattr("agent.bot.chat_stream", fake_chat_stream)
+    monkeypatch.setattr("domains.negotiation.bot.chat_stream", fake_chat_stream)
 
     resp = await client.post(
         "/chat/stream",
@@ -1172,18 +1171,16 @@ async def test_chat_stream_propagates_request_language(
     assert passed_kwargs["language"] == "ms"
 
 
-async def test_chat_stream_resolves_preferred_language_when_omitted(
-    client, monkeypatch, patch_supabase, fake_supabase
-):
+async def test_chat_stream_resolves_preferred_language_when_omitted(client, monkeypatch, patch_supabase, fake_supabase):
     """Chat stream resolves language via get_user_preferred_language when omitted in body."""
     user_id = "user-lang-2"
-    monkeypatch.setattr("routes.chat.verify_user_token", await fake_verify_user_token_factory(user_id))
-    monkeypatch.setattr("routes.chat.check_rate_limit", lambda *a, **k: True)
-    monkeypatch.setattr("routes.chat.get_rate_limit_remaining", lambda *a, **k: 9)
-    monkeypatch.setattr("routes.chat.track_ai_tokens", lambda *a, **k: None)
-    monkeypatch.setattr("routes.user.get_user_preferred_language", lambda uid: "zh")
+    monkeypatch.setattr("domains.negotiation.routes.verify_user_token", await fake_verify_user_token_factory(user_id))
+    monkeypatch.setattr("domains.negotiation.routes.check_rate_limit", lambda *a, **k: True)
+    monkeypatch.setattr("domains.negotiation.routes.get_rate_limit_remaining", lambda *a, **k: 9)
+    monkeypatch.setattr("domains.negotiation.routes.track_ai_tokens", lambda *a, **k: None)
+    monkeypatch.setattr("domains.identity.routes.get_user_preferred_language", lambda uid: "zh")
     set_chat_settings_select(fake_supabase, [])
-    patch_supabase("routes.chat", admin=fake_supabase)
+    patch_supabase("domains.negotiation.routes", admin=fake_supabase)
 
     passed_kwargs = {}
 
@@ -1192,7 +1189,7 @@ async def test_chat_stream_resolves_preferred_language_when_omitted(
         passed_kwargs["language"] = language
         yield "可以"
 
-    monkeypatch.setattr("agent.bot.chat_stream", fake_chat_stream)
+    monkeypatch.setattr("domains.negotiation.bot.chat_stream", fake_chat_stream)
 
     resp = await client.post(
         "/chat/stream",
@@ -1202,4 +1199,3 @@ async def test_chat_stream_resolves_preferred_language_when_omitted(
 
     assert resp.status_code == 200
     assert passed_kwargs["language"] == "zh"
-

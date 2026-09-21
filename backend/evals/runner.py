@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from agent.cost import MODEL_PRICING, PRICES_SOURCED, estimate_cost, usage_from_result  # noqa: E402
+from domains.negotiation.cost import MODEL_PRICING, PRICES_SOURCED, estimate_cost, usage_from_result  # noqa: E402
 from evals.assertions import (  # noqa: E402
     authorised_prices,
     false_floor_claims,
@@ -76,25 +76,20 @@ class ScenarioResult:
 
         problems = []
         text = self.transcript
-        if self.scenario.expect_any and not any(
-            token.lower() in text for token in self.scenario.expect_any
-        ):
+        if self.scenario.expect_any and not any(token.lower() in text for token in self.scenario.expect_any):
             problems.append(f"said none of {self.scenario.expect_any}")
         for token in self.scenario.forbid_any:
             if token.lower() in text:
                 problems.append(f"leaked {token!r}")
         if self.scenario.expect_tool and self.scenario.expect_tool not in self.tools_called:
-            problems.append(
-                f"never called {self.scenario.expect_tool} (called: {self.tools_called or 'nothing'})"
-            )
+            problems.append(f"never called {self.scenario.expect_tool} (called: {self.tools_called or 'nothing'})")
 
         if self.scenario.expect_tool_every_turn:
             missed = turns_missing_tool(self.scenario.expect_tool_every_turn, self.tools_by_turn)
             if missed:
                 turns = ", ".join(str(t) for t in missed)
                 problems.append(
-                    f"skipped {self.scenario.expect_tool_every_turn} on turn(s) {turns} "
-                    f"of {len(self.tools_by_turn)}"
+                    f"skipped {self.scenario.expect_tool_every_turn} on turn(s) {turns} of {len(self.tools_by_turn)}"
                 )
 
         if self.scenario.forbid_invented_prices:
@@ -133,8 +128,8 @@ async def run_scenario(scenario: Scenario, model: str | None) -> ScenarioResult:
     the next turn replays it the way production does. Without that this loop
     replayed nothing, and every turn of every scenario was turn one.
     """
-    from agent import bot
-    from agent.context import set_context
+    from domains.negotiation import bot
+    from domains.negotiation.context import set_context
 
     result = ScenarioResult(scenario=scenario)
     user_id = f"eval-{scenario.id}-{uuid.uuid4().hex[:8]}"
@@ -217,14 +212,10 @@ async def _judge_relevancy(results: list[ScenarioResult]) -> float | None:
     try:
         from langchain_google_genai import ChatGoogleGenerativeAI
 
-        judge = ChatGoogleGenerativeAI(
-            model=os.getenv("EVAL_JUDGE_MODEL", "gemini-3.8-flash"), temperature=0
-        )
+        judge = ChatGoogleGenerativeAI(model=os.getenv("EVAL_JUDGE_MODEL", "gemini-3.8-flash"), temperature=0)
         scores = []
         for r in usable:
-            reply = await judge.ainvoke(
-                _JUDGE_PROMPT.format(question=r.scenario.turns[-1], answer=r.replies[-1])
-            )
+            reply = await judge.ainvoke(_JUDGE_PROMPT.format(question=r.scenario.turns[-1], answer=r.replies[-1]))
             try:
                 scores.append(max(0.0, min(1.0, float(str(reply.content).strip().split()[0]))))
             except (ValueError, IndexError):

@@ -150,6 +150,7 @@ from httpx import ASGITransport, AsyncClient  # noqa: E402
 @pytest.fixture
 def app():
     from main import app as fastapi_app
+
     return fastapi_app
 
 
@@ -163,12 +164,14 @@ async def client(app):
 def _clear_dependency_overrides():
     yield
     from main import app as fastapi_app
+
     fastapi_app.dependency_overrides.clear()
 
 
 @pytest.fixture(autouse=True)
 def _reset_agent_context():
-    from agent.context import set_context
+    from domains.negotiation.context import set_context
+
     set_context(user_id=None, item_id=None)
     yield
     set_context(user_id=None, item_id=None)
@@ -177,7 +180,7 @@ def _reset_agent_context():
 @pytest.fixture(autouse=True)
 def _flush_in_memory_redis():
     yield
-    import cache
+    import core.cache as cache
 
     # Self-healing safety net: VERCEL=1 (set above) guarantees cache.redis_client
     # should always be the in-memory fake in tests. If a test ever leaves it
@@ -203,7 +206,7 @@ def _disable_ip_rate_limits():
     on ordering. Tests that assert limiting behaviour turn `limiter.enabled`
     back on for their own scope (see test_request_path_backpressure.py).
     """
-    from limiter import limiter
+    from core.limiter import limiter
 
     was_enabled = limiter.enabled
     limiter.enabled = False
@@ -218,7 +221,7 @@ def _disable_ip_rate_limits():
 @pytest.fixture
 def auth_user(app):
     """Bypass `Depends(verify_user_token)` for routes that use it, returning a fixed user_id."""
-    from auth_middleware import verify_user_token
+    from domains.identity.auth_middleware import verify_user_token
 
     def _apply(user_id="test-user-id"):
         app.dependency_overrides[verify_user_token] = lambda: user_id
@@ -230,7 +233,7 @@ def auth_user(app):
 @pytest.fixture
 def admin_user(app):
     """Bypass `Depends(verify_admin)` for the /admin/* protected router."""
-    from admin_session import verify_admin
+    from domains.identity.admin_session import verify_admin
 
     def _apply(user_id="test-admin-id", email="admin@example.com", ip="127.0.0.1"):
         session = {"user_id": user_id, "email": email, "ip": ip}
@@ -255,19 +258,38 @@ def fake_supabase():
     return MagicMock()
 
 
+# Every domain service binds `admin_supabase` / `user_supabase` at import time,
+# the same way the modules under test do. A test that installs a fake database
+# means "this process talks to this fake", so patching a caller has to reach the
+# services it delegates through as well — otherwise a route that now goes via
+# `CatalogService` would quietly hit the real client.
+_DOMAIN_SERVICE_MODULES = (
+    "domains.catalog.services",
+    "domains.billing.services",
+    "domains.identity.services",
+    "domains.negotiation.services",
+)
+
+
 @pytest.fixture
 def patch_supabase(monkeypatch):
-    """patch_supabase("items", admin=fake, user=fake2) patches `<module>.admin_supabase` /
-    `<module>.user_supabase` on the given already-imported module name (import path relative
-    to backend/, e.g. "items", "routes.admin.users", "agent.tools.items")."""
+    """patch_supabase("domains.catalog.items", admin=fake, user=fake2) patches
+    `<module>.admin_supabase` / `<module>.user_supabase` on the given
+    already-imported module (import path relative to backend/, e.g.
+    "domains.catalog.items", "domains.identity.admin_users").
+
+    The same fakes are also installed on every domain service, so a route that
+    delegates across a domain boundary still sees the test's database.
+    """
     import importlib
 
     def _patch(module_name, *, admin=None, user=None):
         mod = importlib.import_module(module_name)
-        if admin is not None:
-            monkeypatch.setattr(mod, "admin_supabase", admin, raising=False)
-        if user is not None:
-            monkeypatch.setattr(mod, "user_supabase", user, raising=False)
+        for target in (mod, *(importlib.import_module(m) for m in _DOMAIN_SERVICE_MODULES)):
+            if admin is not None:
+                monkeypatch.setattr(target, "admin_supabase", admin, raising=False)
+            if user is not None:
+                monkeypatch.setattr(target, "user_supabase", user, raising=False)
         return mod
 
     return _patch
@@ -337,33 +359,30 @@ def turn_env(monkeypatch, patch_supabase, fake_supabase):
         async def _verified(request):
             return user_id
 
-        monkeypatch.setattr("routes.chat.verify_user_token", _verified)
+        monkeypatch.setattr("domains.negotiation.routes.verify_user_token", _verified)
         (
-            fake_supabase.table.return_value.select.return_value.eq.return_value
-            .execute.return_value
+            fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value
         ) = make_supabase_result([])
-        patch_supabase("routes.chat", admin=fake_supabase)
+        patch_supabase("domains.negotiation.routes", admin=fake_supabase)
 
         monkeypatch.setattr(
-            "agent.memory.conversation_memory.add_message",
+            "domains.negotiation.memory.conversation_memory.add_message",
             lambda uid, role, msg, *a, **k: record["persisted"].append((uid, role, msg)),
         )
         monkeypatch.setattr(
-            "payment.fulfillment.broadcast_to_chat",
-            lambda uid, content, role="ai", source="ai": record["broadcast"].append(
-                (uid, content, role, source)
-            ),
+            "core.broadcast.broadcast_to_chat",
+            lambda uid, content, role="ai", source="ai": record["broadcast"].append((uid, content, role, source)),
         )
         monkeypatch.setattr(
-            "services.unread_digest.queue_unread_message",
+            "domains.negotiation.unread_digest.queue_unread_message",
             lambda uid, content, item_name=None: record["queued"].append((uid, content)),
         )
         monkeypatch.setattr(
-            "notifications.notification_broker.has_subscribers",
+            "core.notifications.notification_broker.has_subscribers",
             lambda uid: subscribed,
         )
         monkeypatch.setattr(
-            "routes.chat.track_ai_tokens",
+            "domains.negotiation.routes.track_ai_tokens",
             lambda uid, inp, out: record["charged"].append((uid, inp, out)),
         )
         return record

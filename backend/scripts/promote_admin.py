@@ -14,13 +14,16 @@ Usage (run from the backend/ directory, with backend/.env populated):
     python -m scripts.promote_admin revoke  user@example.com
 
 """
+
 import sys
 
 # Allow running both as `python -m scripts.promote_admin` and `python scripts/promote_admin.py`
-sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.dirname(__import__("os").path.abspath(__file__))))
+sys.path.insert(
+    0, __import__("os").path.dirname(__import__("os").path.dirname(__import__("os").path.abspath(__file__)))
+)
 
-from admin_session import grant_admin, revoke_admin
-from connector import admin_supabase
+from core.connector import admin_supabase
+from domains.identity.admin_session import grant_admin, revoke_admin
 
 
 def _find_user(email: str):

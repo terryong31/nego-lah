@@ -100,11 +100,7 @@ def test_request_payload_exceeding_limit_rejected_with_413(defense_test_app):
     client = TestClient(defense_test_app)
     # Header claims 1.5MB (> 1MB standard limit)
     oversized = 1024 * 1024 + 500
-    res = client.post(
-        "/items",
-        headers={"Content-Length": str(oversized)},
-        content=b"x" * 100
-    )
+    res = client.post("/items", headers={"Content-Length": str(oversized)}, content=b"x" * 100)
     assert res.status_code == 413
     assert "Payload too large" in res.json()["detail"]
 
@@ -113,20 +109,12 @@ def test_upload_path_allows_larger_limit(defense_test_app):
     client = TestClient(defense_test_app)
     # 1.5MB is allowed on upload route (limit is 2MB)
     size = int(1.5 * 1024 * 1024)
-    res = client.post(
-        "/admin/analyze-image",
-        headers={"Content-Length": str(size)},
-        content=b"x" * 100
-    )
+    res = client.post("/admin/analyze-image", headers={"Content-Length": str(size)}, content=b"x" * 100)
     assert res.status_code == 200
 
     # But 2.5MB is rejected
     too_large = int(2.5 * 1024 * 1024)
-    res_too_large = client.post(
-        "/admin/analyze-image",
-        headers={"Content-Length": str(too_large)},
-        content=b"x" * 100
-    )
+    res_too_large = client.post("/admin/analyze-image", headers={"Content-Length": str(too_large)}, content=b"x" * 100)
     assert res_too_large.status_code == 413
 
 
@@ -208,6 +196,7 @@ def test_admin_items_upload_gets_larger_default_limit():
 # entire attack. So the bytes coming off the wire are counted as they arrive,
 # and the request dies at the ceiling instead of at the header.
 # ---------------------------------------------------------------------------
+
 
 def _chunks(total_bytes: int, chunk: int = 64 * 1024):
     """A body httpx will send with Transfer-Encoding: chunked (no Content-Length)."""

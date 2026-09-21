@@ -18,8 +18,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from cache import redis_client
-from services import unread_digest
+from core.cache import redis_client
+from domains.negotiation import unread_digest
 
 pytestmark = pytest.mark.asyncio
 
@@ -30,16 +30,22 @@ def _key(user_id: str) -> str:
 
 def _queue_at(user_id: str, content: str, age_seconds: float, item_name=None):
     """Put an entry on the queue as though it had been sitting there a while."""
-    redis_client.rpush(_key(user_id), json.dumps({
-        "content": content,
-        "item_name": item_name,
-        "queued_at": time.time() - age_seconds,
-    }))
+    redis_client.rpush(
+        _key(user_id),
+        json.dumps(
+            {
+                "content": content,
+                "item_name": item_name,
+                "queued_at": time.time() - age_seconds,
+            }
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
 # Queue mechanics
 # ---------------------------------------------------------------------------
+
 
 async def test_queue_appends_in_order_and_reports_depth():
     assert unread_digest.queue_unread_message("u1", "first") == 1
@@ -80,6 +86,7 @@ async def test_a_malformed_entry_is_dropped_not_raised():
 # Due detection — the five-minute buffer itself
 # ---------------------------------------------------------------------------
 
+
 async def test_a_fresh_queue_is_not_due():
     unread_digest.queue_unread_message("u1", "just now")
     assert unread_digest.due_digest_user_ids() == []
@@ -105,12 +112,13 @@ async def test_an_empty_queue_is_never_due():
 # Flushing
 # ---------------------------------------------------------------------------
 
+
 def _patch_email(monkeypatch, user_email="buyer@example.com"):
     fake_user = MagicMock()
     fake_user.user.email = user_email
-    monkeypatch.setattr("connector.admin_supabase.auth.admin.get_user_by_id", lambda uid: fake_user)
+    monkeypatch.setattr("core.connector.admin_supabase.auth.admin.get_user_by_id", lambda uid: fake_user)
     sender = MagicMock(return_value=True)
-    monkeypatch.setattr("services.email_service.send_unread_digest_email", sender)
+    monkeypatch.setattr("core.email_service.send_unread_digest_email", sender)
     return sender
 
 
@@ -168,9 +176,9 @@ async def test_one_failing_digest_does_not_abort_the_others(monkeypatch):
         user.user.email = "two@example.com"
         return user
 
-    monkeypatch.setattr("connector.admin_supabase.auth.admin.get_user_by_id", _lookup)
+    monkeypatch.setattr("core.connector.admin_supabase.auth.admin.get_user_by_id", _lookup)
     sender = MagicMock(return_value=True)
-    monkeypatch.setattr("services.email_service.send_unread_digest_email", sender)
+    monkeypatch.setattr("core.email_service.send_unread_digest_email", sender)
 
     assert unread_digest.flush_due_digests() == 1
     assert sender.call_args[0][0] == "two@example.com"
@@ -189,11 +197,12 @@ async def test_flush_passes_the_item_name_through(monkeypatch):
 # Route wiring
 # ---------------------------------------------------------------------------
 
+
 async def test_console_send_queues_instead_of_emailing_an_offline_buyer(client, admin_user, monkeypatch):
     admin_user()
-    monkeypatch.setattr("agent.memory.conversation_memory", MagicMock(), raising=False)
+    monkeypatch.setattr("domains.negotiation.memory.conversation_memory", MagicMock(), raising=False)
     direct_send = MagicMock()
-    monkeypatch.setattr("services.email_service.send_unread_message_email", direct_send)
+    monkeypatch.setattr("core.email_service.send_unread_message_email", direct_send)
 
     res = await client.post("/admin/chats/offline-buyer/message", json={"message": "Special deal!"})
 
@@ -203,10 +212,10 @@ async def test_console_send_queues_instead_of_emailing_an_offline_buyer(client, 
 
 
 async def test_console_send_queues_nothing_for_a_live_buyer(client, admin_user, monkeypatch):
-    from notifications import notification_broker
+    from core.notifications import notification_broker
 
     admin_user()
-    monkeypatch.setattr("agent.memory.conversation_memory", MagicMock(), raising=False)
+    monkeypatch.setattr("domains.negotiation.memory.conversation_memory", MagicMock(), raising=False)
 
     q = await notification_broker.subscribe("live-buyer")
     try:
@@ -221,7 +230,7 @@ async def test_buyer_reading_history_marks_the_conversation_seen(client, auth_us
     auth_user("buyer-1")
     unread_digest.queue_unread_message("buyer-1", "queued while they were away")
     monkeypatch.setattr(
-        "agent.memory.conversation_memory.get_history_page",
+        "domains.negotiation.memory.conversation_memory.get_history_page",
         MagicMock(return_value={"messages": [], "has_more": False, "next_offset": 0}),
     )
 

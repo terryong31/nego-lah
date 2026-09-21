@@ -10,7 +10,7 @@ The client application for **Nego-Lah**, built with **Nuxt 4** in Single Page Ap
 - **UI & Design System:** Built with **Nuxt UI** (`@nuxt/ui`) components and styled with **TailwindCSS v4**, supporting dark/light mode and accessible color contrast.
 - **Trilingual Localization:** Trilingual message catalogues (`en`, `ms`, `zh`) supporting full interface internationalization and currency formatting.
 - **Universal Turnstile Bot Defense:** Every session maintains active Cloudflare Turnstile verification via `useTurnstileToken()`.
-- **Client-Side Supabase Auth:** User sessions and tokens are managed directly by `@nuxtjs/supabase` in the browser.
+- **Server-Side Sessions:** The backend brokers every Supabase auth call and issues an opaque, httpOnly session cookie — no access or refresh token is ever readable by JavaScript, so XSS has nothing to steal (SPEC-093). Realtime rides the same authenticated stream (SPEC-094).
 
 ---
 

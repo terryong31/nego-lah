@@ -56,16 +56,14 @@ async def verify_turnstile(
     # Include remote IP if request context is provided
     if request:
         from core.ip import get_client_ip
+
         ip = get_client_ip(request)
         if ip and ip != "unknown":
             data["remoteip"] = ip
 
     try:
         async with httpx.AsyncClient(timeout=4.0) as client:
-            res = await client.post(
-                "https://challenges.cloudflare.com/turnstile/v0/siteverify",
-                data=data
-            )
+            res = await client.post("https://challenges.cloudflare.com/turnstile/v0/siteverify", data=data)
             outcome = res.json()
             if not outcome.get("success"):
                 logger.warning(f"Turnstile verification failed: {outcome.get('error-codes')}")
@@ -73,13 +71,13 @@ async def verify_turnstile(
 
             # Check hostname allowlist if configured
             expected_hostnames = {
-                h.strip().lower()
-                for h in os.getenv("TURNSTILE_HOSTNAMES", "").split(",")
-                if h.strip()
+                h.strip().lower() for h in os.getenv("TURNSTILE_HOSTNAMES", "").split(",") if h.strip()
             }
             if expected_hostnames and outcome.get("hostname"):
                 if outcome.get("hostname").lower() not in expected_hostnames:
-                    logger.warning(f"Turnstile hostname mismatch: {outcome.get('hostname')} not in {expected_hostnames}")
+                    logger.warning(
+                        f"Turnstile hostname mismatch: {outcome.get('hostname')} not in {expected_hostnames}"
+                    )
                     raise HTTPException(status_code=403, detail="Turnstile verification origin rejected")
 
     except HTTPException:
@@ -96,9 +94,7 @@ async def verify_turnstile(
         #
         # A returned "success": false is a different thing entirely, and is
         # raised as a 403 above, before this handler.
-        logger.warning(
-            f"Turnstile siteverify unreachable, allowing the request: {e}"
-        )
+        logger.warning(f"Turnstile siteverify unreachable, allowing the request: {e}")
         return True
 
     return True

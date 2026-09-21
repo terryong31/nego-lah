@@ -1,59 +1,35 @@
 /**
- * Global middleware that catches `?code=...` or `?token_hash=...` query params
- * on ANY page (such as the homepage when redirected from Supabase email verification)
- * and redirects to the dedicated `/confirm` page so users always see the
- * "Email Confirmed" confirmation screen.
+ * Catch an auth link that was minted before SPEC-093 and still points here.
+ *
+ * Since SPEC-093 the browser never receives `?code=` or `?token_hash=` at all:
+ * Supabase redirects to `GET /auth/callback` on the API, which redeems the link
+ * server-side and 302s back with a session cookie. Nothing in this app has an
+ * exchange to perform any more, and an error from that redirect arrives as
+ * `/login?error=`, not as query params on whatever page happened to be open.
+ *
+ * Links already sitting in inboxes when that shipped still point here, though,
+ * and their params land on whatever route was registered as the redirect
+ * target — usually the homepage. Rather than letting them fall through to a
+ * page that would ignore them, send them to /confirm: a redeemable one is
+ * forwarded to the API from there, and an expired one gets the failure screen
+ * instead of a silent homepage.
  */
 export default defineNuxtRouteMiddleware((to, from) => {
-  // Already on /confirm — let the page handle the UI
-  if (to.path === '/confirm') return
+  // Already there, or on the way out of it — re-inspecting the URL a callback
+  // just handled would send the visitor straight back.
+  if (to.path === '/confirm' || from.path === '/confirm') return
 
-  // Leaving /confirm is the callback page handing control back to the app once
-  // the session is established. The browser URL still reads `/confirm?code=...`
-  // until this navigation commits, so re-inspecting it below would send the
-  // visitor straight back and strand them on the "Confirming your session"
-  // spinner — signed in, but unable to leave the callback route.
-  if (from.path === '/confirm') return
+  const hasRedeemableLink = typeof to.query.code === 'string' || typeof to.query.token_hash === 'string'
+  const hasAuthError = typeof to.query.error === 'string' || typeof to.query.error_code === 'string'
 
-  // `window.location` describes `to` only on the SPA's very first navigation,
-  // where Nuxt calls this middleware with `from` equal to `to`. On any later
-  // in-app navigation it still points at the page being left, so consulting it
-  // would redirect on params that belong to a callback already handled.
+  // An error from the implicit flow arrives in the fragment, which `to.query`
+  // never sees. Only trust `window.location` on the first navigation: on any
+  // later one the browser URL still describes the page being left.
   const isInitialNavigation = to.fullPath === from.fullPath
-  const useWindowUrl = isInitialNavigation && typeof window !== 'undefined'
+  const hash = to.hash || (isInitialNavigation && typeof window !== 'undefined' ? window.location.hash : '')
+  const hasAuthHash = Boolean(hash) && /(?:^|[#&])(error|error_code|access_token|code)=/.test(hash)
 
-  const windowSearch = useWindowUrl ? window.location.search : ''
-  const windowHash = useWindowUrl ? window.location.hash : ''
-
-  const hasAuthQuery = Boolean(
-    to.query.code
-    || to.query.token_hash
-    || to.query.error
-    || to.query.error_code
-    || windowSearch.includes('code=')
-    || windowSearch.includes('token_hash=')
-    || windowSearch.includes('error=')
-    || windowSearch.includes('error_code=')
-  )
-
-  const hasAuthHash = Boolean(
-    (to.hash && (
-      to.hash.includes('error=')
-      || to.hash.includes('error_code=')
-      || to.hash.includes('access_token=')
-      || to.hash.includes('code=')
-    ))
-    || (windowHash && (
-      windowHash.includes('error=')
-      || windowHash.includes('error_code=')
-      || windowHash.includes('access_token=')
-      || windowHash.includes('code=')
-    ))
-  )
-
-  if (!hasAuthQuery && !hasAuthHash) return
-
-  const hash = to.hash || (windowHash || undefined)
+  if (!hasRedeemableLink && !hasAuthError && !hasAuthHash) return
 
   return navigateTo({
     path: '/confirm',

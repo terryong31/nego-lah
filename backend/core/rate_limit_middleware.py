@@ -11,7 +11,7 @@ import asyncio
 from fastapi.responses import JSONResponse
 
 from core.ip import get_client_ip
-from limiter import check_ip_rate_limit
+from core.limiter import check_ip_rate_limit
 
 
 class IPRateLimitMiddleware:

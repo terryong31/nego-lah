@@ -23,8 +23,8 @@ from unittest.mock import MagicMock
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-import agent.bot as bot
-from agent.config import AGENT_TOOL_RESULT_MAX_CHARS, AGENT_TOOL_TRACE_TURNS
+import domains.negotiation.bot as bot
+from domains.negotiation.config import AGENT_TOOL_RESULT_MAX_CHARS, AGENT_TOOL_TRACE_TURNS
 
 
 def _trace(name="evaluate_offer", call_id="call_1", result="COUNTER: counter with RM1110."):
@@ -42,6 +42,7 @@ def memory(monkeypatch):
 # ---------------------------------------------------------------------------
 # S1/S2 — a stored trace replays as the exchange that actually happened
 # ---------------------------------------------------------------------------
+
 
 def test_a_traced_turn_replays_call_result_then_answer(memory):
     memory.get_history.return_value = [
@@ -92,11 +93,16 @@ def test_a_trace_stored_as_a_json_string_still_replays(memory):
 # S3 — everything written before this spec replays exactly as before
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("row", [
-    {"role": "ai", "content": "hello!"},
-    {"role": "ai", "content": "hello!", "tool_calls": None},
-    {"role": "ai", "content": "hello!", "tool_calls": []},
-], ids=["no-column", "null", "empty"])
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        {"role": "ai", "content": "hello!"},
+        {"role": "ai", "content": "hello!", "tool_calls": None},
+        {"role": "ai", "content": "hello!", "tool_calls": []},
+    ],
+    ids=["no-column", "null", "empty"],
+)
 def test_an_untraced_turn_replays_as_plain_prose(memory, row):
     memory.get_history.return_value = [row]
 
@@ -110,6 +116,7 @@ def test_an_untraced_turn_replays_as_plain_prose(memory, row):
 # ---------------------------------------------------------------------------
 # S4 — only the recent turns pay for a trace
 # ---------------------------------------------------------------------------
+
 
 def test_only_the_most_recent_turns_carry_their_trace(memory):
     memory.get_history.return_value = [
@@ -136,6 +143,7 @@ def test_the_agent_asks_for_traces_but_the_ui_page_does_not(memory):
 # S5/S8 — extraction from a completed graph result
 # ---------------------------------------------------------------------------
 
+
 def test_extract_pairs_each_call_with_its_result():
     result = [
         AIMessage(content="", tool_calls=[{"name": "evaluate_offer", "args": {"offered_price": 1000}, "id": "c1"}]),
@@ -145,8 +153,9 @@ def test_extract_pairs_each_call_with_its_result():
 
     trace = bot.extract_tool_trace(result)
 
-    assert trace == [{"name": "evaluate_offer", "args": {"offered_price": 1000}, "id": "c1",
-                      "result": "COUNTER: RM1110"}]
+    assert trace == [
+        {"name": "evaluate_offer", "args": {"offered_price": 1000}, "id": "c1", "result": "COUNTER: RM1110"}
+    ]
 
 
 def test_a_call_whose_result_never_arrived_is_dropped():
@@ -175,11 +184,12 @@ def test_extract_is_safe_on_an_empty_turn():
 # S7 — the message survives a database that has not been migrated yet
 # ---------------------------------------------------------------------------
 
+
 def test_a_rejected_trace_still_saves_the_message():
     """If `messages.tool_calls` does not exist yet, the insert fails. A trace is
     a nice-to-have; the transcript is the record of what was agreed, so the turn
     is re-saved without it rather than lost."""
-    from agent.memory import ConversationMemory
+    from domains.negotiation.memory import ConversationMemory
 
     memory = ConversationMemory()
     calls = []
@@ -205,7 +215,7 @@ def test_a_rejected_trace_still_saves_the_message():
 def test_the_trace_column_is_only_selected_when_asked_for():
     """The chat client and the admin console read the same page and have no use
     for it."""
-    from agent.memory import ConversationMemory
+    from domains.negotiation.memory import ConversationMemory
 
     memory = ConversationMemory()
     fake = MagicMock()
@@ -229,12 +239,14 @@ def test_the_selected_trace_actually_reaches_the_caller():
     it passed because they all stub `get_history` and hand the trace back
     themselves.
     """
-    from agent.memory import ConversationMemory
+    from domains.negotiation.memory import ConversationMemory
 
     memory = ConversationMemory()
     fake = MagicMock()
     stored = {"role": "ai", "content": "How about RM1110?", "source": "ai", "tool_calls": _trace()}
-    fake.table.return_value.select.return_value.eq.return_value.order.return_value.range.return_value.execute.return_value.data = [stored]
+    fake.table.return_value.select.return_value.eq.return_value.order.return_value.range.return_value.execute.return_value.data = [
+        stored
+    ]
     memory._supabase = fake
 
     row = memory.get_history("u1", limit=5, include_tool_calls=True)[0]
@@ -244,12 +256,14 @@ def test_the_selected_trace_actually_reaches_the_caller():
 
 def test_the_trace_is_withheld_from_callers_that_did_not_ask():
     """The other half: the chat client must keep reading exactly what it did."""
-    from agent.memory import ConversationMemory
+    from domains.negotiation.memory import ConversationMemory
 
     memory = ConversationMemory()
     fake = MagicMock()
     stored = {"role": "ai", "content": "How about RM1110?", "source": "ai", "tool_calls": _trace()}
-    fake.table.return_value.select.return_value.eq.return_value.order.return_value.range.return_value.execute.return_value.data = [stored]
+    fake.table.return_value.select.return_value.eq.return_value.order.return_value.range.return_value.execute.return_value.data = [
+        stored
+    ]
     memory._supabase = fake
 
     row = memory.get_history("u1", limit=5)[0]

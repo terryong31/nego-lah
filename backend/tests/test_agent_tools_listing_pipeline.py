@@ -18,8 +18,8 @@ import json
 
 import pytest
 
-import agent.tools.listing_pipeline as pipeline_module
-from agent.tools.listing_pipeline import analyze_listing
+import domains.negotiation.tools.listing_pipeline as pipeline_module
+from domains.negotiation.tools.listing_pipeline import analyze_listing
 
 SAMPLE_IMAGES = [{"base64_image": "aGVsbG8=", "mime_type": "image/png"}]
 
@@ -106,11 +106,13 @@ async def test_prices_against_the_identified_name_condition_and_category(fakes):
     _, market = fakes
     await collect()
 
-    assert market.calls == [{
-        "query": "Vintage Brass Lamp",
-        "condition": "Like New",
-        "category": "Home",
-    }]
+    assert market.calls == [
+        {
+            "query": "Vintage Brass Lamp",
+            "condition": "Like New",
+            "category": "Home",
+        }
+    ]
 
 
 async def test_missing_identify_fields_fall_back_to_safe_defaults(monkeypatch):
@@ -302,11 +304,13 @@ async def test_a_none_description_is_normalized_to_an_empty_string(monkeypatch):
 
 
 async def test_pipeline_parses_trilingual_translations_when_json(monkeypatch):
-    trilingual_json = json.dumps({
-        "en": {"name": "Lamp", "description": "English desc", "condition": "Good"},
-        "ms": {"name": "Lampu", "description": "Penerangan BM", "condition": "Elok"},
-        "zh": {"name": "台灯", "description": "中文描述", "condition": "良好"},
-    })
+    trilingual_json = json.dumps(
+        {
+            "en": {"name": "Lamp", "description": "English desc", "condition": "Good"},
+            "ms": {"name": "Lampu", "description": "Penerangan BM", "condition": "Elok"},
+            "zh": {"name": "台灯", "description": "中文描述", "condition": "良好"},
+        }
+    )
     monkeypatch.setattr(pipeline_module, "image_analyzer", _FakeAnalyzer(description=trilingual_json))
     monkeypatch.setattr(pipeline_module, "market_service", _FakeMarket())
 

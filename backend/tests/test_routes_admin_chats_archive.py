@@ -17,9 +17,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import routes.admin.chats as admin_chats
-from agent.memory import conversation_memory
+import domains.negotiation.admin_routes as admin_chats
 from conftest import make_supabase_result
+from domains.negotiation.memory import conversation_memory
 
 pytestmark = pytest.mark.asyncio
 
@@ -27,18 +27,18 @@ pytestmark = pytest.mark.asyncio
 def table_router(mapping):
     def _side_effect(name, *_a, **_kw):
         return mapping.get(name, MagicMock())
+
     return _side_effect
 
 
 def make_user(user_id, email=None, metadata=None, created_at="2024-01-01T00:00:00Z"):
-    return SimpleNamespace(
-        id=user_id, email=email, user_metadata=metadata or {}, created_at=created_at
-    )
+    return SimpleNamespace(id=user_id, email=email, user_metadata=metadata or {}, created_at=created_at)
 
 
 def _admin_session_with_csrf(client, sid="sid-archive", token="csrf-token-archive"):
-    from cache import redis_client
-    from env import ADMIN_SESSION_TTL
+    from core.cache import redis_client
+    from core.env import ADMIN_SESSION_TTL
+
     redis_client.setex(f"csrf:{sid}", ADMIN_SESSION_TTL, token)
     client.cookies.set("admin_sid", sid)
     return token
@@ -47,15 +47,17 @@ def _admin_session_with_csrf(client, sid="sid-archive", token="csrf-token-archiv
 @pytest.fixture
 def archive_env(monkeypatch, fake_supabase, patch_supabase):
     def _setup():
-        patch_supabase("connector", admin=fake_supabase)
+        patch_supabase("core.connector", admin=fake_supabase)
         monkeypatch.setattr(admin_chats, "write_audit", MagicMock())
         return fake_supabase
+
     return _setup
 
 
 # ---------------------------------------------------------------------------
 # POST /admin/chats/{user_id}/archive
 # ---------------------------------------------------------------------------
+
 
 async def test_archiving_stamps_the_timestamp_and_audits(client, admin_user, archive_env):
     admin_user()
@@ -136,6 +138,7 @@ async def test_archive_succeeds_with_a_valid_csrf_token(client, admin_user, arch
 # GET /admin/chats — archived rows, and the fields the info panel needs
 # ---------------------------------------------------------------------------
 
+
 def _chats_tables(settings=None, profiles=None):
     profiles_mock = MagicMock()
     profiles_mock.select.return_value.execute.return_value = make_supabase_result(profiles or [])
@@ -143,28 +146,43 @@ def _chats_tables(settings=None, profiles=None):
     settings_mock.select.return_value.execute.return_value = make_supabase_result(settings or [])
     messages_mock = MagicMock()
     messages_mock.select.return_value.order.return_value.execute.return_value = make_supabase_result([])
-    return table_router({
-        "user_profiles": profiles_mock,
-        "chat_settings": settings_mock,
-        "messages": messages_mock,
-    })
+    return table_router(
+        {
+            "user_profiles": profiles_mock,
+            "chat_settings": settings_mock,
+            "messages": messages_mock,
+        }
+    )
 
 
-async def _list_chats(client, admin_user, fake_supabase, patch_supabase, monkeypatch,
-                      *, settings=None, profiles=None, users=None, query=""):
+async def _list_chats(
+    client,
+    admin_user,
+    fake_supabase,
+    patch_supabase,
+    monkeypatch,
+    *,
+    settings=None,
+    profiles=None,
+    users=None,
+    query="",
+):
     admin_user()
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
     fake_supabase.table.side_effect = _chats_tables(settings=settings, profiles=profiles)
     fake_supabase.auth.admin.list_users.return_value = users or [
         make_user("user-a", email="a@example.com"),
         make_user("user-b", email="b@example.com"),
     ]
     monkeypatch.setattr(
-        conversation_memory, "get_all_histories",
-        MagicMock(return_value={
-            "user-a": [{"role": "human", "content": "hi", "source": "human"}],
-            "user-b": [{"role": "human", "content": "yo", "source": "human"}],
-        }),
+        conversation_memory,
+        "get_all_histories",
+        MagicMock(
+            return_value={
+                "user-a": [{"role": "human", "content": "hi", "source": "human"}],
+                "user-b": [{"role": "human", "content": "yo", "source": "human"}],
+            }
+        ),
     )
     resp = await client.get(f"/admin/chats{query}")
     assert resp.status_code == 200
@@ -175,7 +193,11 @@ async def test_archived_conversations_are_hidden_by_default(
     client, admin_user, fake_supabase, patch_supabase, monkeypatch
 ):
     chats = await _list_chats(
-        client, admin_user, fake_supabase, patch_supabase, monkeypatch,
+        client,
+        admin_user,
+        fake_supabase,
+        patch_supabase,
+        monkeypatch,
         settings=[{"user_id": "user-b", "archived_at": "2026-09-10T09:00:00Z"}],
     )
 
@@ -187,7 +209,11 @@ async def test_archived_conversations_are_reachable_on_request(
     client, admin_user, fake_supabase, patch_supabase, monkeypatch
 ):
     chats = await _list_chats(
-        client, admin_user, fake_supabase, patch_supabase, monkeypatch,
+        client,
+        admin_user,
+        fake_supabase,
+        patch_supabase,
+        monkeypatch,
         settings=[{"user_id": "user-b", "archived_at": "2026-09-10T09:00:00Z"}],
         query="?include_archived=true",
     )
@@ -202,7 +228,11 @@ async def test_chat_rows_carry_what_the_info_panel_shows(
     """The list handler already holds every user and profile, so the customer
     panel costs no extra round trip and no new endpoint."""
     chats = await _list_chats(
-        client, admin_user, fake_supabase, patch_supabase, monkeypatch,
+        client,
+        admin_user,
+        fake_supabase,
+        patch_supabase,
+        monkeypatch,
         profiles=[{"id": "user-a", "display_name": "Alice", "avatar_url": None, "is_banned": True}],
         users=[make_user("user-a", email="alice@example.com", created_at="2025-03-04T05:06:07Z")],
     )

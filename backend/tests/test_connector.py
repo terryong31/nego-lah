@@ -28,7 +28,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import connector
+import core.connector as connector
 
 
 @pytest.fixture(autouse=True)
@@ -154,9 +154,9 @@ def test_reload_success_path_uses_create_client(monkeypatch):
 
 def test_reload_missing_env_produces_missing_clients_for_both_singletons(monkeypatch):
     try:
-        monkeypatch.setattr("env.SUPABASE_URL", "")
-        monkeypatch.setattr("env.USER_SUPABASE_KEY", "")
-        monkeypatch.setattr("env.ADMIN_SUPABASE_KEY", "")
+        monkeypatch.setattr("core.env.SUPABASE_URL", "")
+        monkeypatch.setattr("core.env.USER_SUPABASE_KEY", "")
+        monkeypatch.setattr("core.env.ADMIN_SUPABASE_KEY", "")
         importlib.reload(connector)
 
         assert isinstance(connector.user_supabase, connector._MissingSupabaseClient)
@@ -177,7 +177,7 @@ def test_reload_missing_env_produces_missing_clients_for_both_singletons(monkeyp
 
 def test_reload_missing_only_admin_key_leaves_user_client_working(monkeypatch):
     try:
-        monkeypatch.setattr("env.ADMIN_SUPABASE_KEY", "")
+        monkeypatch.setattr("core.env.ADMIN_SUPABASE_KEY", "")
         importlib.reload(connector)
 
         assert not isinstance(connector.user_supabase, connector._MissingSupabaseClient)

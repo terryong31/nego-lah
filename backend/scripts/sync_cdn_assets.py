@@ -20,8 +20,8 @@ if str(backend_dir) not in sys.path:
 
 import httpx
 
-from connector import admin_supabase
-from env import STORAGE_BUCKET, SUPABASE_URL
+from core.connector import admin_supabase
+from core.env import STORAGE_BUCKET, SUPABASE_URL
 
 
 def main():

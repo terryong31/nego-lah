@@ -13,9 +13,7 @@ import re
 
 SPECS_DIR = pathlib.Path(__file__).resolve().parents[2] / "docs" / "specs"
 
-SPEC_FILES = sorted(
-    p for p in SPECS_DIR.glob("SPEC-*.md")
-)
+SPEC_FILES = sorted(p for p in SPECS_DIR.glob("SPEC-*.md"))
 
 
 def _frontmatter_id(path: pathlib.Path) -> str | None:

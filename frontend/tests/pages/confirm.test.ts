@@ -1,436 +1,141 @@
+/**
+ * SPEC-093 — /confirm is a landing screen, not an auth step.
+ *
+ * This page used to perform the exchange itself: read `?code=` / `#access_token=`
+ * out of three places in the URL, call `exchangeCodeForSession` or `verifyOtp`,
+ * wait for a session to appear, work out whether this was OAuth or an email
+ * confirmation, and scrub the credential back out of the address bar. All of it
+ * now happens on the backend, which redeems the link and 302s here with a
+ * session cookie and nothing but `?status=`.
+ *
+ * So what is left to test is small: it shows the outcome, and it forwards a link
+ * that was already in someone's inbox when this shipped.
+ */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { reactive, ref } from 'vue'
 import { mockNuxtImport, mountSuspended } from '@nuxt/test-utils/runtime'
 import { flushPromises } from '@vue/test-utils'
 import ConfirmPage from '~/pages/confirm.vue'
+import { makeAuthStub } from '../helpers/auth'
 
-type StubUser = {
-  id: string
-  email: string
-  app_metadata?: { provider?: string }
-  amr?: Array<{ method: string, timestamp: number }> | string[]
-}
-const userRef = ref<StubUser | null>(null)
-const routeStub = reactive<{ query: Record<string, string | undefined>, hash?: string }>({ query: {} })
+const userRef = ref<{ id: string } | null>(null)
+const authStub = makeAuthStub(userRef)
+const routeStub = reactive<{ query: Record<string, string | undefined> }>({ query: {} })
 
-mockNuxtImport('useSupabaseUser', () => () => userRef)
+mockNuxtImport('useAuth', () => () => authStub)
 mockNuxtImport('useRoute', () => () => routeStub)
 
-// The real `initLanguage` PUTs to the backend. Unmocked it 401s, and useApi's
-// interceptor then pushes /login — asynchronously, so the redirect lands in
-// whichever test happens to be running when the rejection settles.
-const { initLanguageMock } = vi.hoisted(() => ({ initLanguageMock: vi.fn() }))
-mockNuxtImport('useLanguage', () => () => ({ initLanguage: initLanguageMock }))
-
-const { toastAddMock } = vi.hoisted(() => ({ toastAddMock: vi.fn() }))
-mockNuxtImport('useToast', () => () => ({ add: toastAddMock }))
-
-function spyOnRouterPush(wrapper: { vm: { $router: { push: (...args: unknown[]) => unknown } } }) {
-  return vi.spyOn(wrapper.vm.$router, 'push').mockImplementation(() => Promise.resolve())
-}
-
-function spyOnRouterReplace(wrapper: { vm: { $router: { replace: (...args: unknown[]) => unknown } } }) {
-  return vi.spyOn(wrapper.vm.$router, 'replace').mockImplementation(() => Promise.resolve())
-}
-
 /**
- * Swaps in a partial `Location` so the page sees a real callback URL. Returns
- * the restore function — the real object has to come back before the next test.
+ * Swaps in a partial `Location` so the page can be watched navigating away.
+ * Returns the restore function — the real object has to come back before the
+ * next test.
  */
-function stubLocation(pathname: string, search: string, hash = '', replace = vi.fn()) {
+function stubLocation(replace = vi.fn()) {
   const original = window.location
   // @ts-expect-error - reassigning location is allowed in the test DOM
   delete window.location
   // @ts-expect-error - a partial Location is enough for these assertions
-  window.location = { ...original, pathname, search, hash, replace }
-  return () => {
+  window.location = { ...original, replace }
+  return { replace, restore: () => {
     // @ts-expect-error - restore the real Location object
     delete window.location
     // @ts-expect-error - restore the real Location object
     window.location = original
-  }
+  } }
 }
 
 describe('pages/confirm.vue', () => {
   let wrapper: Awaited<ReturnType<typeof mountSuspended>> | undefined
+  let location: ReturnType<typeof stubLocation> | undefined
 
   beforeEach(() => {
-    vi.useFakeTimers()
-    initLanguageMock.mockReset().mockResolvedValue(undefined)
-    toastAddMock.mockReset()
     userRef.value = null
     routeStub.query = {}
-    routeStub.hash = ''
+    authStub.fetchSession.mockReset().mockImplementation(async () => {
+      userRef.value = { id: 'user-1' }
+      return userRef.value
+    })
   })
 
   afterEach(() => {
-    vi.useRealTimers()
+    location?.restore()
+    location = undefined
     wrapper?.unmount()
     wrapper = undefined
   })
 
-  it('renders a loading indicator and confirming message initially', async () => {
+  it('reads the session the redirect established and shows the confirmation', async () => {
     wrapper = await mountSuspended(ConfirmPage)
-
-    expect(wrapper.findComponent({ name: 'UProgress' }).exists()).toBe(true)
-    expect(wrapper.text()).toContain('Confirming your session, please wait...')
-  })
-
-  it('displays the Email Confirmed screen once the user ref becomes truthy', async () => {
-    routeStub.query = { token_hash: 'tok', type: 'signup' }
-    userRef.value = null
-    wrapper = await mountSuspended(ConfirmPage)
-
-    expect(wrapper.findComponent({ name: 'UProgress' }).exists()).toBe(true)
-
-    userRef.value = { id: 'u1', email: 'user@example.com' }
     await flushPromises()
 
-    expect(wrapper.text()).toContain('Email Confirmed!')
-    expect(wrapper.text()).toContain('Your email has been successfully verified')
-    const button = wrapper.findComponent({ name: 'UButton' })
-    expect(button.exists()).toBe(true)
-    expect(button.props('label')).toBe('Explore Storefront')
+    // The cookie was set on the 302 that brought the browser here, so this is
+    // the first chance to learn who it belongs to.
+    expect(authStub.fetchSession).toHaveBeenCalledTimes(1)
+    expect(wrapper.text()).toContain('Email Confirmed')
   })
 
-  it('navigates to / when clicking Explore Storefront', async () => {
-    routeStub.query = { token_hash: 'tok', type: 'signup' }
-    userRef.value = { id: 'u1', email: 'user@example.com' }
+  it('offers a way on to the storefront', async () => {
     wrapper = await mountSuspended(ConfirmPage)
-    const pushSpy = spyOnRouterPush(wrapper)
-
     await flushPromises()
 
-    const button = wrapper.findComponent({ name: 'UButton' })
-    await button.trigger('click')
-
-    expect(pushSpy).toHaveBeenCalledWith('/')
+    const link = wrapper.findAll('a').find(a => a.attributes('href') === '/')
+    expect(link).toBeTruthy()
   })
 
-  it('navigates to redirect target when query has a safe redirect path', async () => {
-    userRef.value = { id: 'u1', email: 'user@example.com' }
-    routeStub.query = { redirect: '/items/item-1', token_hash: 'tok', type: 'signup' }
+  it('honours a safe redirect target', async () => {
+    routeStub.query = { redirect: '/orders' }
     wrapper = await mountSuspended(ConfirmPage)
-    const pushSpy = spyOnRouterPush(wrapper)
-
     await flushPromises()
 
-    const button = wrapper.findComponent({ name: 'UButton' })
-    await button.trigger('click')
-
-    expect(pushSpy).toHaveBeenCalledWith('/items/item-1')
+    const link = wrapper.findAll('a').find(a => a.attributes('href') === '/orders')
+    expect(link).toBeTruthy()
   })
 
-  it('auto-redirects to / after countdown expires', async () => {
-    routeStub.query = { token_hash: 'tok', type: 'signup' }
-    userRef.value = { id: 'u1', email: 'user@example.com' }
+  it('refuses an offsite redirect target', async () => {
+    routeStub.query = { redirect: '//evil.com/steal' }
     wrapper = await mountSuspended(ConfirmPage)
-    const pushSpy = spyOnRouterPush(wrapper)
-
-    await flushPromises()
-    expect(pushSpy).not.toHaveBeenCalled()
-
-    vi.advanceTimersByTime(5000)
     await flushPromises()
 
-    expect(pushSpy).toHaveBeenCalledWith('/')
+    expect(wrapper.html()).not.toContain('evil.com')
   })
 
-  it('displays the Verification Failed screen when error params are present', async () => {
-    routeStub.query = {
-      error: 'access_denied',
-      error_code: 'otp_expired',
-      error_description: 'Email link is invalid or has expired'
-    }
-
+  it('shows the failure screen when the backend rejected the link', async () => {
+    routeStub.query = { error: 'link_invalid' }
     wrapper = await mountSuspended(ConfirmPage)
+    await flushPromises()
 
     expect(wrapper.text()).toContain('Verification Failed')
     expect(wrapper.text()).toContain('Email link is invalid or has expired')
-    const button = wrapper.findComponent({ name: 'UButton' })
-    expect(button.exists()).toBe(true)
-    expect(button.props('label')).toBe('Back to Login')
+    // Nothing to read: the redirect that failed set no cookie.
+    expect(authStub.fetchSession).not.toHaveBeenCalled()
   })
 
-  // /confirm is the single Supabase auth callback route, so a Google sign-in
-  // lands here too. It is NOT an email confirmation: showing "Email Confirmed!"
-  // plus a countdown to someone who just clicked "Sign in with Google" is both
-  // wrong and a pointless interstitial.
-  describe('OAuth callback flow', () => {
-    it('redirects straight to / without showing the Email Confirmed screen', async () => {
-      routeStub.query = { flow: 'oauth' }
-      wrapper = await mountSuspended(ConfirmPage)
-      const replaceSpy = spyOnRouterReplace(wrapper)
-
-      userRef.value = { id: 'u1', email: 'user@example.com' }
-      await flushPromises()
-
-      expect(replaceSpy).toHaveBeenCalledWith('/')
-      expect(wrapper.text()).not.toContain('Email Confirmed!')
-    })
-
-    it('redirects to the safe redirect target when one is carried through', async () => {
-      routeStub.query = { flow: 'oauth', redirect: '/chat?item_id=item-1' }
-      wrapper = await mountSuspended(ConfirmPage)
-      const replaceSpy = spyOnRouterReplace(wrapper)
-
-      userRef.value = { id: 'u1', email: 'user@example.com' }
-      await flushPromises()
-
-      expect(replaceSpy).toHaveBeenCalledWith('/chat?item_id=item-1')
-    })
-
-    it('never renders the success screen when the session is already present at mount', async () => {
-      routeStub.query = { flow: 'oauth' }
-      userRef.value = { id: 'u1', email: 'user@example.com' }
+  describe('links that were already in an inbox', () => {
+    it('forwards a legacy ?code= to the API callback, which owns the exchange now', async () => {
+      location = stubLocation()
+      routeStub.query = { code: 'legacy-code' }
 
       wrapper = await mountSuspended(ConfirmPage)
       await flushPromises()
 
-      expect(wrapper.text()).not.toContain('Email Confirmed!')
-      expect(wrapper.text()).not.toContain('Explore Storefront')
+      expect(location.replace).toHaveBeenCalledTimes(1)
+      const forwarded = new URL(location.replace.mock.calls[0]![0] as string)
+      expect(forwarded.pathname).toBe('/auth/callback')
+      expect(forwarded.searchParams.get('code')).toBe('legacy-code')
+      // It must not try to confirm anything itself on the way past.
+      expect(authStub.fetchSession).not.toHaveBeenCalled()
     })
 
-    it('detects an untagged social callback from the session sign-in method', async () => {
-      routeStub.query = { code: 'abc' }
+    it('forwards a legacy ?token_hash= with its type intact', async () => {
+      location = stubLocation()
+      routeStub.query = { token_hash: 'legacy-hash', type: 'recovery' }
+
       wrapper = await mountSuspended(ConfirmPage)
-      const replaceSpy = spyOnRouterReplace(wrapper)
-
-      userRef.value = { id: 'u1', email: 'user@example.com', amr: [{ method: 'oauth', timestamp: 1 }] }
       await flushPromises()
 
-      expect(replaceSpy).toHaveBeenCalledWith('/')
-      expect(wrapper.text()).not.toContain('Email Confirmed!')
+      const forwarded = new URL(location.replace.mock.calls[0]![0] as string)
+      expect(forwarded.searchParams.get('token_hash')).toBe('legacy-hash')
+      expect(forwarded.searchParams.get('type')).toBe('recovery')
     })
-
-    it('still shows the success screen for an email-provider confirmation', async () => {
-      routeStub.query = { token_hash: 'tok', type: 'signup' }
-      wrapper = await mountSuspended(ConfirmPage)
-      const replaceSpy = spyOnRouterReplace(wrapper)
-
-      userRef.value = { id: 'u1', email: 'user@example.com', amr: [{ method: 'otp', timestamp: 1 }] }
-      await flushPromises()
-
-      expect(replaceSpy).not.toHaveBeenCalled()
-      expect(wrapper.text()).toContain('Email Confirmed!')
-    })
-
-    // The account's original provider is NOT how the current session signed in.
-    // An account created with a password and later linked to Google reports
-    // `app_metadata.provider === 'email'` on every Google login, forever. `amr`
-    // records what actually happened for THIS session.
-    it('detects a Google login on an account that was originally email/password', async () => {
-      routeStub.query = { code: 'abc' }
-      wrapper = await mountSuspended(ConfirmPage)
-      const replaceSpy = spyOnRouterReplace(wrapper)
-
-      userRef.value = {
-        id: 'u1',
-        email: 'user@example.com',
-        app_metadata: { provider: 'email' },
-        amr: [{ method: 'oauth', timestamp: 1 }]
-      }
-      await flushPromises()
-
-      expect(replaceSpy).toHaveBeenCalledWith('/')
-      expect(wrapper.text()).not.toContain('Email Confirmed!')
-    })
-
-    it('reads the string form of amr as well as the object form', async () => {
-      routeStub.query = { code: 'abc' }
-      wrapper = await mountSuspended(ConfirmPage)
-      const replaceSpy = spyOnRouterReplace(wrapper)
-
-      userRef.value = { id: 'u1', email: 'user@example.com', amr: ['oauth'] }
-      await flushPromises()
-
-      expect(replaceSpy).toHaveBeenCalledWith('/')
-    })
-
-    // Regression (SPEC-032): the visitor stayed on the spinner forever after a
-    // Google login. `auth-redirect.global` reads `window.location` on the first
-    // navigation, and the browser URL is still the spent `/confirm?code=...`
-    // until the outgoing navigation commits — so the redirect away from here
-    // was bounced straight back. Clearing the params first closes that window.
-    it('clears the callback params from the URL before navigating away', async () => {
-      routeStub.query = { flow: 'oauth', code: 'abc' }
-      wrapper = await mountSuspended(ConfirmPage)
-
-      const restore = stubLocation('/confirm', '?flow=oauth&code=abc')
-      const replaceStateSpy = vi.spyOn(window.history, 'replaceState')
-      const replaceSpy = spyOnRouterReplace(wrapper)
-
-      userRef.value = { id: 'u1', email: 'user@example.com' }
-      await flushPromises()
-
-      expect(replaceStateSpy).toHaveBeenCalled()
-      expect(replaceSpy).toHaveBeenCalledWith('/')
-      expect(replaceStateSpy.mock.invocationCallOrder[0]!)
-        .toBeLessThan(replaceSpy.mock.invocationCallOrder[0]!)
-
-      restore()
-    })
-
-    // Belt and braces: if the router navigation is swallowed for any reason,
-    // the callback page must not leave the visitor stranded on the spinner.
-    it('falls back to a hard navigation when the router redirect is swallowed', async () => {
-      routeStub.query = { flow: 'oauth', code: 'abc' }
-      wrapper = await mountSuspended(ConfirmPage)
-
-      const hardReplace = vi.fn()
-      const restore = stubLocation('/confirm', '', '', hardReplace)
-      spyOnRouterReplace(wrapper)
-
-      userRef.value = { id: 'u1', email: 'user@example.com' }
-      await flushPromises()
-      expect(hardReplace).not.toHaveBeenCalled()
-
-      vi.advanceTimersByTime(3000)
-      await flushPromises()
-
-      expect(hardReplace).toHaveBeenCalledWith('/')
-
-      restore()
-    })
-
-    // SPEC-034: the password login ends on a "Welcome back!" toast. A Google
-    // login has to raise it here — `signInWithOAuth` navigates the browser to
-    // Google, so login.vue is gone long before the sign-in succeeds.
-    describe('success toast', () => {
-      const SUCCESS_TOAST = {
-        title: 'Welcome back!',
-        description: 'You have logged in successfully.',
-        color: 'success'
-      }
-
-      it('raises the same success toast as the password login', async () => {
-        routeStub.query = { flow: 'oauth' }
-        wrapper = await mountSuspended(ConfirmPage)
-        spyOnRouterReplace(wrapper)
-
-        userRef.value = { id: 'u1', email: 'user@example.com' }
-        await flushPromises()
-
-        expect(toastAddMock).toHaveBeenCalledWith(SUCCESS_TOAST)
-      })
-
-      it('toasts an untagged social callback detected from amr', async () => {
-        routeStub.query = { code: 'abc' }
-        wrapper = await mountSuspended(ConfirmPage)
-        spyOnRouterReplace(wrapper)
-
-        userRef.value = { id: 'u1', email: 'user@example.com', amr: [{ method: 'oauth', timestamp: 1 }] }
-        await flushPromises()
-
-        expect(toastAddMock).toHaveBeenCalledWith(SUCCESS_TOAST)
-      })
-
-      // `onAuthStateChange`, the user watcher and the code exchange can all
-      // report the same sign-in. One login, one toast.
-      it('toasts once however many signals report the session', async () => {
-        routeStub.query = { flow: 'oauth', code: 'abc' }
-        wrapper = await mountSuspended(ConfirmPage)
-        spyOnRouterReplace(wrapper)
-
-        userRef.value = { id: 'u1', email: 'user@example.com' }
-        await flushPromises()
-        userRef.value = { id: 'u1', email: 'user@example.com', amr: ['oauth'] }
-        await flushPromises()
-        vi.advanceTimersByTime(2000)
-        await flushPromises()
-
-        expect(toastAddMock).toHaveBeenCalledTimes(1)
-      })
-
-      it('stays silent on an email confirmation', async () => {
-        routeStub.query = { token_hash: 'tok', type: 'signup' }
-        wrapper = await mountSuspended(ConfirmPage)
-
-        userRef.value = { id: 'u1', email: 'user@example.com', amr: [{ method: 'otp', timestamp: 1 }] }
-        await flushPromises()
-
-        expect(wrapper.text()).toContain('Email Confirmed!')
-        expect(toastAddMock).not.toHaveBeenCalled()
-      })
-
-      // Nothing was signed in here, so announcing a login would be untrue.
-      it('stays silent on a stray visit with an existing password session', async () => {
-        wrapper = await mountSuspended(ConfirmPage)
-        spyOnRouterReplace(wrapper)
-
-        userRef.value = { id: 'u1', email: 'user@example.com', amr: [{ method: 'password', timestamp: 1 }] }
-        await flushPromises()
-
-        expect(toastAddMock).not.toHaveBeenCalled()
-      })
-
-      it('stays silent when the provider returns an error', async () => {
-        routeStub.query = { flow: 'oauth', error: 'access_denied', error_code: 'otp_expired' }
-        wrapper = await mountSuspended(ConfirmPage)
-        await flushPromises()
-
-        expect(toastAddMock).not.toHaveBeenCalled()
-      })
-    })
-
-    it('does not start the countdown on the OAuth path', async () => {
-      routeStub.query = { flow: 'oauth' }
-      wrapper = await mountSuspended(ConfirmPage)
-      const pushSpy = spyOnRouterPush(wrapper)
-      spyOnRouterReplace(wrapper)
-
-      userRef.value = { id: 'u1', email: 'user@example.com' }
-      await flushPromises()
-
-      vi.advanceTimersByTime(6000)
-      await flushPromises()
-
-      expect(pushSpy).not.toHaveBeenCalled()
-    })
-  })
-
-  // Landing on /confirm with a session but no confirmation params at all means
-  // nothing was confirmed — the visitor just navigated to the callback route.
-  // Announcing "Email Confirmed!" there is simply untrue.
-  describe('stray navigation to /confirm', () => {
-    it('redirects away instead of claiming a confirmation happened', async () => {
-      wrapper = await mountSuspended(ConfirmPage)
-      const replaceSpy = spyOnRouterReplace(wrapper)
-
-      userRef.value = { id: 'u1', email: 'user@example.com', amr: [{ method: 'password', timestamp: 1 }] }
-      await flushPromises()
-
-      expect(wrapper.text()).not.toContain('Email Confirmed!')
-      expect(replaceSpy).toHaveBeenCalledWith('/')
-    })
-
-    it('honours the redirect target on a stray visit', async () => {
-      routeStub.query = { redirect: '/orders' }
-      wrapper = await mountSuspended(ConfirmPage)
-      const replaceSpy = spyOnRouterReplace(wrapper)
-
-      userRef.value = { id: 'u1', email: 'user@example.com' }
-      await flushPromises()
-
-      expect(replaceSpy).toHaveBeenCalledWith('/orders')
-    })
-  })
-
-  it('points Back to Login button to loginRedirect with redirect query when present', async () => {
-    routeStub.query = {
-      error: 'access_denied',
-      error_code: 'otp_expired',
-      redirect: '/chat?item_id=item-1'
-    }
-
-    wrapper = await mountSuspended(ConfirmPage)
-
-    const empty = wrapper.findComponent({ name: 'UEmpty' })
-    expect(empty.props('actions')).toEqual([
-      expect.objectContaining({
-        label: 'Back to Login',
-        to: { path: '/login', query: { redirect: '/chat?item_id=item-1' } }
-      })
-    ])
   })
 })

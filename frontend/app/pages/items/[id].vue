@@ -70,7 +70,7 @@ const imagesList = computed<string[]>(() => {
 })
 
 const buyLoading = ref(false)
-const user = useSupabaseUser()
+const { user } = useAuth()
 
 async function handleBuyNow() {
   if (!user.value) {

@@ -1,12 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { reactive } from 'vue'
+import { reactive, ref } from 'vue'
 import { mockNuxtImport } from '@nuxt/test-utils/runtime'
 import { useApi } from '../../app/composables/useApi'
+import { makeAuthStub } from '../helpers/auth'
 
-const { getSessionMock, signOutMock } = vi.hoisted(() => ({
-  getSessionMock: vi.fn(),
-  signOutMock: vi.fn()
-}))
+const userRef = ref<{ id: string } | null>({ id: 'u1' })
+const authStub = makeAuthStub(userRef)
 
 const { toastAddMock } = vi.hoisted(() => ({
   toastAddMock: vi.fn()
@@ -20,14 +19,7 @@ const { fetchMock } = vi.hoisted(() => ({
   fetchMock: vi.fn().mockResolvedValue({ ok: true })
 }))
 
-mockNuxtImport('useSupabaseClient', () => {
-  return () => ({
-    auth: {
-      getSession: getSessionMock,
-      signOut: signOutMock
-    }
-  })
-})
+mockNuxtImport('useAuth', () => () => authStub)
 
 mockNuxtImport('useToast', () => {
   return () => ({
@@ -48,8 +40,9 @@ mockNuxtImport('useRoute', () => () => routeStub)
 // "Cannot find import "$fetch" to mock" — stub the global directly instead.
 describe('composables/useApi', () => {
   beforeEach(() => {
-    getSessionMock.mockReset().mockResolvedValue({ data: { session: null } })
-    signOutMock.mockReset().mockResolvedValue({ error: null })
+    authStub.clearSession.mockClear()
+    userRef.value = { id: 'u1' }
+    document.cookie = 'nl_csrf=csrf-abc'
     toastAddMock.mockReset()
     navigateToMock.mockReset()
     fetchMock.mockReset().mockResolvedValue({ ok: true })
@@ -66,19 +59,18 @@ describe('composables/useApi', () => {
     expect(url).toBe('http://localhost:8000/orders')
   })
 
-  it('adds an Authorization header when a session exists', async () => {
-    getSessionMock.mockResolvedValue({ data: { session: { access_token: 'token-123' } } })
-
+  // SPEC-093: the session is an httpOnly cookie on the API host, and this app is
+  // a different origin from it. Without `credentials: 'include'` the browser
+  // sends no cookie at all and every call 401s.
+  it('sends the session cookie cross-origin', async () => {
     const { call } = useApi()
     await call('/orders')
 
     const [, options] = fetchMock.mock.calls[0]
-    expect(options.headers).toMatchObject({ Authorization: 'Bearer token-123' })
+    expect(options.credentials).toBe('include')
   })
 
-  it('omits the Authorization header when there is no session', async () => {
-    getSessionMock.mockResolvedValue({ data: { session: null } })
-
+  it('never sends an Authorization header, because there is no token to send', async () => {
     const { call } = useApi()
     await call('/orders')
 
@@ -86,14 +78,22 @@ describe('composables/useApi', () => {
     expect(options.headers).not.toHaveProperty('Authorization')
   })
 
-  it('lets caller-supplied headers override the session Authorization header (spread order)', async () => {
-    getSessionMock.mockResolvedValue({ data: { session: { access_token: 'token-123' } } })
-
+  // The cookie is auto-sent, which is exactly what a bearer header was not — so
+  // a mutating call has to prove it came from this app, not from another origin.
+  it('echoes the CSRF cookie back as a header', async () => {
     const { call } = useApi()
-    await call('/orders', { headers: { 'Authorization': 'Custom scheme', 'X-Test': '1' } })
+    await call('/chat/read', { method: 'POST' })
 
     const [, options] = fetchMock.mock.calls[0]
-    expect(options.headers).toMatchObject({ 'Authorization': 'Custom scheme', 'X-Test': '1' })
+    expect(options.headers).toMatchObject({ 'X-CSRF-Token': 'csrf-abc' })
+  })
+
+  it('lets caller-supplied headers win over the computed ones (spread order)', async () => {
+    const { call } = useApi()
+    await call('/orders', { headers: { 'X-CSRF-Token': 'explicit', 'X-Test': '1' } })
+
+    const [, options] = fetchMock.mock.calls[0]
+    expect(options.headers).toMatchObject({ 'X-CSRF-Token': 'explicit', 'X-Test': '1' })
   })
 
   it('preserves other caller-supplied opts alongside the computed headers', async () => {
@@ -124,7 +124,7 @@ describe('composables/useApi', () => {
     }
 
     // SPEC-056 #3/#7. Re-authentication endpoints answer 401 for "that password
-    // is wrong", which says nothing about the bearer token that carried the
+    // is wrong", which says nothing about the session cookie that carried the
     // request. Signing the user out on it would mean mistyping your password on
     // the profile page logs you out of a session that was never in doubt.
     it('keeps the session when a re-auth call reports a wrong password', async () => {
@@ -132,7 +132,7 @@ describe('composables/useApi', () => {
 
       await onResponseError({ response: { status: 401, _data: { detail: 'Current password is incorrect' } } })
 
-      expect(signOutMock).not.toHaveBeenCalled()
+      expect(authStub.clearSession).not.toHaveBeenCalled()
       expect(navigateToMock).not.toHaveBeenCalled()
     })
 
@@ -141,7 +141,7 @@ describe('composables/useApi', () => {
 
       await onResponseError({ response: { status: 403, _data: { detail: 'Account banned' } } })
 
-      expect(signOutMock).toHaveBeenCalledTimes(1)
+      expect(authStub.clearSession).toHaveBeenCalledTimes(1)
     })
 
     it('signs out and redirects to /login on a 401', async () => {
@@ -149,7 +149,7 @@ describe('composables/useApi', () => {
 
       await onResponseError({ response: { status: 401, _data: {} } })
 
-      expect(signOutMock).toHaveBeenCalledTimes(1)
+      expect(authStub.clearSession).toHaveBeenCalledTimes(1)
       expect(navigateToMock).toHaveBeenCalledWith({ path: '/login' })
       expect(toastAddMock).not.toHaveBeenCalled()
     })
@@ -159,7 +159,7 @@ describe('composables/useApi', () => {
 
       await onResponseError({ response: { status: 403, _data: { detail: 'You have been BANNED for spamming' } } })
 
-      expect(signOutMock).toHaveBeenCalledTimes(1)
+      expect(authStub.clearSession).toHaveBeenCalledTimes(1)
       expect(navigateToMock).toHaveBeenCalledWith({ path: '/login' })
     })
 
@@ -182,7 +182,7 @@ describe('composables/useApi', () => {
       await onResponseError({ response: { status: 401, _data: { detail: 'expired token' } } })
 
       expect(toastAddMock).not.toHaveBeenCalled()
-      expect(signOutMock).toHaveBeenCalledTimes(1)
+      expect(authStub.clearSession).toHaveBeenCalledTimes(1)
       expect(navigateToMock).toHaveBeenCalledWith({ path: '/login' })
     })
 
@@ -236,7 +236,7 @@ describe('composables/useApi', () => {
 
       await onResponseError({ response: { status: 403, _data: { detail: 'forbidden: insufficient permissions' } } })
 
-      expect(signOutMock).not.toHaveBeenCalled()
+      expect(authStub.clearSession).not.toHaveBeenCalled()
       expect(navigateToMock).not.toHaveBeenCalled()
       expect(toastAddMock).not.toHaveBeenCalled()
     })
@@ -246,7 +246,7 @@ describe('composables/useApi', () => {
 
       await onResponseError({ response: { status: 403, _data: { detail: { code: 'banned' } } } })
 
-      expect(signOutMock).not.toHaveBeenCalled()
+      expect(authStub.clearSession).not.toHaveBeenCalled()
       expect(navigateToMock).not.toHaveBeenCalled()
       expect(toastAddMock).not.toHaveBeenCalled()
     })
@@ -256,7 +256,7 @@ describe('composables/useApi', () => {
 
       await onResponseError({ response: { status: 403 } })
 
-      expect(signOutMock).not.toHaveBeenCalled()
+      expect(authStub.clearSession).not.toHaveBeenCalled()
       expect(navigateToMock).not.toHaveBeenCalled()
       expect(toastAddMock).not.toHaveBeenCalled()
     })
@@ -266,7 +266,7 @@ describe('composables/useApi', () => {
 
       await onResponseError({ response: { status: 500, _data: { detail: 'server error' } } })
 
-      expect(signOutMock).not.toHaveBeenCalled()
+      expect(authStub.clearSession).not.toHaveBeenCalled()
       expect(navigateToMock).not.toHaveBeenCalled()
       expect(toastAddMock).not.toHaveBeenCalled()
     })

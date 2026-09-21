@@ -55,15 +55,18 @@ async def loop_ticks():
 
 def slow(return_value, delay=0.2):
     """A synchronous stand-in that sleeps — i.e. blocks whatever thread runs it."""
+
     def _call(*_args, **_kwargs):
         time.sleep(delay)
         return return_value
+
     return _call
 
 
 # ---------------------------------------------------------------------------
 # D — the Redis calls SPEC-023 didn't cover stay off the event loop
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_token_cache_lookup_does_not_block_the_event_loop(monkeypatch):
@@ -72,12 +75,13 @@ async def test_token_cache_lookup_does_not_block_the_event_loop(monkeypatch):
     SPEC-023's comment in this very function explains why the Supabase call
     below it is threaded — the Redis GET above it was left synchronous.
     """
-    import auth_middleware
+    import domains.identity.auth_middleware as auth_middleware
 
     monkeypatch.setattr(auth_middleware, "get_cached_user_by_token", slow("cached-user"))
     monkeypatch.setattr(auth_middleware, "_is_user_banned", lambda _uid: False)
 
     from types import SimpleNamespace
+
     request = SimpleNamespace(headers={"Authorization": "Bearer warm-token"}, query_params={})
 
     async with loop_ticks() as counter:
@@ -88,11 +92,9 @@ async def test_token_cache_lookup_does_not_block_the_event_loop(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_chat_rate_limit_check_does_not_block_the_event_loop(
-    client, monkeypatch, patch_supabase, fake_supabase
-):
+async def test_chat_rate_limit_check_does_not_block_the_event_loop(client, monkeypatch, patch_supabase, fake_supabase):
     """The per-user message limiter is consulted before every single turn."""
-    import routes.chat as chat_routes
+    import domains.negotiation.routes as chat_routes
 
     async def _fake_verify(_request):
         return "u1"
@@ -100,7 +102,7 @@ async def test_chat_rate_limit_check_does_not_block_the_event_loop(
     monkeypatch.setattr(chat_routes, "verify_user_token", _fake_verify)
     # False => cooldown path, which short-circuits before the agent runs.
     monkeypatch.setattr(chat_routes, "check_rate_limit", slow(False))
-    patch_supabase("routes.chat", admin=fake_supabase)
+    patch_supabase("domains.negotiation.routes", admin=fake_supabase)
 
     async with loop_ticks() as counter:
         resp = await client.post(
@@ -115,10 +117,8 @@ async def test_chat_rate_limit_check_does_not_block_the_event_loop(
 
 
 @pytest.mark.asyncio
-async def test_ai_token_budget_check_does_not_block_the_event_loop(
-    client, monkeypatch, patch_supabase, fake_supabase
-):
-    import routes.chat as chat_routes
+async def test_ai_token_budget_check_does_not_block_the_event_loop(client, monkeypatch, patch_supabase, fake_supabase):
+    import domains.negotiation.routes as chat_routes
 
     async def _fake_verify(_request):
         return "u2"
@@ -126,12 +126,14 @@ async def test_ai_token_budget_check_does_not_block_the_event_loop(
     monkeypatch.setattr(chat_routes, "verify_user_token", _fake_verify)
     monkeypatch.setattr(chat_routes, "check_rate_limit", lambda *a, **k: True)
     monkeypatch.setattr(chat_routes, "check_ai_token_limit", slow((False, 999)))
-    patch_supabase("routes.chat", admin=fake_supabase)
+    patch_supabase("domains.negotiation.routes", admin=fake_supabase)
 
-    import agent.memory as memory_module
+    import domains.negotiation.memory as memory_module
+
     monkeypatch.setattr(memory_module.conversation_memory, "add_message", lambda *a, **k: None)
 
-    import payment.fulfillment as fulfillment
+    import domains.billing.fulfillment as fulfillment
+
     monkeypatch.setattr(fulfillment, "broadcast_to_chat", lambda *a, **k: None)
 
     async with loop_ticks() as counter:
@@ -146,11 +148,9 @@ async def test_ai_token_budget_check_does_not_block_the_event_loop(
 
 
 @pytest.mark.asyncio
-async def test_token_usage_tracking_does_not_block_the_event_loop(
-    client, monkeypatch, patch_supabase, fake_supabase
-):
+async def test_token_usage_tracking_does_not_block_the_event_loop(client, monkeypatch, patch_supabase, fake_supabase):
     """`track_ai_tokens` runs after every completed turn."""
-    import routes.chat as chat_routes
+    import domains.negotiation.routes as chat_routes
 
     async def _fake_verify(_request):
         return "u3"
@@ -159,16 +159,17 @@ async def test_token_usage_tracking_does_not_block_the_event_loop(
     monkeypatch.setattr(chat_routes, "check_rate_limit", lambda *a, **k: True)
     monkeypatch.setattr(chat_routes, "check_ai_token_limit", lambda *a, **k: (True, 0))
     monkeypatch.setattr(chat_routes, "track_ai_tokens", slow(None))
-    patch_supabase("routes.chat", admin=fake_supabase)
+    patch_supabase("domains.negotiation.routes", admin=fake_supabase)
 
-    import agent.bot as bot_module
+    import domains.negotiation.bot as bot_module
 
     async def _fake_stream(**_kwargs):
         yield "hello"
 
     monkeypatch.setattr(bot_module, "chat_stream", _fake_stream)
 
-    import payment.fulfillment as fulfillment
+    import domains.billing.fulfillment as fulfillment
+
     monkeypatch.setattr(fulfillment, "broadcast_to_chat", lambda *a, **k: None)
 
     async with loop_ticks() as counter:
@@ -186,9 +187,10 @@ async def test_token_usage_tracking_does_not_block_the_event_loop(
 # D — the Redis connection pool is bounded
 # ---------------------------------------------------------------------------
 
+
 def test_redis_client_is_created_with_an_explicit_max_connections(monkeypatch):
     """An unbounded pool lets a burst open connections without limit."""
-    import cache
+    import core.cache as cache
 
     captured = {}
 
@@ -212,6 +214,7 @@ def test_redis_client_is_created_with_an_explicit_max_connections(monkeypatch):
 # D — rate limits are actually applied to routes (SPEC-077 / IPRateLimitMiddleware)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize(
     "path,expected_bucket",
     [
@@ -226,7 +229,7 @@ def test_redis_client_is_created_with_an_explicit_max_connections(monkeypatch):
 )
 def test_hot_endpoints_have_a_rate_limit_applied(path, expected_bucket):
     """SPEC-077 / TODO 64: IPRateLimitMiddleware routes map to dedicated rate limit buckets."""
-    from limiter import resolve_route_limit
+    from core.limiter import resolve_route_limit
 
     bucket, limit = resolve_route_limit(path)
     assert bucket == expected_bucket
@@ -239,7 +242,7 @@ async def test_the_shared_limiter_actually_rejects_over_its_limit():
     without firing a production-sized number of requests at a real route."""
     from slowapi import _rate_limit_exceeded_handler
 
-    from limiter import limiter
+    from core.limiter import limiter
 
     probe = FastAPI()
     probe.state.limiter = limiter
@@ -267,14 +270,13 @@ async def test_the_shared_limiter_actually_rejects_over_its_limit():
 
 
 @pytest.mark.asyncio
-async def test_a_rate_limited_route_still_answers_normally_under_the_limit(
-    client, monkeypatch
-):
+async def test_a_rate_limited_route_still_answers_normally_under_the_limit(client, monkeypatch):
     """Applying limits must not change the happy path."""
-    import routes.items as routes_items
+    import domains.catalog.routes as routes_items
 
     monkeypatch.setattr(
-        routes_items, "get_items",
+        routes_items,
+        "get_items",
         lambda keyword=None: [{"id": "item-1", "name": "Widget", "image_path": None}],
     )
 

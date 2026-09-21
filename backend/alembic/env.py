@@ -15,7 +15,7 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), '.env')
+env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env")
 load_dotenv(dotenv_path=env_path)
 
 # add your model's MetaData object here
@@ -46,7 +46,8 @@ def run_migrations_offline() -> None:
     if url == "driver://user:pass@localhost/dbname":
         import os
 
-        from env import DATABASE_URL
+        from core.env import DATABASE_URL
+
         print(f"DEBUG OFFLINE: from env DATABASE_URL import='{DATABASE_URL}'")
         url = os.environ.get("DATABASE_URL", DATABASE_URL)
         print(f"DEBUG OFFLINE: final url='{url}'")
@@ -73,7 +74,8 @@ def run_migrations_online() -> None:
     if section.get("sqlalchemy.url") == "driver://user:pass@localhost/dbname":
         import os
 
-        from env import DATABASE_URL
+        from core.env import DATABASE_URL
+
         print(f"DEBUG ONLINE: from env DATABASE_URL import='{DATABASE_URL}'")
         print(f"DEBUG ONLINE: os.environ.get='{os.environ.get('DATABASE_URL')}'")
         section["sqlalchemy.url"] = os.environ.get("DATABASE_URL", DATABASE_URL)
@@ -86,9 +88,7 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
-        context.configure(
-            connection=connection, target_metadata=target_metadata
-        )
+        context.configure(connection=connection, target_metadata=target_metadata)
 
         with context.begin_transaction():
             context.run_migrations()

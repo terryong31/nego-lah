@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mockNuxtImport, mountSuspended } from '@nuxt/test-utils/runtime'
 import IndexPage from '~/pages/index.vue'
+import { makeAuthStub } from '../helpers/auth'
 
 /**
  * SPEC-069 reframed this page: it used to sell one seller's stuff in the first
@@ -12,7 +13,8 @@ const { userRef } = vi.hoisted(() => ({
   userRef: { __v_isRef: true, value: null as Record<string, unknown> | null }
 }))
 
-mockNuxtImport('useSupabaseUser', () => () => userRef)
+const authStub = makeAuthStub(userRef)
+mockNuxtImport('useAuth', () => () => authStub)
 
 describe('pages/index.vue', () => {
   beforeEach(() => {

@@ -21,7 +21,7 @@ from unittest.mock import MagicMock
 
 from langchain_core.messages import HumanMessage
 
-from agent.tools.image_analyzer import (
+from domains.negotiation.tools.image_analyzer import (
     MAX_ANALYSIS_IMAGES,
     ImageAnalyzerService,
     image_analyzer,
@@ -74,13 +74,13 @@ def test_init_without_gemini_key_leaves_model_none(monkeypatch):
     # (`from env import GEMINI_API_KEY`), so patch it on the *consuming*
     # module directly rather than via os.environ (which would have no
     # effect on the already-bound name).
-    monkeypatch.setattr("agent.tools.image_analyzer.GEMINI_API_KEY", "", raising=False)
+    monkeypatch.setattr("domains.negotiation.tools.image_analyzer.GEMINI_API_KEY", "", raising=False)
     service = ImageAnalyzerService()
     assert service.model is None
 
 
 def test_init_with_none_gemini_key_leaves_model_none(monkeypatch):
-    monkeypatch.setattr("agent.tools.image_analyzer.GEMINI_API_KEY", None, raising=False)
+    monkeypatch.setattr("domains.negotiation.tools.image_analyzer.GEMINI_API_KEY", None, raising=False)
     service = ImageAnalyzerService()
     assert service.model is None
 
@@ -91,7 +91,7 @@ def test_init_with_none_gemini_key_leaves_model_none(monkeypatch):
 
 
 async def test_analyze_returns_fallback_immediately_when_model_is_none(monkeypatch):
-    monkeypatch.setattr("agent.tools.image_analyzer.GEMINI_API_KEY", "", raising=False)
+    monkeypatch.setattr("domains.negotiation.tools.image_analyzer.GEMINI_API_KEY", "", raising=False)
     service = ImageAnalyzerService()
     assert service.model is None
 
@@ -266,9 +266,7 @@ async def test_analyze_with_empty_images_list(monkeypatch):
 
 
 async def test_analyze_malformed_json_returns_fallback(monkeypatch):
-    _patch_invoke(
-        monkeypatch, return_value=_fake_response("```json\n{not valid json!!\n```")
-    )
+    _patch_invoke(monkeypatch, return_value=_fake_response("```json\n{not valid json!!\n```"))
 
     result = await image_analyzer.analyze(SAMPLE_IMAGES)
 
@@ -314,10 +312,7 @@ async def test_analyze_non_dict_json_result_returns_fallback(monkeypatch):
 
 async def test_only_the_first_max_analysis_images_are_sent(monkeypatch):
     mock_invoke = _patch_invoke(monkeypatch, return_value=_fake_response('{"name": "Capped"}'))
-    many = [
-        {"base64_image": f"img{i}", "mime_type": "image/png"}
-        for i in range(MAX_ANALYSIS_IMAGES + 3)
-    ]
+    many = [{"base64_image": f"img{i}", "mime_type": "image/png"} for i in range(MAX_ANALYSIS_IMAGES + 3)]
 
     await image_analyzer.analyze(many)
 

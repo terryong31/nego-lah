@@ -3,7 +3,7 @@ import type { FormSubmitEvent } from '@nuxt/ui'
 import { forgotPasswordSchema, type ForgotPasswordForm } from '~/utils/schemas'
 
 const { t } = useI18n()
-const supabase = useSupabaseClient()
+const { forgotPassword } = useAuth()
 const toast = useToast()
 
 useSeoMeta({ title: () => t('auth.forgotPasswordTitle') })
@@ -31,11 +31,10 @@ async function onSubmit(payload: FormSubmitEvent<ForgotPasswordForm>) {
   }
   loading.value = true
   try {
-    const { error } = await supabase.auth.resetPasswordForEmail(payload.data.email, {
-      redirectTo: `${window.location.origin}/reset-password`,
-      captchaToken: turnstileToken.value || undefined
-    })
-    if (error) throw error
+    // The link in the email points at the API's callback, not at this app: the
+    // backend redeems it, opens the session and 302s the browser to
+    // /reset-password with the cookie already set (SPEC-093).
+    await forgotPassword(payload.data.email, turnstileToken.value)
     sent.value = true
     toast.add({
       title: t('auth.checkInbox'),

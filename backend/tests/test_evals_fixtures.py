@@ -6,9 +6,9 @@ including the property that matters — with the stub in place the tool reaches 
 real verdict instead of the not-found string.
 """
 
-import agent.bot as bot
-from agent import context
-from agent.tools.negotiation import evaluate_offer
+import domains.negotiation.bot as bot
+from domains.negotiation import context
+from domains.negotiation.tools.negotiation import evaluate_offer
 from evals.fixtures import item_row, scenario_item
 from evals.scenarios import CASIO
 
@@ -47,7 +47,7 @@ def test_an_offer_below_the_floor_is_not_accepted():
 def test_the_stub_is_removed_on_exit():
     with scenario_item(CASIO):
         pass
-    assert bot.get_item_details_for_context.__module__ == "agent.bot"
+    assert bot.get_item_details_for_context.__module__ == "domains.negotiation.bot"
 
 
 def test_unused_query_builders_chain_instead_of_raising():
@@ -71,13 +71,13 @@ def test_non_item_tables_return_nothing():
 
 def test_every_client_the_agent_tools_reach_for_is_stubbed():
     """One scenario errored with `invalid input syntax for type uuid` because
-    `agent/tools/items.py` uses `user_supabase` and `agent/tools/orders.py`
-    binds `admin_supabase` at module level — neither was covered by patching
-    `connector.admin_supabase` alone."""
-    import agent.tools.orders as orders
-    import connector
+    The agent's item reads go through `CatalogService` and its order reads
+    through `BillingService`; both bind their clients at module level, so
+    neither is covered by patching `core.connector.admin_supabase` alone."""
+    import core.connector as connector
+    import domains.billing.services as billing_services
 
     with scenario_item(CASIO):
         assert connector.admin_supabase.table("items").select("*").execute().data
         assert connector.user_supabase.table("items").select("*").execute().data
-        assert orders.admin_supabase.table("orders").select("*").execute().data == []
+        assert billing_services.admin_supabase.table("orders").select("*").execute().data == []

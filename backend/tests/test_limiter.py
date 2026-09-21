@@ -6,8 +6,8 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
-import limiter as limiter_module
-from cache import _InMemoryRedis
+import core.limiter as limiter_module
+from core.cache import _InMemoryRedis
 
 
 def test_limiter_is_a_slowapi_limiter_instance():
@@ -22,7 +22,7 @@ def test_limiter_key_func_is_get_remote_address():
 def test_use_redis_reflects_in_memory_fallback_in_tests():
     # conftest.py forces VERCEL=1 and strips REDIS_URL, so cache.redis_client is
     # always the in-memory fallback during the test suite, never a real Redis client.
-    from cache import redis_client
+    from core.cache import redis_client
 
     assert isinstance(redis_client, _InMemoryRedis)
     assert limiter_module._use_redis is False
@@ -46,7 +46,7 @@ def test_use_redis_would_be_true_if_redis_client_were_real(monkeypatch):
     # Sanity-check the boolean logic in isolation: _use_redis is defined as
     # `not isinstance(redis_client, _InMemoryRedis)`, so swap in a plain object
     # standing in for a real redis client and confirm the predicate flips.
-    import cache
+    import core.cache as cache
 
     class _FakeRealRedisClient:
         pass

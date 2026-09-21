@@ -14,7 +14,7 @@ only when the buyer asks something the words cannot answer.
 
 import pytest
 
-from agent.knowledge import (
+from domains.negotiation.knowledge import (
     MAX_DESCRIPTION_CHARS,
     item_knowledge_card,
     turn_needs_vision,
@@ -31,6 +31,7 @@ ITEM = {
 # ---------------------------------------------------------------------------
 # The card
 # ---------------------------------------------------------------------------
+
 
 def test_the_card_carries_what_a_negotiation_actually_needs():
     card = item_knowledge_card(ITEM)
@@ -69,37 +70,47 @@ def test_the_price_is_rendered_as_ringgit():
 # When vision is still worth paying for
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("message", [
-    "can you do RM80?",
-    "is this still available?",
-    "ok deal, send me the link",
-    "how much for two?",
-    "",
-])
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "can you do RM80?",
+        "is this still available?",
+        "ok deal, send me the link",
+        "how much for two?",
+        "",
+    ],
+)
 def test_an_ordinary_turn_does_not_need_the_photos(message):
     assert turn_needs_vision(message, files=None, has_description=True) is False
 
 
-@pytest.mark.parametrize("message", [
-    "any scratches on the back?",
-    "what colour is it exactly?",
-    "can you send a photo of the screen?",
-    "does it look worn?",
-    "is there a dent anywhere?",
-    "show me the picture again",
-    "how bad is the damage",
-])
+@pytest.mark.parametrize(
+    "message",
+    [
+        "any scratches on the back?",
+        "what colour is it exactly?",
+        "can you send a photo of the screen?",
+        "does it look worn?",
+        "is there a dent anywhere?",
+        "show me the picture again",
+        "how bad is the damage",
+    ],
+)
 def test_a_visual_question_brings_the_photos_back(message):
     assert turn_needs_vision(message, files=None, has_description=True) is True
 
 
-@pytest.mark.parametrize("message", [
-    "ada calar tak?",          # any scratches?
-    "warna apa ni?",           # what colour is this?
-    "boleh tengok gambar?",    # can I see the picture?
-    "有刮痕吗?",                # any scratches?
-    "可以看照片吗?",             # can I see photos?
-])
+@pytest.mark.parametrize(
+    "message",
+    [
+        "ada calar tak?",  # any scratches?
+        "warna apa ni?",  # what colour is this?
+        "boleh tengok gambar?",  # can I see the picture?
+        "有刮痕吗?",  # any scratches?
+        "可以看照片吗?",  # can I see photos?
+    ],
+)
 def test_visual_questions_work_in_the_other_two_languages(message):
     """The store is trilingual; a Malay buyer asking about scratches must get
     the same answer as an English one."""
@@ -119,21 +130,24 @@ def test_without_a_description_the_photos_are_the_only_visual_information():
 
 
 def test_the_match_is_on_words_not_substrings():
-    """"scratch" inside another word must not trigger a vision turn."""
+    """ "scratch" inside another word must not trigger a vision turn."""
     assert turn_needs_vision("from scratch I built one", files=None, has_description=True) is True
     # ...but an unrelated word that merely contains a trigger must not.
     assert turn_needs_vision("I need to reschedule", files=None, has_description=True) is False
     assert turn_needs_vision("my budget is limited", files=None, has_description=True) is False
 
 
-@pytest.mark.parametrize("message", [
-    "show me the link",
-    "see you later",
-    "can you show me the checkout",
-    "I'll see if my friend wants it too",
-])
+@pytest.mark.parametrize(
+    "message",
+    [
+        "show me the link",
+        "see you later",
+        "can you show me the checkout",
+        "I'll see if my friend wants it too",
+    ],
+)
 def test_the_commonest_verbs_in_a_sale_do_not_trigger_vision(message):
-    """"see" and "show" are how people talk about links, times and each other.
+    """ "see" and "show" are how people talk about links, times and each other.
     Firing on them would put the photos back on most turns and give back the
     entire saving — the sentences that really want a photo name one."""
     assert turn_needs_vision(message, files=None, has_description=True) is False

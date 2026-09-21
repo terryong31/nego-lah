@@ -263,10 +263,12 @@ async function open(userId: string) {
     listenFor: 'customer',
     sendAs: 'seller',
     onMessage: (payload) => {
-      const msg = payload as { content?: string, role?: string, source?: string }
-      if (!msg || !msg.content) return
+      // SPEC-094: this now arrives from the notification broker over an
+      // admin-authenticated stream, and the broker calls the text `message`.
+      const msg = payload as { message?: string, role?: string, source?: string }
+      if (!msg || !msg.message) return
 
-      // The backend broadcasts admin messages to the same chat channel this
+      // The backend publishes admin messages to the same per-user channel this
       // console listens on, so our own send arrives back here — and `send()`
       // has already appended it optimistically. (Mirror of the customer chat,
       // which drops the `human` echo for the same reason.)
@@ -274,7 +276,7 @@ async function open(userId: string) {
 
       messages.value.push({
         role: msg.role === 'system' ? 'system' : (msg.role ?? 'ai'),
-        content: msg.content,
+        content: msg.message,
         source: msg.source
       })
       // A system notice means the AI/human handover state may have just

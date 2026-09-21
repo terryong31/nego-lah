@@ -10,19 +10,21 @@ from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
+# Domain routers (Modular Monolith, ADR-0002). Each domain exports its own
+# public router; the cross-domain admin console is composed in `admin_api`.
+from console.admin_api import router as admin_router
 from core.defense_middleware import RequestDefenseMiddleware, SecurityHeadersMiddleware
+from core.limiter import limiter
+from core.logger import logger
 from core.rate_limit_middleware import IPRateLimitMiddleware
 from core.telemetry import init_sentry
-from limiter import limiter
-from logger import logger
-from routes.admin import router as admin_router
-from routes.chat import router as chat_router
-from routes.items import router as items_router
-from routes.payment import router as payment_router
-
-# Import routers
-from routes.user import router as user_router
-from routes.webhooks import router as webhooks_router
+from domains.billing import billing_router as payment_router
+from domains.billing import register_providers
+from domains.catalog import catalog_router as items_router
+from domains.identity import auth_router, user_router
+from domains.negotiation import negotiation_router as chat_router
+from domains.negotiation import register_subscribers
+from domains.webhooks import webhooks_router
 
 # In production we hide the interactive API docs (Swagger UI / ReDoc) and the
 # OpenAPI schema so the full API surface isn't publicly browsable. Set
@@ -45,17 +47,15 @@ async def _payment_cleanup_loop():
     external cron is required. cleanup_expired_payments() is idempotent, so
     overlapping runs (e.g. multiple replicas) are harmless.
     """
-    from cache import redis_client
-    from payment.payment_state import cleanup_expired_payments
+    from core.cache import redis_client
+    from domains.billing import cleanup_expired_payments
 
     def _claim_cleanup_slot() -> bool:
         # With multiple workers each runs this loop. A short Redis lock ensures
         # only ONE worker actually runs cleanup per cycle. If there's no shared
         # Redis (single process / in-memory), just run.
         try:
-            return bool(redis_client.set(
-                "payment:cleanup:lock", "1", nx=True, ex=CLEANUP_INTERVAL_SECONDS
-            ))
+            return bool(redis_client.set("payment:cleanup:lock", "1", nx=True, ex=CLEANUP_INTERVAL_SECONDS))
         except Exception:
             return True
 
@@ -83,7 +83,7 @@ async def _unread_digest_loop():
     first to reach a queue takes it and the rest find it empty. The lock would
     only be saving a handful of no-op scans.
     """
-    from services.unread_digest import UNREAD_DIGEST_SWEEP_SECONDS, flush_due_digests
+    from domains.negotiation import UNREAD_DIGEST_SWEEP_SECONDS, flush_due_digests
 
     # Same courtesy delay as the cleanup worker: don't compete with startup.
     await asyncio.sleep(30)
@@ -105,7 +105,7 @@ async def lifespan(_app: FastAPI):
     # DISABLE_PAYMENT_CLEANUP=1 if you run cleanup via an external scheduler.
     task = None
     digest_task = None
-    from notifications import notification_broker
+    from core.notifications import notification_broker
 
     # One Redis pub/sub connection per worker, so a notification published by
     # any worker reaches the SSE streams held by all of them.
@@ -113,6 +113,7 @@ async def lifespan(_app: FastAPI):
 
     if not os.environ.get("VERCEL"):
         from core.database import close_db_pool, init_db_pool
+
         await init_db_pool()
         if os.environ.get("DISABLE_PAYMENT_CLEANUP") != "1":
             task = asyncio.create_task(_payment_cleanup_loop())
@@ -131,6 +132,7 @@ async def lifespan(_app: FastAPI):
                     await background
         if not os.environ.get("VERCEL"):
             from core.database import close_db_pool
+
             await close_db_pool()
 
 
@@ -171,11 +173,7 @@ _DEV_ORIGINS = [
 
 # In production, only permit exact canonical domain origins via allow_origins.
 # Preview subdomains (*.nego-lah.pages.dev) are strictly confined to non-production.
-_ORIGIN_REGEX = (
-    None
-    if IS_PROD
-    else r"^https://([a-zA-Z0-9_-]+\.)*nego-lah\.pages\.dev$"
-)
+_ORIGIN_REGEX = None if IS_PROD else r"^https://([a-zA-Z0-9_-]+\.)*nego-lah\.pages\.dev$"
 
 cors_origins_str = os.environ.get("CORS_ORIGINS")
 if cors_origins_str:
@@ -219,7 +217,19 @@ app.add_middleware(
     expose_headers=["X-CSRF-Token", "sentry-trace", "baggage", "Retry-After"],
 )
 
+# Bus wiring (SPEC-097). Domains are layered and may only call downward, so the
+# upward paths — a settled payment producing a chat message, a deleted account
+# purging conversations, a storefront showing a negotiated price — are announced
+# on `core.bus` and answered by whoever subscribes here.
+#
+# Registered at import rather than in the lifespan because the test suite drives
+# the app without running the lifespan, and wiring that only exists in production
+# is wiring nobody tests.
+register_subscribers()
+register_providers()
+
 # Include routers
+app.include_router(auth_router)
 app.include_router(user_router)
 app.include_router(items_router)
 app.include_router(chat_router)

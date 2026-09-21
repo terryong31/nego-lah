@@ -3,6 +3,7 @@ import { defineComponent, reactive, ref } from 'vue'
 import { flushPromises } from '@vue/test-utils'
 import { mockNuxtImport, mountSuspended } from '@nuxt/test-utils/runtime'
 import { useNotifications } from '../../app/composables/useNotifications'
+import { makeAuthStub } from '../helpers/auth'
 
 const userRef = ref<Record<string, unknown> | null>(null)
 const toastAddMock = vi.fn()
@@ -11,26 +12,15 @@ const toastAddMock = vi.fn()
 // verbatim. The tests drive this object to reproduce both shapes.
 const routeMock = reactive({ path: '/' })
 
-// SPEC-056 #6: the stream is authorised by a short-lived ticket minted over a
-// header-authenticated POST, never by the access token in the URL.
+// SPEC-093: the stream is authorised by the session cookie the browser attaches
+// to a `withCredentials` EventSource. Nothing identifying goes in the URL.
 const fetchMock = vi.fn()
 
-mockNuxtImport('useSupabaseUser', () => () => userRef)
+const authStub = makeAuthStub(userRef)
+
+mockNuxtImport('useAuth', () => () => authStub)
 mockNuxtImport('useRoute', () => () => routeMock)
 mockNuxtImport('useToast', () => () => ({ add: toastAddMock }))
-// Signing out is an event Supabase emits, not a ref reading null — see the
-// composable's auth listener. Captured so the tests can say it properly.
-let authCallback: ((event: string, session: unknown) => void) | null = null
-
-mockNuxtImport('useSupabaseClient', () => () => ({
-  auth: {
-    getSession: () => Promise.resolve({ data: { session: { access_token: 'jwt-token' } } }),
-    onAuthStateChange: (cb: (event: string, session: unknown) => void) => {
-      authCallback = cb
-      return { data: { subscription: { unsubscribe: () => {} } } }
-    }
-  }
-}))
 
 // Every constructed EventSource, so a test can count how many streams the
 // composable actually opened and push events through them.
@@ -38,12 +28,17 @@ const streams: FakeEventSource[] = []
 
 class FakeEventSource {
   url: string
+  withCredentials: boolean
   closed = false
+  // The composable treats a CLOSED handle as no connection at all (a tab the OS
+  // froze can come back holding one), so the fake has to model it.
+  readyState = 1
   onerror: (() => void) | null = null
   private listeners: Record<string, ((e: { data: string }) => void)[]> = {}
 
-  constructor(url: string) {
+  constructor(url: string, init?: { withCredentials?: boolean }) {
     this.url = url
+    this.withCredentials = Boolean(init?.withCredentials)
     streams.push(this)
   }
 
@@ -57,6 +52,7 @@ class FakeEventSource {
 
   close() {
     this.closed = true
+    this.readyState = 2
   }
 }
 
@@ -76,9 +72,6 @@ let unreadResponse = { count: 0, has_unread: false }
 // global directly — same approach as tests/composables/useApi.test.ts.
 function installFetchStub() {
   fetchMock.mockReset().mockImplementation((url: string) => {
-    if (String(url).includes('/chat/notifications/ticket')) {
-      return Promise.resolve({ ticket: 'ticket-abc', expires_in: 30 })
-    }
     if (String(url).includes('/chat/unread')) {
       return Promise.resolve(unreadResponse)
     }
@@ -108,9 +101,10 @@ const Host = defineComponent({
 })
 
 describe('composables/useNotifications', () => {
-  beforeEach(() => {
-    // A fresh session per test, said the way the app says it.
-    authCallback?.('SIGNED_OUT', null)
+  beforeEach(async () => {
+    // A fresh session per test. Signing out is the ref reading null — since
+    // SPEC-093 there is no event stream of auth states to replay, just the one
+    // the server confirmed.
     userRef.value = null
     routeMock.path = '/'
     unreadResponse = { count: 0, has_unread: false }
@@ -119,6 +113,16 @@ describe('composables/useNotifications', () => {
     streams.length = 0
     installFakeEventSource()
     installFetchStub()
+
+    // Signing in is itself a reason to connect, so let that watcher settle and
+    // then wipe the slate: a test asserting "one stream" or "no /chat/unread
+    // call" is asserting about what IT provoked, not about the sign-in.
+    userRef.value = { id: 'buyer-1' }
+    await flushPromises()
+    for (const stream of streams) stream.close()
+    streams.length = 0
+    fetchMock.mockClear()
+    toastAddMock.mockClear()
   })
 
   afterEach(() => {
@@ -157,34 +161,32 @@ describe('composables/useNotifications', () => {
 
       expect(streams.filter(s => !s.closed)).toHaveLength(1)
 
-      streams[0]!.emit({ type: 'new_message', message: 'Hi', source: 'admin' })
+      streams[0]!.emit({ type: 'new_message', message: 'Hi', source: 'admin', notify: true })
       expect(toastAddMock).toHaveBeenCalledTimes(1)
 
       first.vm.disconnect()
     })
 
-    it('mints a ticket over an authenticated POST and puts only that in the URL', async () => {
+    it('authorises the stream with the session cookie and puts nothing in the URL', async () => {
       const wrapper = await mountSuspended(Host)
       await wrapper.vm.connect()
       await flushPromises()
 
-      const [url, options] = fetchMock.mock.calls[0]!
-      expect(url).toContain('/chat/notifications/ticket')
-      expect(options.method).toBe('POST')
-      expect(options.headers.Authorization).toBe('Bearer jwt-token')
-
-      expect(streams[0]!.url).toContain('ticket=ticket-abc')
-      // The access token is what a URL must never carry: query strings land in
-      // proxy logs, browser history and the next request's Referer.
-      expect(streams[0]!.url).not.toContain('jwt-token')
-      expect(streams[0]!.url).not.toContain('token=jwt')
+      expect(streams[0]!.withCredentials).toBe(true)
+      // A query string lands in proxy logs, browser history and the next
+      // request's Referer. Nothing that authorises anything may be in one —
+      // which is now trivially true, because there is nothing in it at all.
+      expect(streams[0]!.url).toBe('http://localhost:8000/chat/notifications/stream')
+      expect(streams[0]!.url).not.toContain('?')
 
       wrapper.vm.disconnect()
     })
 
-    it('opens no stream at all when the ticket cannot be minted', async () => {
-      fetchMock.mockRejectedValueOnce(new Error('401'))
+    it('opens no stream when nobody is signed in', async () => {
       const wrapper = await mountSuspended(Host)
+      wrapper.vm.disconnect()
+      streams.length = 0
+      userRef.value = null
 
       await wrapper.vm.connect()
       await flushPromises()
@@ -214,13 +216,13 @@ describe('composables/useNotifications', () => {
       await wrapper.vm.connect()
       await flushPromises()
 
-      streams[0]!.emit({ type: 'new_message', message: 'On my way', source: 'admin' })
+      streams[0]!.emit({ type: 'new_message', message: 'On my way', source: 'admin', notify: true })
       expect(toastAddMock).toHaveBeenCalledWith(expect.objectContaining({
         title: 'New message from Seller',
         description: 'On my way'
       }))
 
-      streams[0]!.emit({ type: 'new_message', message: 'RM950 then', source: 'ai' })
+      streams[0]!.emit({ type: 'new_message', message: 'RM950 then', source: 'ai', notify: true })
       expect(toastAddMock).toHaveBeenCalledWith(expect.objectContaining({
         title: 'New message from Nego-Lah',
         description: 'RM950 then'
@@ -240,7 +242,7 @@ describe('composables/useNotifications', () => {
       routeMock.path = path
       await flushPromises()
 
-      streams[0]!.emit({ type: 'new_message', message: 'RM240 can?', source: 'ai' })
+      streams[0]!.emit({ type: 'new_message', message: 'RM240 can?', source: 'ai', notify: true })
 
       expect(toastAddMock).not.toHaveBeenCalled()
       expect(wrapper.vm.hasUnread).toBe(false)
@@ -257,7 +259,7 @@ describe('composables/useNotifications', () => {
       routeMock.path = '/chatter'
       await flushPromises()
 
-      streams[0]!.emit({ type: 'new_message', message: 'RM240 can?', source: 'ai' })
+      streams[0]!.emit({ type: 'new_message', message: 'RM240 can?', source: 'ai', notify: true })
 
       expect(toastAddMock).toHaveBeenCalledTimes(1)
 
@@ -348,7 +350,8 @@ describe('composables/useNotifications', () => {
       const [url, options] = callsTo('/chat/read')[0]!
       expect(url).toContain('/chat/read')
       expect(options.method).toBe('POST')
-      expect(options.headers.Authorization).toBe('Bearer jwt-token')
+      expect(options.credentials).toBe('include')
+      expect(options.headers).not.toHaveProperty('Authorization')
 
       wrapper.vm.disconnect()
     })
@@ -363,7 +366,7 @@ describe('composables/useNotifications', () => {
       await flushPromises()
       const before = callsTo('/chat/read').length
 
-      streams[0]!.emit({ type: 'new_message', message: 'RM240 can?', source: 'ai' })
+      streams[0]!.emit({ type: 'new_message', message: 'RM240 can?', source: 'ai', notify: true })
       await flushPromises()
 
       expect(callsTo('/chat/read').length).toBe(before + 1)
@@ -468,13 +471,12 @@ describe('composables/useNotifications', () => {
     it('does not stamp on the way out of a session', async () => {
       // Signing out clears the badge locally. Writing a read watermark for a
       // user who just left is both pointless and unauthenticated.
-      userRef.value = { sub: 'user-1' }
+      userRef.value = { id: 'user-1' }
       const wrapper = await mountSuspended(Host)
       await flushPromises()
       wrapper.vm.hasUnread = true
       wrapper.vm.unreadCount = 3
 
-      authCallback?.('SIGNED_OUT', null)
       userRef.value = null
       await flushPromises()
 

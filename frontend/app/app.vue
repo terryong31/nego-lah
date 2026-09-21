@@ -3,7 +3,7 @@ import { en, ms, zh_cn } from '@nuxt/ui/locale'
 
 const { t } = useI18n()
 const { locale, initLanguage } = useLanguage()
-const user = useSupabaseUser()
+const { user } = useAuth()
 
 const uiLocaleMap = {
   en,

@@ -10,7 +10,7 @@ import asyncio
 import pytest
 from langchain_core.tools import tool
 
-from agent.context import (
+from domains.negotiation.context import (
     current_item_id,
     current_user_id,
     get_item_id,
@@ -158,6 +158,7 @@ async def test_context_set_inside_task_does_not_leak_to_caller():
 # them from the test's own context — which is the one place the broken version
 # still looks like it works.
 # ---------------------------------------------------------------------------
+
 
 async def test_a_signal_set_inside_an_async_tool_reaches_the_request():
     @tool

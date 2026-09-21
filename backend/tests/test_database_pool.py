@@ -78,6 +78,7 @@ async def test_check_db_health_failure():
 # Privilege hygiene (SPEC-056 #8)
 # ---------------------------------------------------------------------------
 
+
 def test_the_pool_module_builds_no_supabase_clients():
     """`core/database.py` owns the asyncpg pool and nothing else.
 
@@ -102,12 +103,13 @@ def test_the_anon_key_never_falls_back_to_the_service_role_key(monkeypatch):
     monkeypatch.delenv("USER_SUPABASE_KEY", raising=False)
     monkeypatch.delenv("SUPABASE_KEY", raising=False)
 
-    import core.config
-    config = importlib.reload(core.config)
+    import core.env
+
+    config = importlib.reload(core.env)
     try:
         assert config.USER_SUPABASE_KEY != "service-role-key"
         assert not config.USER_SUPABASE_KEY
     finally:
         # Restore the module for anything importing it later in the session.
         monkeypatch.undo()
-        importlib.reload(core.config)
+        importlib.reload(core.env)

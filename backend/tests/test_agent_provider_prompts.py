@@ -15,9 +15,9 @@ change as the local model does.
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
-import agent.bot as bot
-from agent.config import CLOUD_AGENT_TEMPERATURE, COD_POLICY, LOCAL_AGENT_TEMPERATURE
-from agent.llm_factory import (
+import domains.negotiation.bot as bot
+from domains.negotiation.config import CLOUD_AGENT_TEMPERATURE, COD_POLICY, LOCAL_AGENT_TEMPERATURE
+from domains.negotiation.llm_factory import (
     cloud_provider_info,
     current_provider,
     local_provider_info,
@@ -35,6 +35,7 @@ LOCAL = _lower(bot.LOCAL_CUSTOMER_AGENT_PROMPT)
 # ---------------------------------------------------------------------------
 # S1 — the prompt follows the provider the turn already pinned
 # ---------------------------------------------------------------------------
+
 
 def test_local_provider_gets_the_local_prompt():
     assert bot.customer_prompt_for(local_provider_info()) == bot.LOCAL_CUSTOMER_AGENT_PROMPT
@@ -56,6 +57,7 @@ def test_the_two_prompts_are_actually_different():
 # ---------------------------------------------------------------------------
 # S2 — what LangGraph receives for the turn
 # ---------------------------------------------------------------------------
+
 
 def test_select_prompt_prepends_one_system_message_and_keeps_history():
     history = [HumanMessage(content="2000?"), AIMessage(content="hmm")]
@@ -88,6 +90,7 @@ def test_select_prompt_uses_the_pinned_provider():
 # S3 — the local prompt closes the narrate-instead-of-call hole
 # ---------------------------------------------------------------------------
 
+
 def test_local_prompt_mandates_evaluate_offer():
     assert "evaluate_offer" in LOCAL
     # The mandate has to be phrased as an obligation, not a suggestion.
@@ -100,7 +103,7 @@ def test_local_prompt_forbids_narrating_tool_use():
     # ...and it must be banned, not demonstrated: every occurrence is inside a
     # prohibition, so a negation word is never far from it.
     index = LOCAL.index("let me check")
-    assert "never" in LOCAL[max(0, index - 200):index] or "do not" in LOCAL[max(0, index - 200):index]
+    assert "never" in LOCAL[max(0, index - 200) : index] or "do not" in LOCAL[max(0, index - 200) : index]
 
 
 def test_local_prompt_states_the_tool_contract_before_the_persona_colour():
@@ -111,6 +114,7 @@ def test_local_prompt_states_the_tool_contract_before_the_persona_colour():
 # ---------------------------------------------------------------------------
 # S4 — no buyer-facing sentence the model can copy instead of calling a tool
 # ---------------------------------------------------------------------------
+
 
 def test_local_prompt_quotes_no_literal_counter_offer():
     """`So RM2100? 🛒` in the prompt came back out as a real, floor-free quote."""
@@ -127,6 +131,7 @@ def test_local_prompt_has_no_reusable_refusal_script():
 # ---------------------------------------------------------------------------
 # S5 — invariants both prompts keep
 # ---------------------------------------------------------------------------
+
 
 def test_both_prompts_protect_the_floor():
     for prompt in (CLOUD, LOCAL):
@@ -154,6 +159,7 @@ def test_local_prompt_keeps_the_prompt_injection_defence():
 # ---------------------------------------------------------------------------
 # S6 — the choice is made per turn, not frozen into the compiled graph
 # ---------------------------------------------------------------------------
+
 
 def test_graph_is_compiled_with_a_callable_prompt(monkeypatch):
     captured = {}
@@ -188,12 +194,13 @@ def test_graph_is_compiled_with_a_callable_prompt(monkeypatch):
 # time until the prompt named both cases explicitly.
 # ---------------------------------------------------------------------------
 
+
 def test_local_prompt_covers_a_price_the_buyer_is_rejecting():
     assert "also cannot" in LOCAL or "rejecting" in LOCAL
 
 
 def test_local_prompt_covers_the_buyer_asking_the_seller_to_go_first():
-    """"You offer me one" is still a turn that needs the tool, not a licence to invent."""
+    """ "You offer me one" is still a turn that needs the tool, not a licence to invent."""
     assert "make me an offer" in LOCAL or "offer me one" in LOCAL
 
 
@@ -201,12 +208,13 @@ def test_local_prompt_bans_floor_vocabulary_outright_not_just_on_two_verbs():
     """It described the LISTED price as "my minimum price", which teaches the buyer
     the word for what it must never disclose."""
     index = LOCAL.index("minimum")
-    assert "never" in LOCAL[max(0, index - 300):index]
+    assert "never" in LOCAL[max(0, index - 300) : index]
 
 
 # ---------------------------------------------------------------------------
 # S8 — temperature is part of the per-provider decision, not a constant
 # ---------------------------------------------------------------------------
+
 
 def test_local_turns_run_cooler_than_cloud_turns():
     assert bot.customer_temperature_for(local_provider_info()) == LOCAL_AGENT_TEMPERATURE
@@ -221,7 +229,8 @@ def test_unpinned_turn_uses_the_cloud_temperature():
 def test_select_model_asks_for_the_pinned_providers_temperature(monkeypatch):
     seen = []
     monkeypatch.setattr(
-        bot, "get_chat_model",
+        bot,
+        "get_chat_model",
         lambda temperature=0.7: seen.append(temperature) or type("M", (), {"bind_tools": lambda self, t: "bound"})(),
     )
 

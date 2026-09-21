@@ -12,12 +12,13 @@ would go, and touches nothing. `--apply` deletes every `messages` row for the
 user. Both the buyer chat and the admin console's chat list are derived from
 that one table, so this is the whole conversation history.
 """
+
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from connector import admin_supabase  # noqa: E402
+from core.connector import admin_supabase  # noqa: E402
 
 
 def find_user_by_email(email: str):

@@ -1,4 +1,4 @@
-"""Tests for agent/tools/payment.py (create_checkout_link, cancel_payment_link,
+"""Tests for domains/negotiation/tools/payment.py (create_checkout_link, cancel_payment_link,
 collect_shipping_info, web_search langchain tools).
 
 Mocking notes specific to this module (see conftest.py's module docstring for the
@@ -7,10 +7,10 @@ general rules):
 - ``create_checkout_link`` does ``from connector import admin_supabase`` *inside*
   the function body (a lazy import), so we patch ``connector.admin_supabase``
   directly (via the ``patch_supabase("connector", admin=...)`` fixture) rather
-  than ``agent.tools.payment.admin_supabase`` -- no such module-level name exists.
+  than ``domains.negotiation.tools.payment.admin_supabase`` -- no such module-level name exists.
   It uses the SERVICE ROLE because its price floor check reads ``min_price``,
   which anon/authenticated cannot select (SPEC-036)
-  on ``agent.tools.payment``, since the import is re-resolved on every call.
+  on ``domains.negotiation.tools.payment``, since the import is re-resolved on every call.
 - It also does ``from payment.payment_state import get_pending_payment,
   store_pending_payment`` lazily. To simulate an existing pending payment we
   monkeypatch ``payment.payment_state.get_pending_payment`` directly (it is
@@ -23,10 +23,10 @@ general rules):
 - ``collect_shipping_info`` does ``from connector import admin_supabase``
   lazily -> patch ``connector.admin_supabase``.
 - ``web_search`` does ``from ddgs import DDGS`` lazily -> patch ``ddgs.DDGS``
-  (the real class), since there is no ``agent.tools.payment.DDGS`` module-level
+  (the real class), since there is no ``domains.negotiation.tools.payment.DDGS`` module-level
   name to patch.
-- All tools read user_id/item_id from ``agent.context`` ContextVars, so every
-  test calls ``agent.context.set_context(...)`` first.
+- All tools read user_id/item_id from ``domains.negotiation.context`` ContextVars, so every
+  test calls ``domains.negotiation.context.set_context(...)`` first.
 """
 
 import json
@@ -34,8 +34,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from agent import context
-from agent.tools.payment import (
+from domains.negotiation import context
+from domains.negotiation.tools.payment import (
     cancel_payment_link,
     collect_shipping_info,
     create_checkout_link,
@@ -86,7 +86,7 @@ def _set_item_lookup(fake_supabase, item=None, items=None):
 
 
 def _no_existing_payment(monkeypatch):
-    monkeypatch.setattr("payment.payment_state.get_pending_payment", lambda uid, iid: None)
+    monkeypatch.setattr("domains.billing.payment_state.get_pending_payment", lambda uid, iid: None)
 
 
 def _negotiated(monkeypatch, price):
@@ -97,12 +97,13 @@ def _negotiated(monkeypatch, price):
     the listed price has to say which counter got it there, exactly as a real
     negotiation would have cached one.
     """
-    monkeypatch.setattr("payment.pricing.active_negotiated_price", lambda uid, iid: price)
+    monkeypatch.setattr("domains.billing.pricing.active_negotiated_price", lambda uid, iid: price)
 
 
 # ---------------------------------------------------------------------------
 # create_checkout_link
 # ---------------------------------------------------------------------------
+
 
 def test_create_checkout_no_user_id():
     context.set_context(user_id=None, item_id=None)
@@ -113,7 +114,7 @@ def test_create_checkout_no_user_id():
 def test_create_checkout_existing_pending_payment(monkeypatch):
     context.set_context(user_id="user-1", item_id="item-1")
     existing = {"agreed_price": 75.5, "payment_url": "https://pay.example/link1"}
-    monkeypatch.setattr("payment.payment_state.get_pending_payment", lambda uid, iid: existing)
+    monkeypatch.setattr("domains.billing.payment_state.get_pending_payment", lambda uid, iid: existing)
 
     result = _checkout()
 
@@ -128,7 +129,7 @@ def test_create_checkout_hallucinated_item_id_falls_back_to_context(
 ):
     context.set_context(user_id="user-1", item_id="real-item-42")
     _no_existing_payment(monkeypatch)
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
     _set_item_lookup(fake_supabase, items=[])  # doesn't matter for this test; we inspect which id was queried
 
     _checkout(item_id=placeholder, agreed_price=80.0)
@@ -141,7 +142,7 @@ def test_create_checkout_hallucinated_item_id_falls_back_to_context(
 def test_create_checkout_item_not_found_no_context_fallback(patch_supabase, fake_supabase, monkeypatch):
     context.set_context(user_id="user-1", item_id=None)
     _no_existing_payment(monkeypatch)
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
     _set_item_lookup(fake_supabase, items=[])
 
     result = _checkout(item_id="missing-item", agreed_price=80.0)
@@ -155,7 +156,7 @@ def test_create_checkout_item_lookup_retries_with_context_item_id(
     context.set_context(user_id="user-1", item_id="context-item-99")
     _no_existing_payment(monkeypatch)
     _negotiated(monkeypatch, 80.0)
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
 
     empty = MagicMock(data=[])
     found = MagicMock(data=[dict(ITEM, id="context-item-99")])
@@ -172,7 +173,7 @@ def test_create_checkout_item_lookup_retries_with_context_item_id(
 def test_create_checkout_item_not_available(patch_supabase, fake_supabase, monkeypatch):
     context.set_context(user_id="user-1", item_id=None)
     _no_existing_payment(monkeypatch)
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
     sold_item = dict(ITEM, status="sold")
     _set_item_lookup(fake_supabase, item=sold_item)
 
@@ -184,7 +185,7 @@ def test_create_checkout_item_not_available(patch_supabase, fake_supabase, monke
 def test_create_checkout_price_below_min_rejected(patch_supabase, fake_supabase, monkeypatch):
     context.set_context(user_id="user-1", item_id=None)
     _no_existing_payment(monkeypatch)
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
     _set_item_lookup(fake_supabase, item=ITEM)  # min_price=60, price=100
 
     result = _checkout(item_id="item-1", agreed_price=50.0)
@@ -197,7 +198,7 @@ def test_create_checkout_price_below_min_rejected(patch_supabase, fake_supabase,
 def test_create_checkout_price_non_positive_rejected(patch_supabase, fake_supabase, monkeypatch):
     context.set_context(user_id="user-1", item_id=None)
     _no_existing_payment(monkeypatch)
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
     # min_price falls back to price via `item.get('min_price') or item.get('price', 0)`,
     # and 0 is falsy, so an item priced at 0 with an explicit min_price of 0 gives
     # min_price == 0 -- letting a price of exactly 0 clear the min_price check and
@@ -213,7 +214,7 @@ def test_create_checkout_price_non_positive_rejected(patch_supabase, fake_supaba
 def test_create_checkout_price_suspiciously_high_rejected(patch_supabase, fake_supabase, monkeypatch):
     context.set_context(user_id="user-1", item_id=None)
     _no_existing_payment(monkeypatch)
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
     _set_item_lookup(fake_supabase, item=ITEM)  # asking price=100 -> cap at 1000
 
     result = _checkout(item_id="item-1", agreed_price=1500.0)
@@ -225,7 +226,7 @@ def test_create_checkout_success(patch_supabase, fake_supabase, fake_stripe, mon
     context.set_context(user_id="user-1", item_id=None)
     _no_existing_payment(monkeypatch)
     _negotiated(monkeypatch, 80.0)
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
     _set_item_lookup(fake_supabase, item=ITEM)
 
     fake_stripe.Product.create.return_value = MagicMock(id="prod_123")
@@ -246,7 +247,7 @@ def test_create_checkout_success(patch_supabase, fake_supabase, fake_stripe, mon
     # store_pending_payment really ran against the safe in-memory fake Redis.
     # (We read the key directly rather than via `get_pending_payment`, since that
     # name is monkeypatched to a stub in this test via `_no_existing_payment`.)
-    from cache import redis_client
+    from core.cache import redis_client
 
     raw = redis_client.get("payment:user-1:item-1")
     assert raw is not None
@@ -259,7 +260,7 @@ def test_create_checkout_stripe_error_returns_message(patch_supabase, fake_supab
     context.set_context(user_id="user-1", item_id=None)
     _no_existing_payment(monkeypatch)
     _negotiated(monkeypatch, 80.0)
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
     _set_item_lookup(fake_supabase, item=ITEM)
 
     fake_stripe.Product.create.side_effect = Exception("stripe is down")
@@ -272,6 +273,7 @@ def test_create_checkout_stripe_error_returns_message(patch_supabase, fake_supab
 # ---------------------------------------------------------------------------
 # cancel_payment_link
 # ---------------------------------------------------------------------------
+
 
 def test_cancel_no_user_id():
     context.set_context(user_id=None, item_id=None)
@@ -287,7 +289,7 @@ def test_cancel_uses_context_item_id_over_param(monkeypatch):
         captured["item_id"] = iid
         return None
 
-    monkeypatch.setattr("payment.payment_state.get_pending_payment", fake_get)
+    monkeypatch.setattr("domains.billing.payment_state.get_pending_payment", fake_get)
 
     result = _cancel("param-item")
 
@@ -303,7 +305,7 @@ def test_cancel_falls_back_to_param_item_id_without_context(monkeypatch):
         captured["item_id"] = iid
         return None
 
-    monkeypatch.setattr("payment.payment_state.get_pending_payment", fake_get)
+    monkeypatch.setattr("domains.billing.payment_state.get_pending_payment", fake_get)
 
     _cancel("param-item")
 
@@ -312,19 +314,21 @@ def test_cancel_falls_back_to_param_item_id_without_context(monkeypatch):
 
 def test_cancel_no_existing_payment(monkeypatch):
     context.set_context(user_id="user-1", item_id="item-1")
-    monkeypatch.setattr("payment.payment_state.get_pending_payment", lambda uid, iid: None)
+    monkeypatch.setattr("domains.billing.payment_state.get_pending_payment", lambda uid, iid: None)
 
     result = _cancel("item-1")
 
-    assert result == "No active payment link found for this item. You can continue negotiating or ask about other items."
+    assert (
+        result == "No active payment link found for this item. You can continue negotiating or ask about other items."
+    )
 
 
 def test_cancel_success(monkeypatch):
     context.set_context(user_id="user-1", item_id="item-1")
     existing = {"agreed_price": 99.99, "payment_url": "https://pay.example/x"}
-    monkeypatch.setattr("payment.payment_state.get_pending_payment", lambda uid, iid: existing)
+    monkeypatch.setattr("domains.billing.payment_state.get_pending_payment", lambda uid, iid: existing)
     monkeypatch.setattr(
-        "payment.payment_state.delete_pending_payment",
+        "domains.billing.payment_state.delete_pending_payment",
         lambda uid, iid, cleanup_stripe=True: True,
     )
 
@@ -337,9 +341,9 @@ def test_cancel_success(monkeypatch):
 def test_cancel_delete_failure(monkeypatch):
     context.set_context(user_id="user-1", item_id="item-1")
     existing = {"agreed_price": 20.0, "payment_url": "https://pay.example/y"}
-    monkeypatch.setattr("payment.payment_state.get_pending_payment", lambda uid, iid: existing)
+    monkeypatch.setattr("domains.billing.payment_state.get_pending_payment", lambda uid, iid: existing)
     monkeypatch.setattr(
-        "payment.payment_state.delete_pending_payment",
+        "domains.billing.payment_state.delete_pending_payment",
         lambda uid, iid, cleanup_stripe=True: False,
     )
 
@@ -359,19 +363,18 @@ def test_cancel_delete_failure(monkeypatch):
 # `_shipping_existing(...)` for the SELECT, `_shipping_update_result(...)`
 # for the UPDATE.
 
+
 def _shipping_existing(fake_supabase, data):
     """select(...).eq('id', ...).eq('buyer_id', ...).execute() -> data."""
     (
-        fake_supabase.table.return_value.select.return_value
-        .eq.return_value.eq.return_value.execute.return_value
+        fake_supabase.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value
     ) = MagicMock(data=data)
 
 
 def _shipping_update_result(fake_supabase, data):
     """update(...).eq('id', ...).eq('buyer_id', ...).execute() -> data."""
     (
-        fake_supabase.table.return_value.update.return_value
-        .eq.return_value.eq.return_value.execute.return_value
+        fake_supabase.table.return_value.update.return_value.eq.return_value.eq.return_value.execute.return_value
     ) = MagicMock(data=data)
 
 
@@ -384,7 +387,7 @@ def test_collect_shipping_fails_closed_without_a_user_in_context(patch_supabase,
     """SPEC-056 #2. `if user_id:` made the ownership filter optional, so an
     unidentified caller updated ANY order by id. The refusal must happen before
     the query is built, not after it comes back empty."""
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
     context.set_context(user_id=None, item_id=None)
 
     result = collect_shipping_info.func("victims-order", "Mallory", "0111111111", "1 Attacker Rd")
@@ -394,10 +397,8 @@ def test_collect_shipping_fails_closed_without_a_user_in_context(patch_supabase,
     fake_supabase.table.assert_not_called()
 
 
-def test_collect_shipping_no_fields_provided_is_refused_without_touching_the_db(
-    patch_supabase, fake_supabase
-):
-    patch_supabase("connector", admin=fake_supabase)
+def test_collect_shipping_no_fields_provided_is_refused_without_touching_the_db(patch_supabase, fake_supabase):
+    patch_supabase("core.connector", admin=fake_supabase)
 
     result = _collect(order_id="order-1", recipient_name=None, phone=None, address=None)
 
@@ -406,7 +407,7 @@ def test_collect_shipping_no_fields_provided_is_refused_without_touching_the_db(
 
 
 def test_collect_shipping_success_when_all_three_arrive_together(patch_supabase, fake_supabase):
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
     _shipping_existing(fake_supabase, [_blank_order()])
     _shipping_update_result(fake_supabase, [{"id": "order-1"}])
 
@@ -427,10 +428,8 @@ def test_collect_shipping_success_when_all_three_arrive_together(patch_supabase,
     fake_supabase.table.return_value.update.return_value.eq.assert_called_once_with("id", "order-1")
 
 
-def test_collect_shipping_partial_name_only_saves_it_and_asks_for_the_rest(
-    patch_supabase, fake_supabase
-):
-    patch_supabase("connector", admin=fake_supabase)
+def test_collect_shipping_partial_name_only_saves_it_and_asks_for_the_rest(patch_supabase, fake_supabase):
+    patch_supabase("core.connector", admin=fake_supabase)
     _shipping_existing(fake_supabase, [_blank_order()])
     _shipping_update_result(fake_supabase, [{"id": "order-1"}])
 
@@ -443,21 +442,24 @@ def test_collect_shipping_partial_name_only_saves_it_and_asks_for_the_rest(
     assert "address" in result.lower()
     # Only the field given this turn is written -- no status flip, no blanking
     # of columns the buyer hasn't given yet.
-    fake_supabase.table.return_value.update.assert_called_once_with(
-        {"recipient_name": "John Tan"}
-    )
+    fake_supabase.table.return_value.update.assert_called_once_with({"recipient_name": "John Tan"})
 
 
-def test_collect_shipping_partial_field_merges_with_previously_saved_ones(
-    patch_supabase, fake_supabase
-):
+def test_collect_shipping_partial_field_merges_with_previously_saved_ones(patch_supabase, fake_supabase):
     """The buyer gave name+phone last turn; this turn is just the address --
     the update must not re-send (or blank) what's already saved, and the
     completed set should flip status to confirmed."""
-    patch_supabase("connector", admin=fake_supabase)
-    _shipping_existing(fake_supabase, [{
-        "recipient_name": "John Tan", "phone": "0123456789", "address": None,
-    }])
+    patch_supabase("core.connector", admin=fake_supabase)
+    _shipping_existing(
+        fake_supabase,
+        [
+            {
+                "recipient_name": "John Tan",
+                "phone": "0123456789",
+                "address": None,
+            }
+        ],
+    )
     _shipping_update_result(fake_supabase, [{"id": "order-1"}])
 
     result = _collect(order_id="order-1", recipient_name=None, phone=None, address="123 Main St")
@@ -466,13 +468,11 @@ def test_collect_shipping_partial_field_merges_with_previously_saved_ones(
     assert "John Tan" in result
     assert "0123456789" in result
     assert "123 Main St" in result
-    fake_supabase.table.return_value.update.assert_called_once_with(
-        {"address": "123 Main St", "status": "confirmed"}
-    )
+    fake_supabase.table.return_value.update.assert_called_once_with({"address": "123 Main St", "status": "confirmed"})
 
 
 def test_collect_shipping_order_not_found(patch_supabase, fake_supabase):
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
     _shipping_existing(fake_supabase, [])
 
     result = _collect(order_id="missing-order")
@@ -482,7 +482,7 @@ def test_collect_shipping_order_not_found(patch_supabase, fake_supabase):
 
 
 def test_collect_shipping_exception(patch_supabase, fake_supabase):
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
     _shipping_existing(fake_supabase, [_blank_order()])
     fake_supabase.table.return_value.update.return_value.eq.return_value.eq.return_value.execute.side_effect = (
         Exception("db exploded")
@@ -494,9 +494,10 @@ def test_collect_shipping_exception(patch_supabase, fake_supabase):
 
 
 def test_collect_shipping_scoped_to_authenticated_user(patch_supabase, fake_supabase, monkeypatch):
-    patch_supabase("connector", admin=fake_supabase)
-    import agent.context
-    monkeypatch.setattr(agent.context, "get_user_id", lambda: "buyer-user-456")
+    patch_supabase("core.connector", admin=fake_supabase)
+    import domains.negotiation.context
+
+    monkeypatch.setattr(domains.negotiation.context, "get_user_id", lambda: "buyer-user-456")
 
     select_first_eq = fake_supabase.table.return_value.select.return_value.eq
     select_second_eq = select_first_eq.return_value.eq
@@ -519,9 +520,10 @@ def test_collect_shipping_scoped_to_authenticated_user(patch_supabase, fake_supa
 def test_collect_shipping_access_denied_for_other_user_order(patch_supabase, fake_supabase, monkeypatch):
     """The ownership check now happens at the SELECT, before any write is
     attempted at all."""
-    patch_supabase("connector", admin=fake_supabase)
-    import agent.context
-    monkeypatch.setattr(agent.context, "get_user_id", lambda: "attacker-user")
+    patch_supabase("core.connector", admin=fake_supabase)
+    import domains.negotiation.context
+
+    monkeypatch.setattr(domains.negotiation.context, "get_user_id", lambda: "attacker-user")
 
     select_first_eq = fake_supabase.table.return_value.select.return_value.eq
     select_second_eq = select_first_eq.return_value.eq
@@ -537,7 +539,8 @@ def test_collect_shipping_access_denied_for_other_user_order(patch_supabase, fak
 
 def test_collect_shipping_masks_pii_in_logs(patch_supabase, fake_supabase, caplog):
     import logging
-    patch_supabase("connector", admin=fake_supabase)
+
+    patch_supabase("core.connector", admin=fake_supabase)
     _shipping_existing(fake_supabase, [_blank_order()])
     _shipping_update_result(fake_supabase, [{"id": "order-1"}])
     with caplog.at_level(logging.INFO):
@@ -551,6 +554,7 @@ def test_collect_shipping_masks_pii_in_logs(patch_supabase, fake_supabase, caplo
 # ---------------------------------------------------------------------------
 # web_search
 # ---------------------------------------------------------------------------
+
 
 def test_web_search_success(monkeypatch):
     mock_instance = MagicMock()

@@ -5,12 +5,13 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from unittest.mock import MagicMock
 
-import cache
-from cache import _InMemoryRedis
+import core.cache as cache
+from core.cache import _InMemoryRedis
 
 # =====================================================================
 # Direct unit tests of the _InMemoryRedis fake (TTL / data-structure semantics)
 # =====================================================================
+
 
 def test_inmemory_setex_and_get_roundtrip():
     r = _InMemoryRedis()
@@ -249,6 +250,7 @@ def test_inmemory_pipeline_chaining_returns_self():
 # and .ping() are mocked so nothing ever touches an actual socket)
 # =====================================================================
 
+
 def test_create_redis_client_returns_inmemory_when_no_url(monkeypatch):
     monkeypatch.setattr(cache, "REDIS_URL", None)
     client = cache._create_redis_client()
@@ -283,6 +285,7 @@ def test_module_level_redis_client_is_inmemory_in_tests():
 # cache_token_user / get_cached_user_by_token / invalidate_token
 # =====================================================================
 
+
 def test_cache_and_get_token_user():
     cache.cache_token_user("tok-1", "user-1")
     assert cache.get_cached_user_by_token("tok-1") == "user-1"
@@ -316,6 +319,7 @@ def test_cache_token_user_respects_ttl_expiry(monkeypatch):
 # cache_ban_status / get_cached_ban_status / invalidate_ban_status
 # =====================================================================
 
+
 def test_cache_ban_status_true():
     cache.cache_ban_status("user-a", True)
     assert cache.get_cached_ban_status("user-a") is True
@@ -348,6 +352,7 @@ def test_cache_ban_status_ttl_expiry(monkeypatch):
 # =====================================================================
 # cache_items_with_hash / get_cached_items_with_hash
 # =====================================================================
+
 
 def test_cache_and_get_items_with_hash():
     items = [{"id": "1", "name": "Widget"}, {"id": "2", "name": "Gadget"}]
@@ -392,6 +397,7 @@ def test_cache_items_with_hash_respects_ttl_expiry(monkeypatch):
 # =====================================================================
 # cache_item / get_cached_item / invalidate_item_cache
 # =====================================================================
+
 
 def test_cache_and_get_item_roundtrip():
     item = {"id": "item-1", "name": "Chair", "price": 100}
@@ -440,6 +446,7 @@ def test_invalidate_item_cache_without_item_id_only_clears_list_state():
 # =====================================================================
 # check_rate_limit / get_rate_limit_remaining
 # =====================================================================
+
 
 def test_check_rate_limit_allows_up_to_max_then_blocks():
     key = "rl-user-1"
@@ -491,6 +498,7 @@ def test_get_rate_limit_remaining_floors_at_zero_when_over_limit():
 # =====================================================================
 # track_ai_tokens / check_ai_token_limit / get_ai_token_usage
 # =====================================================================
+
 
 def test_get_ai_token_usage_when_uncached_is_zero():
     assert cache.get_ai_token_usage("ai-fresh-user") == 0

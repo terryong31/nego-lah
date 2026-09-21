@@ -3,6 +3,7 @@ import { flushPromises } from '@vue/test-utils'
 import { mockNuxtImport, mountSuspended } from '@nuxt/test-utils/runtime'
 import ItemDetailPage from '~/pages/items/[id].vue'
 import { useItemStore } from '~/stores/item'
+import { makeAuthStub } from '../../helpers/auth'
 
 interface Item {
   item_id: string
@@ -53,7 +54,8 @@ const { navigateToMock, toastAddMock } = vi.hoisted(() => ({
 const callMock = vi.fn()
 
 mockNuxtImport('useApi', () => () => ({ call: callMock }))
-mockNuxtImport('useSupabaseUser', () => () => userRef)
+const authStub = makeAuthStub(userRef)
+mockNuxtImport('useAuth', () => () => authStub)
 mockNuxtImport('navigateTo', () => navigateToMock)
 mockNuxtImport('useToast', () => () => ({ add: toastAddMock }))
 

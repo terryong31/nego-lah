@@ -22,8 +22,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import notifications
-from notifications import MAX_QUEUED_EVENTS, NotificationBroker, channel_for
+import core.notifications as notifications
+from core.notifications import MAX_QUEUED_EVENTS, NotificationBroker, channel_for
 
 
 @contextlib.asynccontextmanager
@@ -38,7 +38,7 @@ async def distributed(broker: NotificationBroker, redis_stub):
     if broker._pubsub is None:
         broker._pubsub = FakePubSub()
         await broker._pubsub.subscribe(notifications.KEEPALIVE_CHANNEL)
-    import cache
+    import core.cache as cache
 
     original = cache.redis_client
     cache.redis_client = redis_stub
@@ -88,6 +88,7 @@ class SlowPubSub(FakePubSub):
 # ---------------------------------------------------------------------------
 # In-process delivery
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_notification_broker_pub_sub():
@@ -147,6 +148,7 @@ async def test_publish_reaches_only_the_addressed_user():
 # Bounded queues
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_queue_is_bounded_and_drops_the_oldest_event():
     """A client that stops draining must not grow the server's memory."""
@@ -183,6 +185,7 @@ async def test_a_stalled_subscriber_does_not_block_its_peers():
 # Distributed (multi-worker) delivery
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_publish_goes_through_redis_when_distributed():
     """Otherwise only streams on the publishing worker would ever be fed."""
@@ -193,9 +196,7 @@ async def test_publish_goes_through_redis_when_distributed():
     async with distributed(broker, redis_stub):
         broker.publish("buyer-1", {"message": "hi"})
 
-    redis_stub.publish.assert_called_once_with(
-        channel_for("buyer-1"), json.dumps({"message": "hi"})
-    )
+    redis_stub.publish.assert_called_once_with(channel_for("buyer-1"), json.dumps({"message": "hi"}))
     # Not delivered twice: the worker's own listener will feed this queue when
     # the message comes back around.
     assert queue.empty()
@@ -258,6 +259,7 @@ async def test_local_subscribers_short_circuit_the_redis_lookup():
 # ---------------------------------------------------------------------------
 # Lifecycle
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_start_stays_in_process_without_a_redis_url(monkeypatch):
@@ -381,6 +383,7 @@ async def test_subscribing_registers_the_users_channel_when_distributed():
 # ---------------------------------------------------------------------------
 # SPEC-058: listener reconnect (hot-spin regression)
 # ---------------------------------------------------------------------------
+
 
 class SpinDetected(BaseException):
     """Raised by the fake once the listener has clearly stopped throttling.
@@ -510,6 +513,7 @@ async def test_publish_delivers_locally_when_the_pubsub_is_not_subscribed():
 # A stream opening while another closes (SPEC-068)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_a_stream_opening_as_another_closes_keeps_the_channel_subscribed():
     """The overlap a reload produces: the new page's stream subscribes while the
@@ -541,6 +545,4 @@ async def test_a_stream_opening_as_another_closes_keeps_the_channel_subscribed()
         )
 
         assert broker.has_subscribers("buyer"), "the new stream is still open"
-        assert channel in pubsub.subscribed, (
-            "a live stream whose channel is unsubscribed is fed nothing, ever"
-        )
+        assert channel in pubsub.subscribed, "a live stream whose channel is unsubscribed is fed nothing, ever"

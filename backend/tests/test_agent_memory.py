@@ -18,8 +18,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from agent.memory import ConversationMemory, conversation_memory
 from conftest import make_supabase_result
+from domains.negotiation.memory import ConversationMemory, conversation_memory
 
 
 @pytest.fixture
@@ -31,10 +31,7 @@ def mem_supabase(monkeypatch):
 
 def _select_chain_execute(fake):
     """Terminal `.execute()` for `select().eq().order().range()`."""
-    return (
-        fake.table.return_value.select.return_value
-        .eq.return_value.order.return_value.range.return_value.execute
-    )
+    return fake.table.return_value.select.return_value.eq.return_value.order.return_value.range.return_value.execute
 
 
 def _insert_execute(fake):
@@ -49,12 +46,13 @@ def _delete_eq_execute(fake):
 # Lazy `supabase` property
 # ---------------------------------------------------------------------------
 
+
 def test_supabase_property_lazy_loads_from_connector(monkeypatch):
     """When _supabase is None, the property should import connector.admin_supabase
     and cache it on self._supabase."""
     fresh = ConversationMemory()
     fake_admin = MagicMock(name="admin_supabase")
-    monkeypatch.setattr("connector.admin_supabase", fake_admin, raising=False)
+    monkeypatch.setattr("core.connector.admin_supabase", fake_admin, raising=False)
 
     assert fresh._supabase is None
     result = fresh.supabase
@@ -62,13 +60,14 @@ def test_supabase_property_lazy_loads_from_connector(monkeypatch):
     assert fresh._supabase is fake_admin
 
     # Second access returns the cached value without re-importing.
-    monkeypatch.setattr("connector.admin_supabase", MagicMock(name="other"), raising=False)
+    monkeypatch.setattr("core.connector.admin_supabase", MagicMock(name="other"), raising=False)
     assert fresh.supabase is fake_admin
 
 
 # ---------------------------------------------------------------------------
 # Writes target the append-only table
 # ---------------------------------------------------------------------------
+
 
 def test_add_message_writes_to_the_messages_table(mem_supabase):
     _insert_execute(mem_supabase).return_value = make_supabase_result([])
@@ -94,9 +93,7 @@ def test_add_message_writes_an_aware_utc_timestamp(mem_supabase):
 
     conversation_memory.add_message("user-1", "ai", "sure")
 
-    written = datetime.fromisoformat(
-        mem_supabase.table.return_value.insert.call_args[0][0]["created_at"]
-    )
+    written = datetime.fromisoformat(mem_supabase.table.return_value.insert.call_args[0][0]["created_at"])
     assert written.tzinfo is not None, "a naive literal means whatever the host's zone is"
     assert abs((written - datetime.now(UTC)).total_seconds()) < 5
 
@@ -117,7 +114,7 @@ def test_add_message_swallows_exception_and_logs(mem_supabase, monkeypatch):
     mem_supabase.table.side_effect = RuntimeError("supabase is down")
     logged = {}
     monkeypatch.setattr(
-        "agent.memory.logger.info",
+        "domains.negotiation.memory.logger.info",
         lambda msg: logged.setdefault("msg", msg),
     )
 
@@ -129,6 +126,7 @@ def test_add_message_swallows_exception_and_logs(mem_supabase, monkeypatch):
 # ---------------------------------------------------------------------------
 # Reads fail soft
 # ---------------------------------------------------------------------------
+
 
 def test_get_history_returns_empty_list_when_nothing_stored(mem_supabase):
     _select_chain_execute(mem_supabase).return_value = make_supabase_result([])
@@ -144,20 +142,16 @@ def test_get_history_handles_a_null_data_payload(mem_supabase):
 
 
 def test_get_history_defaults_source_when_missing(mem_supabase):
-    _select_chain_execute(mem_supabase).return_value = make_supabase_result(
-        [{"role": "ai", "content": "hi"}]
-    )
+    _select_chain_execute(mem_supabase).return_value = make_supabase_result([{"role": "ai", "content": "hi"}])
 
-    assert conversation_memory.get_history("user-1") == [
-        {"role": "ai", "content": "hi", "source": "ai"}
-    ]
+    assert conversation_memory.get_history("user-1") == [{"role": "ai", "content": "hi", "source": "ai"}]
 
 
 def test_get_history_swallows_exception_and_returns_empty_list(mem_supabase, monkeypatch):
     mem_supabase.table.side_effect = RuntimeError("boom")
     logged = {}
     monkeypatch.setattr(
-        "agent.memory.logger.info",
+        "domains.negotiation.memory.logger.info",
         lambda msg: logged.setdefault("msg", msg),
     )
 
@@ -170,9 +164,7 @@ def test_get_history_swallows_exception_and_returns_empty_list(mem_supabase, mon
 def test_get_history_page_returns_default_shape_when_nothing_stored(mem_supabase):
     _select_chain_execute(mem_supabase).return_value = make_supabase_result([])
 
-    assert conversation_memory.get_history_page("user-1") == {
-        "messages": [], "has_more": False, "next_offset": 0
-    }
+    assert conversation_memory.get_history_page("user-1") == {"messages": [], "has_more": False, "next_offset": 0}
 
 
 def test_get_history_page_swallows_exception_and_keeps_the_offset(mem_supabase, monkeypatch):
@@ -181,7 +173,7 @@ def test_get_history_page_swallows_exception_and_keeps_the_offset(mem_supabase, 
     mem_supabase.table.side_effect = RuntimeError("boom")
     logged = {}
     monkeypatch.setattr(
-        "agent.memory.logger.info",
+        "domains.negotiation.memory.logger.info",
         lambda msg: logged.setdefault("msg", msg),
     )
 
@@ -193,8 +185,7 @@ def test_get_history_page_swallows_exception_and_keeps_the_offset(mem_supabase, 
 
 def test_get_all_histories_returns_empty_dict_when_no_rows(mem_supabase):
     (
-        mem_supabase.table.return_value.select.return_value
-        .order.return_value.execute
+        mem_supabase.table.return_value.select.return_value.order.return_value.execute
     ).return_value = make_supabase_result([])
 
     assert conversation_memory.get_all_histories() == {}
@@ -204,7 +195,7 @@ def test_get_all_histories_swallows_exception_and_returns_empty_dict(mem_supabas
     mem_supabase.table.side_effect = RuntimeError("boom")
     logged = {}
     monkeypatch.setattr(
-        "agent.memory.logger.info",
+        "domains.negotiation.memory.logger.info",
         lambda msg: logged.setdefault("msg", msg),
     )
 
@@ -218,22 +209,21 @@ def test_get_all_histories_swallows_exception_and_returns_empty_dict(mem_supabas
 # clear_history
 # ---------------------------------------------------------------------------
 
+
 def test_clear_history_deletes_by_user_id(mem_supabase):
     _delete_eq_execute(mem_supabase).return_value = make_supabase_result([])
 
     conversation_memory.clear_history("user-9")
 
     mem_supabase.table.assert_called_with("messages")
-    mem_supabase.table.return_value.delete.return_value.eq.assert_called_with(
-        "user_id", "user-9"
-    )
+    mem_supabase.table.return_value.delete.return_value.eq.assert_called_with("user_id", "user-9")
 
 
 def test_clear_history_swallows_exception_and_logs(mem_supabase, monkeypatch):
     mem_supabase.table.side_effect = RuntimeError("boom")
     logged = {}
     monkeypatch.setattr(
-        "agent.memory.logger.info",
+        "domains.negotiation.memory.logger.info",
         lambda msg: logged.setdefault("msg", msg),
     )
 
@@ -251,6 +241,7 @@ def test_broadcast_message_is_a_noop():
 # ---------------------------------------------------------------------------
 # `read_watermark` — a mark that covers the transcript, not the clock
 # ---------------------------------------------------------------------------
+
 
 def _watermark(monkeypatch, newest):
     monkeypatch.setattr(conversation_memory, "newest_at", lambda *_a, **_k: newest)
@@ -283,20 +274,13 @@ def test_read_watermark_falls_back_to_now_without_a_readable_row(monkeypatch):
 # The future horizon — a mis-stamped row is history, not news (SPEC-066)
 # ---------------------------------------------------------------------------
 
+
 def _newest_at_chain(fake):
-    return (
-        fake.table.return_value.select.return_value
-        .eq.return_value.eq.return_value.lte.return_value
-        .order.return_value.limit.return_value.execute
-    )
+    return fake.table.return_value.select.return_value.eq.return_value.eq.return_value.lte.return_value.order.return_value.limit.return_value.execute
 
 
 def _count_chain(fake):
-    return (
-        fake.table.return_value.select.return_value
-        .eq.return_value.eq.return_value.lte.return_value
-        .gt.return_value.limit.return_value.execute
-    )
+    return fake.table.return_value.select.return_value.eq.return_value.eq.return_value.lte.return_value.gt.return_value.limit.return_value.execute
 
 
 def _horizon_arg(lte_mock):
@@ -309,9 +293,7 @@ def test_newest_at_will_not_believe_a_row_from_the_future(mem_supabase):
     """Rows written before the fix are dated by the API host's local clock in a
     UTC column — eight hours out on a UTC+8 box. Taking one for "the newest
     thing said" would drag the unread cutoff past every message that follows."""
-    _newest_at_chain(mem_supabase).return_value = make_supabase_result(
-        [{"created_at": "2026-09-10T10:00:00+00:00"}]
-    )
+    _newest_at_chain(mem_supabase).return_value = make_supabase_result([{"created_at": "2026-09-10T10:00:00+00:00"}])
 
     assert conversation_memory.newest_at("user-1", "human") == "2026-09-10T10:00:00+00:00"
 

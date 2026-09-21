@@ -1,4 +1,4 @@
-import { loginRedirect } from '~/utils/auth'
+import { getUserCsrfToken, loginRedirect } from '~/utils/auth'
 
 /**
  * `reauth: true` marks a call whose 401 means "the password you just typed is
@@ -10,22 +10,27 @@ import { loginRedirect } from '~/utils/auth'
 type CallOptions = Parameters<typeof $fetch>[1] & { reauth?: boolean }
 
 export const useApi = () => {
-  const supabase = useSupabaseClient()
   const config = useRuntimeConfig()
   const toast = useToast()
+  const { clearSession } = useAuth()
   // Read reactively at failure time, not at composable-creation time, so the
   // bounce carries whatever page the caller is actually sitting on.
   const route = useRoute()
 
   const call = async <T>(path: string, opts?: CallOptions) => {
     const { reauth, ...fetchOpts } = opts ?? {}
-    const { data: { session } } = await supabase.auth.getSession()
     const { token: turnstileToken } = useTurnstileToken()
 
     return $fetch<T>(`${config.public.apiBaseUrl}${path}`, {
       ...fetchOpts,
+      // SPEC-093: the session is an httpOnly cookie on the API host. There is no
+      // Authorization header to attach any more — and no token in this page for
+      // an injected script to find. `credentials: 'include'` is what carries it
+      // cross-origin; the CSRF token below is what stops another origin from
+      // riding along on it.
+      credentials: 'include',
       headers: {
-        ...(session ? { Authorization: `Bearer ${session.access_token}` } : {}),
+        'X-CSRF-Token': getUserCsrfToken(),
         ...(turnstileToken.value ? { 'X-Turnstile-Token': turnstileToken.value } : {}),
         ...opts?.headers
       },
@@ -44,18 +49,17 @@ export const useApi = () => {
           }).catch(() => {})
         }
 
-        // 401 = the token is missing/expired/invalid (e.g. a stale session left
-        // over from switching accounts). 403 banned = the backend now blocks the
-        // account on every request. Either way the local Supabase session is
-        // useless, so sign out and bounce to login instead of leaving the user
-        // stuck on a dead app — carrying the current page so signing back in
-        // returns them to it (a lapsed session mid-negotiation on /chat is the
-        // case that matters).
+        // 401 = the cookie is missing, expired or revoked (a session the server
+        // ended, an account switched in another tab). 403 banned = the backend
+        // now blocks the account on every request. Either way this browser's
+        // session is over, so drop what we know locally and bounce to login —
+        // carrying the current page so signing back in returns them to it (a
+        // lapsed session mid-negotiation on /chat is the case that matters).
         if ((response.status === 401 && !reauth) || isBanned) {
           if (isBanned) {
             toast.add({ title: 'Account suspended', description: 'Your account has been banned.', color: 'error' })
           }
-          await supabase.auth.signOut()
+          clearSession()
           await navigateTo(loginRedirect(route.fullPath))
         }
       }

@@ -4,29 +4,24 @@ import { loginSchema, type LoginForm } from '~/utils/schemas'
 import { safeRedirectPath } from '~/utils/auth'
 
 const { t } = useI18n()
-const supabase = useSupabaseClient()
 const router = useRouter()
 const toast = useToast()
 const { call } = useApi()
 const { initLanguage } = useLanguage()
+const { user, login, signInWithProvider } = useAuth()
 
 const route = useRoute()
-const user = useSupabaseUser()
 const loading = ref(false)
 
-// Where to land after signing in. Two sources, in order: our own `?redirect=`
-// query (set by `middleware/auth`, the `useApi` 401 bounce and the chat send
-// guard), then the cookie @nuxtjs/supabase's own guard writes — Nuxt runs that
-// global middleware before any page middleware, so when a session lapses it is
-// usually the one that redirects, and `saveRedirectToCookie` (nuxt.config) is
-// how it hands the blocked page over. `pluck()` reads and clears in one go, so
-// it is called only on the branch that actually navigates.
-const cookieRedirect = useSupabaseCookieRedirect()
-
+// Where to land after signing in. `?redirect=` is set by `middleware/auth`, the
+// `useApi` 401 bounce and the chat send guard — every bounce to this page goes
+// through `loginRedirect`, so there is one spelling to read back.
+//
+// (There used to be a second source: the cookie `@nuxtjs/supabase`'s own guard
+// wrote, because that guard ran before ours and had no way to attach a query.
+// With the module gone, `middleware/auth` is the only guard there is.)
 function getSafeRedirect(): string {
-  return safeRedirectPath(route.query.redirect)
-    ?? safeRedirectPath(cookieRedirect.pluck())
-    ?? '/'
+  return safeRedirectPath(route.query.redirect) ?? '/'
 }
 
 watch(user, (val) => {
@@ -35,17 +30,12 @@ watch(user, (val) => {
   }
 }, { immediate: true })
 
-onMounted(async () => {
+onMounted(() => {
+  // `plugins/auth.client.ts` has already asked the server, so `user` is settled
+  // by the time this runs — no second session probe to race it.
   if (user.value && !loading.value) {
     router.replace(getSafeRedirect())
-    return
   }
-  try {
-    const { data: { session } } = await supabase.auth.getSession()
-    if (session?.user && !loading.value) {
-      router.replace(getSafeRedirect())
-    }
-  } catch { /* ignore */ }
 })
 
 const fields = computed(() => [{
@@ -65,24 +55,11 @@ const fields = computed(() => [{
 const providers = computed(() => [{
   label: t('auth.googleSignIn'),
   icon: 'i-simple-icons-google',
-  onClick: async () => {
-    try {
-      const safeRedirect = getSafeRedirect()
-      const confirmUrl = new URL(`${window.location.origin}`)
-      confirmUrl.searchParams.set('flow', 'oauth')
-      if (safeRedirect !== '/') {
-        confirmUrl.searchParams.set('redirect', safeRedirect)
-      }
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: 'google',
-        options: {
-          redirectTo: confirmUrl.toString()
-        }
-      })
-      if (error) throw error
-    } catch (err) {
-      toast.add({ title: 'Auth Error', description: err instanceof Error ? err.message : 'Something went wrong', color: 'error' })
-    }
+  onClick: () => {
+    // A full navigation to the API, which owns the PKCE exchange and hands the
+    // browser back with a session cookie. No authorization code ever reaches
+    // this tab, so there is nothing here for a script to intercept (SPEC-093).
+    signInWithProvider('google', getSafeRedirect())
   }
 }])
 
@@ -99,18 +76,13 @@ async function onSubmit(payload: FormSubmitEvent<LoginForm>) {
   }
   loading.value = true
   try {
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email: payload.data.email,
-      password: payload.data.password,
-      options: turnstileToken.value ? { captchaToken: turnstileToken.value } : undefined
-    })
-    if (error) throw error
+    const signedIn = await login(payload.data.email, payload.data.password, turnstileToken.value)
 
     // Block banned users: probe a protected endpoint. A banned account gets a
     // 403, and useApi already signs the user out + shows a toast, so we just
     // stop here. Other (transient) errors shouldn't block a valid login.
     try {
-      await call(`/user/${data.user.id}/account`)
+      await call(`/user/${signedIn.id}/account`)
     } catch (probeErr) {
       const e = probeErr as { statusCode?: number, status?: number, data?: { detail?: string } }
       const status = e?.statusCode ?? e?.status
@@ -124,7 +96,14 @@ async function onSubmit(payload: FormSubmitEvent<LoginForm>) {
     toast.add({ title: t('auth.loginSuccess'), description: t('auth.loginSuccessDesc'), color: 'success' })
     router.push(getSafeRedirect())
   } catch (err) {
-    toast.add({ title: 'Login failed', description: err instanceof Error ? err.message : 'Something went wrong', color: 'error' })
+    // The server answers every bad credential the same way, on purpose, so the
+    // detail is safe to surface as-is.
+    const detail = (err as { data?: { detail?: string } })?.data?.detail
+    toast.add({
+      title: 'Login failed',
+      description: detail || (err instanceof Error ? err.message : 'Something went wrong'),
+      color: 'error'
+    })
   } finally {
     loading.value = false
   }

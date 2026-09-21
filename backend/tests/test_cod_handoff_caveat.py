@@ -17,16 +17,16 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import agent.bot as bot
-from agent.context import set_context
+import domains.negotiation.bot as bot
+from domains.negotiation.context import set_context
 
 
 @pytest.fixture
 def transfer(monkeypatch):
     """Run `transfer_to_human` with every side effect stubbed out."""
     monkeypatch.setattr(bot, "conversation_memory", MagicMock())
-    monkeypatch.setattr("connector.admin_supabase", MagicMock())
-    monkeypatch.setattr("services.email_service.send_human_transfer_alert", MagicMock(return_value=True))
+    monkeypatch.setattr("core.connector.admin_supabase", MagicMock())
+    monkeypatch.setattr("core.email_service.send_human_transfer_alert", MagicMock(return_value=True))
     set_context(user_id="buyer-cod", item_id="item-1")
 
     async def _call(reason, summary=""):
@@ -38,6 +38,7 @@ def transfer(monkeypatch):
 # ---------------------------------------------------------------------------
 # S1-S3 — when the caveat is attached
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_cod_reason_carries_the_caveat(transfer):
@@ -75,6 +76,7 @@ async def test_the_summary_is_enough_when_the_reason_is_generic(transfer):
 # S4 — and when it is not
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_an_ordinary_handoff_does_not_carry_it(transfer):
     """The caveat is about meet-ups. On a dispute it is noise."""
@@ -88,12 +90,13 @@ async def test_an_ordinary_handoff_does_not_carry_it(transfer):
 # S5/S6 — additive, and discloses nothing
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_the_handoff_itself_still_happens(transfer, monkeypatch):
     fake_supabase = MagicMock()
-    monkeypatch.setattr("connector.admin_supabase", fake_supabase)
+    monkeypatch.setattr("core.connector.admin_supabase", fake_supabase)
     fake_alert = MagicMock(return_value=True)
-    monkeypatch.setattr("services.email_service.send_human_transfer_alert", fake_alert)
+    monkeypatch.setattr("core.email_service.send_human_transfer_alert", fake_alert)
 
     result = await transfer("Cash-on-delivery arrangement requested")
 

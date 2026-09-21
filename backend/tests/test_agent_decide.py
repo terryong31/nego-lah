@@ -12,8 +12,15 @@ These tests assert those properties rather than the wording, which stays free
 to move as the local model does.
 """
 
-import agent.decide as decide
-from agent.config import COD_POLICY
+import domains.negotiation.decide as decide
+from domains.negotiation.config import COD_POLICY
+
+
+def _billing():
+    """`decide` resolves the standing price through billing's exported service."""
+    from domains.billing.services import BillingService
+
+    return BillingService
 
 
 def _lower(text: str) -> str:
@@ -27,6 +34,7 @@ PROMPT = _lower(decide.DECIDER_PROMPT)
 # S2 — the decider prompt carries no persona
 # ---------------------------------------------------------------------------
 
+
 def test_decider_prompt_has_no_persona():
     """Persona is what the model continues instead of routing. It must not be here."""
     assert _lower(COD_POLICY) not in PROMPT
@@ -35,7 +43,7 @@ def test_decider_prompt_has_no_persona():
 
 
 def test_decider_prompt_is_far_shorter_than_the_persona_prompt():
-    import agent.bot as bot
+    import domains.negotiation.bot as bot
 
     assert len(decide.DECIDER_PROMPT) < len(bot.LOCAL_CUSTOMER_AGENT_PROMPT) / 3
 
@@ -56,8 +64,9 @@ def test_decider_prompt_allows_choosing_no_tool():
 # S3 — the brief, not the transcript
 # ---------------------------------------------------------------------------
 
+
 def test_brief_carries_the_server_resolved_standing_price(monkeypatch):
-    monkeypatch.setattr(decide, "active_negotiated_price", lambda u, i: 1110.0)
+    monkeypatch.setattr(_billing(), "get_active_negotiated_price", lambda u, i: 1110.0)
 
     brief = decide.build_brief(
         user_id="u1",
@@ -73,7 +82,7 @@ def test_brief_carries_the_server_resolved_standing_price(monkeypatch):
 
 def test_brief_never_carries_min_price(monkeypatch):
     """SPEC-036 / SPEC-044 A: the floor is not the model's to see."""
-    monkeypatch.setattr(decide, "active_negotiated_price", lambda u, i: None)
+    monkeypatch.setattr(_billing(), "get_active_negotiated_price", lambda u, i: None)
 
     brief = decide.build_brief(
         user_id="u1",
@@ -87,10 +96,12 @@ def test_brief_never_carries_min_price(monkeypatch):
 
 def test_brief_contains_no_prior_assistant_prose(monkeypatch):
     """The whole point: the decider must not see a transcript to continue."""
-    monkeypatch.setattr(decide, "active_negotiated_price", lambda u, i: None)
+    monkeypatch.setattr(_billing(), "get_active_negotiated_price", lambda u, i: None)
 
     brief = decide.build_brief(
-        user_id="u1", item_id="item-1", message="1000 lah",
+        user_id="u1",
+        item_id="item-1",
+        message="1000 lah",
         item={"name": "Casio", "price": 1150, "condition": "Good"},
     )
     messages = decide.build_messages(brief)
@@ -102,6 +113,7 @@ def test_brief_contains_no_prior_assistant_prose(monkeypatch):
 # ---------------------------------------------------------------------------
 # S8 — a decision of "no tool" is a real outcome
 # ---------------------------------------------------------------------------
+
 
 def test_decision_none_means_answer_directly():
     assert decide.TurnDecision(tool=None, args={}).calls_a_tool is False
@@ -127,6 +139,7 @@ def test_decider_only_offers_tools_it_can_route_to():
 # no offer at all. The buyer's number is resolved from the transcript here
 # rather than asked of the model.
 # ---------------------------------------------------------------------------
+
 
 def test_last_buyer_offer_reads_this_message_first():
     assert decide.last_buyer_offer("ok how about 1050 then") == 1050.0
@@ -158,7 +171,7 @@ def test_last_buyer_offer_is_none_when_nobody_named_a_number():
 
 
 def test_brief_carries_the_buyers_last_offer(monkeypatch):
-    monkeypatch.setattr(decide, "active_negotiated_price", lambda u, i: 1110.0)
+    monkeypatch.setattr(_billing(), "get_active_negotiated_price", lambda u, i: 1110.0)
 
     brief = decide.build_brief(
         user_id="u1",

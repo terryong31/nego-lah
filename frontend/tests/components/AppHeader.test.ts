@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mockNuxtImport, mountSuspended } from '@nuxt/test-utils/runtime'
 import AppHeader from '~/components/AppHeader.vue'
+import { makeAuthStub } from '../helpers/auth'
 
 // A hand-rolled ref-alike (rather than a real `ref()` from 'vue') so this can
 // live inside `vi.hoisted` without tripping over Vitest's import-hoisting
@@ -9,21 +10,13 @@ import AppHeader from '~/components/AppHeader.vue'
 const { userRef } = vi.hoisted(() => ({
   userRef: { __v_isRef: true, value: null as Record<string, unknown> | null }
 }))
-const { signOutMock, toastAddMock, isAuthGuardedMock } = vi.hoisted(() => ({
-  signOutMock: vi.fn(),
+const { toastAddMock, isAuthGuardedMock } = vi.hoisted(() => ({
   toastAddMock: vi.fn(),
   isAuthGuardedMock: vi.fn()
 }))
 
-mockNuxtImport('useSupabaseUser', () => () => userRef)
-mockNuxtImport('useSupabaseClient', () => () => ({
-  auth: {
-    signOut: signOutMock,
-    getSession: vi.fn().mockImplementation(async () => ({
-      data: { session: userRef.value ? { user: userRef.value } : null }
-    }))
-  }
-}))
+const authStub = makeAuthStub(userRef)
+mockNuxtImport('useAuth', () => () => authStub)
 mockNuxtImport('useToast', () => () => ({
   add: toastAddMock
 }))
@@ -40,7 +33,7 @@ mockNuxtImport('isAuthGuarded', () => isAuthGuardedMock)
 describe('components/AppHeader.vue', () => {
   beforeEach(() => {
     userRef.value = null
-    signOutMock.mockReset().mockResolvedValue({ error: null })
+    authStub.logout.mockReset().mockResolvedValue(undefined)
     toastAddMock.mockReset()
     isAuthGuardedMock.mockReset().mockReturnValue(false)
   })
@@ -131,15 +124,14 @@ describe('components/AppHeader.vue', () => {
       return { onSelect: items[2][0].onSelect, pushSpy }
     }
 
-    it('shows a success toast and redirects home when signOut succeeds on an auth-guarded route', async () => {
+    it('shows a success toast and redirects home when sign-out succeeds on an auth-guarded route', async () => {
       isAuthGuardedMock.mockReturnValue(true)
-      signOutMock.mockResolvedValue({ error: null })
       const { onSelect, pushSpy } = await mountAndGetSignOut()
 
       await onSelect()
 
       expect(isAuthGuardedMock).toHaveBeenCalled()
-      expect(signOutMock).toHaveBeenCalledTimes(1)
+      expect(authStub.logout).toHaveBeenCalledTimes(1)
       expect(toastAddMock).toHaveBeenCalledWith({
         title: 'Signed out',
         description: 'See you again!',
@@ -148,15 +140,14 @@ describe('components/AppHeader.vue', () => {
       expect(pushSpy).toHaveBeenCalledWith('/')
     })
 
-    it('shows a success toast and does NOT redirect when signOut succeeds on a public route', async () => {
+    it('shows a success toast and does NOT redirect when sign-out succeeds on a public route', async () => {
       isAuthGuardedMock.mockReturnValue(false)
-      signOutMock.mockResolvedValue({ error: null })
       const { onSelect, pushSpy } = await mountAndGetSignOut()
 
       await onSelect()
 
       expect(isAuthGuardedMock).toHaveBeenCalled()
-      expect(signOutMock).toHaveBeenCalledTimes(1)
+      expect(authStub.logout).toHaveBeenCalledTimes(1)
       expect(toastAddMock).toHaveBeenCalledWith({
         title: 'Signed out',
         description: 'See you again!',
@@ -165,9 +156,12 @@ describe('components/AppHeader.vue', () => {
       expect(pushSpy).not.toHaveBeenCalled()
     })
 
-    it('shows an error toast and does not redirect when signOut fails', async () => {
+    it('still leaves a guarded page when the server never hears the sign-out', async () => {
+      // SPEC-093: `logout` drops the local session whatever the request did, so
+      // the button always does what it says. Staying put would leave the buyer
+      // on a page whose every call is about to 401.
       isAuthGuardedMock.mockReturnValue(true)
-      signOutMock.mockResolvedValue({ error: { message: 'network down' } })
+      authStub.logout.mockRejectedValue(new Error('network down'))
       const { onSelect, pushSpy } = await mountAndGetSignOut()
 
       await onSelect()
@@ -177,7 +171,7 @@ describe('components/AppHeader.vue', () => {
         description: 'network down',
         color: 'error'
       })
-      expect(pushSpy).not.toHaveBeenCalled()
+      expect(pushSpy).toHaveBeenCalledWith('/')
     })
   })
 

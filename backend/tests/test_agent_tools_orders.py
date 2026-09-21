@@ -14,9 +14,9 @@ this exercises identical code to `.invoke(...)` but skips the pydantic
 argument-schema wrapper, which is irrelevant to what we're testing here.
 """
 
-from agent import context
-from agent.tools.orders import check_user_orders
 from conftest import make_supabase_result
+from domains.negotiation import context
+from domains.negotiation.tools.orders import check_user_orders
 
 
 def _invoke(query=""):
@@ -26,9 +26,7 @@ def _invoke(query=""):
 def _chain(fake_supabase):
     """Return the terminal mock in the orders query chain
     (`.table('orders').select('*').eq('buyer_id', uid).order('created_at', desc=True)`)."""
-    return (
-        fake_supabase.table.return_value.select.return_value.eq.return_value.order.return_value
-    )
+    return fake_supabase.table.return_value.select.return_value.eq.return_value.order.return_value
 
 
 def test_is_langchain_tool_with_expected_name():
@@ -46,7 +44,7 @@ def test_no_user_id_returns_system_error():
 def test_no_orders_found_returns_friendly_message(fake_supabase, patch_supabase):
     context.set_context(user_id="user-1")
     _chain(fake_supabase).execute.return_value = make_supabase_result([])
-    patch_supabase("agent.tools.orders", admin=fake_supabase)
+    patch_supabase("domains.negotiation.tools.orders", admin=fake_supabase)
 
     result = _invoke()
 
@@ -56,15 +54,13 @@ def test_no_orders_found_returns_friendly_message(fake_supabase, patch_supabase)
 def test_queries_orders_table_scoped_to_current_user(fake_supabase, patch_supabase):
     context.set_context(user_id="user-42")
     _chain(fake_supabase).execute.return_value = make_supabase_result([])
-    patch_supabase("agent.tools.orders", admin=fake_supabase)
+    patch_supabase("domains.negotiation.tools.orders", admin=fake_supabase)
 
     _invoke()
 
     fake_supabase.table.assert_called_with("orders")
     fake_supabase.table.return_value.select.assert_called_with("*")
-    fake_supabase.table.return_value.select.return_value.eq.assert_called_with(
-        "buyer_id", "user-42"
-    )
+    fake_supabase.table.return_value.select.return_value.eq.assert_called_with("buyer_id", "user-42")
     fake_supabase.table.return_value.select.return_value.eq.return_value.order.assert_called_with(
         "created_at", desc=True
     )
@@ -80,7 +76,7 @@ def test_pending_info_order_includes_shipping_hint(fake_supabase, patch_supabase
         "created_at": "2026-01-15T10:30:00",
     }
     _chain(fake_supabase).execute.return_value = make_supabase_result([order])
-    patch_supabase("agent.tools.orders", admin=fake_supabase)
+    patch_supabase("domains.negotiation.tools.orders", admin=fake_supabase)
 
     result = _invoke()
 
@@ -106,7 +102,7 @@ def test_confirmed_order_shows_processing_note(fake_supabase, patch_supabase):
         "created_at": "2026-02-01T00:00:00",
     }
     _chain(fake_supabase).execute.return_value = make_supabase_result([order])
-    patch_supabase("agent.tools.orders", admin=fake_supabase)
+    patch_supabase("domains.negotiation.tools.orders", admin=fake_supabase)
 
     result = _invoke()
 
@@ -126,7 +122,7 @@ def test_shipped_order_shows_shipped_note(fake_supabase, patch_supabase):
         "created_at": "2026-03-05T00:00:00",
     }
     _chain(fake_supabase).execute.return_value = make_supabase_result([order])
-    patch_supabase("agent.tools.orders", admin=fake_supabase)
+    patch_supabase("domains.negotiation.tools.orders", admin=fake_supabase)
 
     result = _invoke()
 
@@ -146,7 +142,7 @@ def test_other_status_has_no_extra_note(fake_supabase, patch_supabase):
         "created_at": "2026-04-10T00:00:00",
     }
     _chain(fake_supabase).execute.return_value = make_supabase_result([order])
-    patch_supabase("agent.tools.orders", admin=fake_supabase)
+    patch_supabase("domains.negotiation.tools.orders", admin=fake_supabase)
 
     result = _invoke()
 
@@ -163,7 +159,7 @@ def test_missing_optional_fields_fall_back_to_defaults(fake_supabase, patch_supa
     # "" via .get('created_at', '') and is then sliced with [:10].
     order = {"id": "ord-5"}
     _chain(fake_supabase).execute.return_value = make_supabase_result([order])
-    patch_supabase("agent.tools.orders", admin=fake_supabase)
+    patch_supabase("domains.negotiation.tools.orders", admin=fake_supabase)
 
     result = _invoke()
 
@@ -189,7 +185,7 @@ def test_multiple_orders_are_all_listed(fake_supabase, patch_supabase):
         },
     ]
     _chain(fake_supabase).execute.return_value = make_supabase_result(orders)
-    patch_supabase("agent.tools.orders", admin=fake_supabase)
+    patch_supabase("domains.negotiation.tools.orders", admin=fake_supabase)
 
     result = _invoke()
 
@@ -206,7 +202,7 @@ def test_multiple_orders_are_all_listed(fake_supabase, patch_supabase):
 def test_supabase_exception_returns_error_string(fake_supabase, patch_supabase):
     context.set_context(user_id="user-1")
     _chain(fake_supabase).execute.side_effect = RuntimeError("connection lost")
-    patch_supabase("agent.tools.orders", admin=fake_supabase)
+    patch_supabase("domains.negotiation.tools.orders", admin=fake_supabase)
 
     result = _invoke()
 
@@ -226,7 +222,7 @@ def test_missing_id_key_is_caught_by_broad_except(fake_supabase, patch_supabase)
         "created_at": "2026-05-05T00:00:00",
     }
     _chain(fake_supabase).execute.return_value = make_supabase_result([order])
-    patch_supabase("agent.tools.orders", admin=fake_supabase)
+    patch_supabase("domains.negotiation.tools.orders", admin=fake_supabase)
 
     result = _invoke()
 
@@ -240,7 +236,7 @@ def test_invoke_via_langchain_structured_tool_interface(fake_supabase, patch_sup
     raw `.func` shortcut used elsewhere in this file."""
     context.set_context(user_id="user-1")
     _chain(fake_supabase).execute.return_value = make_supabase_result([])
-    patch_supabase("agent.tools.orders", admin=fake_supabase)
+    patch_supabase("domains.negotiation.tools.orders", admin=fake_supabase)
 
     result = check_user_orders.invoke({"query": "where is my stuff"})
 
@@ -270,7 +266,7 @@ SHIPPED_WITH_TRACKING = {
 def test_a_shipped_order_reports_its_courier_and_tracking_number(fake_supabase, patch_supabase):
     context.set_context(user_id="user-1")
     _chain(fake_supabase).execute.return_value = make_supabase_result([SHIPPED_WITH_TRACKING])
-    patch_supabase("agent.tools.orders", admin=fake_supabase)
+    patch_supabase("domains.negotiation.tools.orders", admin=fake_supabase)
 
     result = _invoke()
 
@@ -282,10 +278,9 @@ def test_a_shipped_order_reports_its_courier_and_tracking_number(fake_supabase, 
 def test_a_shipped_order_without_tracking_still_reads_sensibly(fake_supabase, patch_supabase):
     """Orders shipped before SPEC-057, or by a seller who only set the status."""
     context.set_context(user_id="user-1")
-    order = {k: v for k, v in SHIPPED_WITH_TRACKING.items()
-             if k not in ("courier", "tracking_number", "tracking_url")}
+    order = {k: v for k, v in SHIPPED_WITH_TRACKING.items() if k not in ("courier", "tracking_number", "tracking_url")}
     _chain(fake_supabase).execute.return_value = make_supabase_result([order])
-    patch_supabase("agent.tools.orders", admin=fake_supabase)
+    patch_supabase("domains.negotiation.tools.orders", admin=fake_supabase)
 
     result = _invoke()
 
@@ -299,7 +294,7 @@ def test_a_delivered_order_is_reported_as_delivered(fake_supabase, patch_supabas
     _chain(fake_supabase).execute.return_value = make_supabase_result(
         [{**SHIPPED_WITH_TRACKING, "status": "delivered"}]
     )
-    patch_supabase("agent.tools.orders", admin=fake_supabase)
+    patch_supabase("domains.negotiation.tools.orders", admin=fake_supabase)
 
     result = _invoke()
 
@@ -319,7 +314,7 @@ def test_tracking_details_are_only_shown_for_the_orders_that_have_them(fake_supa
         "created_at": "2026-09-01T00:00:00",
     }
     _chain(fake_supabase).execute.return_value = make_supabase_result([SHIPPED_WITH_TRACKING, plain])
-    patch_supabase("agent.tools.orders", admin=fake_supabase)
+    patch_supabase("domains.negotiation.tools.orders", admin=fake_supabase)
 
     result = _invoke()
 

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mockNuxtImport, mountSuspended } from '@nuxt/test-utils/runtime'
 import OrdersPage from '~/pages/orders.vue'
+import { makeAuthStub } from '../helpers/auth'
 
 interface Order {
   item_name: string
@@ -49,23 +50,16 @@ const { userRef } = vi.hoisted(() => ({
   userRef: { __v_isRef: true, value: null as Record<string, unknown> | null }
 }))
 
-const { getSessionMock } = vi.hoisted(() => ({
-  getSessionMock: vi.fn()
-}))
-
 const callMock = vi.fn()
+const authStub = makeAuthStub(userRef)
 
 mockNuxtImport('useApi', () => () => ({ call: callMock }))
-mockNuxtImport('useSupabaseUser', () => () => userRef)
-mockNuxtImport('useSupabaseClient', () => () => ({
-  auth: { getSession: getSessionMock }
-}))
+mockNuxtImport('useAuth', () => () => authStub)
 
 describe('pages/orders.vue', () => {
   beforeEach(() => {
     userRef.value = null
     callMock.mockReset()
-    getSessionMock.mockReset().mockResolvedValue({ data: { session: null } })
     // useAsyncData caches by key ('user-orders') on the shared nuxtApp
     // instance backing every mountSuspended() call in this file, so without
     // clearing it, only the first test would ever actually invoke the
@@ -74,38 +68,20 @@ describe('pages/orders.vue', () => {
   })
 
   describe('uid resolution', () => {
-    it('prefers the live session user id over useSupabaseUser when both are present', async () => {
-      getSessionMock.mockResolvedValue({ data: { session: { user: { id: 'session-uid' } } } })
-      userRef.value = { id: 'reactive-uid' }
+    it('reads the buyer from the session the server confirmed', async () => {
+      // SPEC-093: this used to consult `getSession()` first and the reactive ref
+      // second, because the two could disagree mid-hydration. There is one
+      // source now — `plugins/auth.client.ts` settles it before any page
+      // renders — so there is nothing left to prefer.
+      userRef.value = { id: 'buyer-uid' }
       callMock.mockResolvedValue({ orders: [] })
 
       await mountSuspended(OrdersPage)
 
-      expect(callMock).toHaveBeenCalledWith('/payment/orders/user/session-uid')
+      expect(callMock).toHaveBeenCalledWith('/payment/orders/user/buyer-uid')
     })
 
-    it('falls back to useSupabaseUser().value.id when the session has no user', async () => {
-      getSessionMock.mockResolvedValue({ data: { session: null } })
-      userRef.value = { id: 'reactive-uid' }
-      callMock.mockResolvedValue({ orders: [] })
-
-      await mountSuspended(OrdersPage)
-
-      expect(callMock).toHaveBeenCalledWith('/payment/orders/user/reactive-uid')
-    })
-
-    it('falls back to useSupabaseUser().value.id when the session promise resolves with no session at all', async () => {
-      getSessionMock.mockResolvedValue({ data: {} })
-      userRef.value = { id: 'reactive-uid-2' }
-      callMock.mockResolvedValue({ orders: [] })
-
-      await mountSuspended(OrdersPage)
-
-      expect(callMock).toHaveBeenCalledWith('/payment/orders/user/reactive-uid-2')
-    })
-
-    it('returns [] and never calls the API when neither the session nor the reactive user have an id', async () => {
-      getSessionMock.mockResolvedValue({ data: { session: null } })
+    it('returns [] and never calls the API when nobody is signed in', async () => {
       userRef.value = null
 
       const wrapper = await mountSuspended(OrdersPage)
@@ -116,10 +92,10 @@ describe('pages/orders.vue', () => {
   })
 
   describe('loading state', () => {
-    it('shows the loading skeletons while the session/orders fetch is in flight', async () => {
+    it('shows the loading skeletons while the orders fetch is in flight', async () => {
       userRef.value = { id: 'u1' }
-      const { promise } = deferred<{ data: { session: null } }>()
-      getSessionMock.mockReturnValue(promise)
+      const { promise } = deferred<{ orders: [] }>()
+      callMock.mockReturnValue(promise)
 
       const wrapper = await mountSuspended(OrdersPage)
 
@@ -132,7 +108,6 @@ describe('pages/orders.vue', () => {
   describe('empty state', () => {
     it('shows "No Orders Yet" with a link back to the storefront when there are no orders', async () => {
       userRef.value = { id: 'u1' }
-      getSessionMock.mockResolvedValue({ data: { session: { user: { id: 'u1' } } } })
       callMock.mockResolvedValue({ orders: [] })
 
       const wrapper = await mountSuspended(OrdersPage)
@@ -146,7 +121,6 @@ describe('pages/orders.vue', () => {
 
     it('treats a response with no `orders` property as empty (via the ?? [] fallback)', async () => {
       userRef.value = { id: 'u1' }
-      getSessionMock.mockResolvedValue({ data: { session: { user: { id: 'u1' } } } })
       callMock.mockResolvedValue({})
 
       const wrapper = await mountSuspended(OrdersPage)
@@ -156,7 +130,6 @@ describe('pages/orders.vue', () => {
 
     it('falls back to the empty default state when the orders fetch rejects', async () => {
       userRef.value = { id: 'u1' }
-      getSessionMock.mockResolvedValue({ data: { session: { user: { id: 'u1' } } } })
       callMock.mockRejectedValue(new Error('network down'))
 
       const wrapper = await mountSuspended(OrdersPage)
@@ -168,7 +141,6 @@ describe('pages/orders.vue', () => {
   describe('successful render', () => {
     it('renders a row per order: item name, formatted price, capitalized status badge, and formatted date', async () => {
       userRef.value = { id: 'u1' }
-      getSessionMock.mockResolvedValue({ data: { session: { user: { id: 'u1' } } } })
       callMock.mockResolvedValue({
         orders: [makeOrder({ item_name: 'Vintage Camera', amount: 123.4, status: 'completed', created_at: '2026-01-15T00:00:00Z' })]
       })
@@ -191,7 +163,6 @@ describe('pages/orders.vue', () => {
 
     it('replaces underscores with spaces in the status badge label', async () => {
       userRef.value = { id: 'u1' }
-      getSessionMock.mockResolvedValue({ data: { session: { user: { id: 'u1' } } } })
       callMock.mockResolvedValue({
         orders: [makeOrder({ status: 'pending_review' })]
       })
@@ -204,20 +175,18 @@ describe('pages/orders.vue', () => {
 
     it('calls the user-orders endpoint exactly once for the resolved uid', async () => {
       userRef.value = { id: 'u1' }
-      getSessionMock.mockResolvedValue({ data: { session: { user: { id: 'abc-123' } } } })
       callMock.mockResolvedValue({ orders: [makeOrder()] })
 
       await mountSuspended(OrdersPage)
 
       expect(callMock).toHaveBeenCalledTimes(1)
-      expect(callMock).toHaveBeenCalledWith('/payment/orders/user/abc-123')
+      expect(callMock).toHaveBeenCalledWith('/payment/orders/user/u1')
     })
   })
 
   describe('shipment tracking (SPEC-069)', () => {
     it('renders the courier and tracking number as an external link', async () => {
       userRef.value = { id: 'u1' }
-      getSessionMock.mockResolvedValue({ data: { session: { user: { id: 'u1' } } } })
       callMock.mockResolvedValue({
         orders: [makeOrder({
           status: 'shipped',
@@ -241,7 +210,6 @@ describe('pages/orders.vue', () => {
 
     it('shows the courier as plain text when the carrier has no tracking URL', async () => {
       userRef.value = { id: 'u1' }
-      getSessionMock.mockResolvedValue({ data: { session: { user: { id: 'u1' } } } })
       callMock.mockResolvedValue({
         orders: [makeOrder({
           status: 'shipped',
@@ -260,7 +228,6 @@ describe('pages/orders.vue', () => {
 
     it('renders an em dash for an order that has not shipped', async () => {
       userRef.value = { id: 'u1' }
-      getSessionMock.mockResolvedValue({ data: { session: { user: { id: 'u1' } } } })
       callMock.mockResolvedValue({ orders: [makeOrder({ status: 'paid' })] })
 
       const wrapper = await mountSuspended(OrdersPage)
@@ -281,7 +248,6 @@ describe('pages/orders.vue', () => {
       ['some_unknown_status', 'error']
     ])('maps status "%s" to color "%s"', async (status, expected) => {
       userRef.value = { id: 'u1' }
-      getSessionMock.mockResolvedValue({ data: { session: { user: { id: 'u1' } } } })
       callMock.mockResolvedValue({ orders: [] })
 
       const wrapper = await mountSuspended(OrdersPage)
@@ -291,7 +257,6 @@ describe('pages/orders.vue', () => {
 
     it('matches case-insensitively (uppercase status still resolves to its color)', async () => {
       userRef.value = { id: 'u1' }
-      getSessionMock.mockResolvedValue({ data: { session: { user: { id: 'u1' } } } })
       callMock.mockResolvedValue({ orders: [] })
 
       const wrapper = await mountSuspended(OrdersPage)
@@ -304,7 +269,6 @@ describe('pages/orders.vue', () => {
   describe('formatDate', () => {
     it('returns "-" for a falsy/empty date string', async () => {
       userRef.value = { id: 'u1' }
-      getSessionMock.mockResolvedValue({ data: { session: { user: { id: 'u1' } } } })
       callMock.mockResolvedValue({ orders: [] })
 
       const wrapper = await mountSuspended(OrdersPage)
@@ -314,7 +278,6 @@ describe('pages/orders.vue', () => {
 
     it('formats an ISO date string using en-MY locale formatting', async () => {
       userRef.value = { id: 'u1' }
-      getSessionMock.mockResolvedValue({ data: { session: { user: { id: 'u1' } } } })
       callMock.mockResolvedValue({ orders: [] })
 
       const wrapper = await mountSuspended(OrdersPage)

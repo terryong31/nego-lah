@@ -1,21 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mockNuxtImport, mountSuspended } from '@nuxt/test-utils/runtime'
 import { flushPromises } from '@vue/test-utils'
+import { ref } from 'vue'
 import RegisterPage from '~/pages/register.vue'
+import { makeAuthStub } from '../helpers/auth'
 
-const { signUpMock } = vi.hoisted(() => ({
-  signUpMock: vi.fn()
-}))
+const userRef = ref<{ id: string } | null>(null)
+const authStub = makeAuthStub(userRef)
 
 const { toastAddMock } = vi.hoisted(() => ({
   toastAddMock: vi.fn()
 }))
 
-mockNuxtImport('useSupabaseClient', () => () => ({
-  auth: {
-    signUp: signUpMock
-  }
-}))
+mockNuxtImport('useAuth', () => () => authStub)
 
 mockNuxtImport('useToast', () => () => ({
   add: toastAddMock
@@ -47,10 +44,8 @@ async function fillAndSubmit(
 
 describe('pages/register.vue', () => {
   beforeEach(() => {
-    signUpMock.mockReset().mockResolvedValue({
-      data: { user: { id: 'user-1', identities: [{ id: 'identity-1' }] } },
-      error: null
-    })
+    userRef.value = null
+    authStub.register.mockReset().mockResolvedValue({ confirmation_sent: true })
     toastAddMock.mockReset()
   })
 
@@ -70,7 +65,7 @@ describe('pages/register.vue', () => {
 
     await fillAndSubmit(wrapper, 'not-an-email', 'short', 'short')
 
-    expect(signUpMock).not.toHaveBeenCalled()
+    expect(authStub.register).not.toHaveBeenCalled()
     expect(wrapper.text()).toContain('Invalid email')
     expect(wrapper.text()).toContain('Must be at least 8 characters')
   })
@@ -80,7 +75,7 @@ describe('pages/register.vue', () => {
 
     await fillAndSubmit(wrapper, 'user@example.com', 'password123', 'differentPass1')
 
-    expect(signUpMock).not.toHaveBeenCalled()
+    expect(authStub.register).not.toHaveBeenCalled()
     expect(wrapper.text()).toContain('Passwords don\'t match')
   })
 
@@ -91,7 +86,7 @@ describe('pages/register.vue', () => {
 
       await fillAndSubmit(wrapper, 'user@example.com', 'password123')
 
-      expect(signUpMock).toHaveBeenCalledWith({ email: 'user@example.com', password: 'password123' })
+      expect(authStub.register).toHaveBeenCalledWith('user@example.com', 'password123', undefined)
       expect(toastAddMock).toHaveBeenCalledWith({
         title: 'Registration successful',
         description: 'Please check your email to verify your account.',
@@ -101,44 +96,27 @@ describe('pages/register.vue', () => {
     })
   })
 
-  describe('anti-enumeration: email already registered', () => {
-    it('shows an "Email already registered" warning toast and redirects to /login without a success toast', async () => {
-      signUpMock.mockResolvedValue({
-        data: { user: { id: 'user-1', identities: [] } },
-        error: null
-      })
+  describe('anti-enumeration', () => {
+    it('cannot tell an existing account apart, because the server will not say', async () => {
+      // SPEC-093: this used to read `data.user.identities.length === 0`, the
+      // tell Supabase leaks to the client when the address already has an
+      // account. The backend brokers sign-up now and answers
+      // `{confirmation_sent: true}` either way, so the page has nothing to
+      // branch on — which is the point. The copy has to work for both.
       const wrapper = await mountSuspended(RegisterPage)
       const pushSpy = spyOnRouterPush(wrapper)
 
-      await fillAndSubmit(wrapper)
+      await fillAndSubmit(wrapper, 'taken@example.com', 'password123')
 
       expect(toastAddMock).toHaveBeenCalledTimes(1)
-      expect(toastAddMock).toHaveBeenCalledWith({
-        title: 'Email already registered',
-        description: 'This email already has an account. If you signed up with Google, use the Google button.',
-        color: 'warning'
-      })
-      expect(pushSpy).toHaveBeenCalledWith({ path: '/login' })
-    })
-
-    it('treats a missing identities field (undefined) the same as an empty array', async () => {
-      signUpMock.mockResolvedValue({
-        data: { user: { id: 'user-1', identities: undefined } },
-        error: null
-      })
-      const wrapper = await mountSuspended(RegisterPage)
-      const pushSpy = spyOnRouterPush(wrapper)
-
-      await fillAndSubmit(wrapper)
-
-      expect(toastAddMock).toHaveBeenCalledWith(expect.objectContaining({ title: 'Email already registered' }))
+      expect(toastAddMock).toHaveBeenCalledWith(expect.objectContaining({ color: 'success' }))
       expect(pushSpy).toHaveBeenCalledWith({ path: '/login' })
     })
   })
 
   describe('registration failure', () => {
-    it('shows a "Registration failed" toast with the Supabase error message and does not redirect', async () => {
-      signUpMock.mockResolvedValue({ data: { user: null }, error: new Error('User already registered') })
+    it('shows a "Registration failed" toast with the server\'s message and does not redirect', async () => {
+      authStub.register.mockRejectedValue({ data: { detail: 'Could not create that account' } })
       const wrapper = await mountSuspended(RegisterPage)
       const pushSpy = spyOnRouterPush(wrapper)
 
@@ -146,14 +124,14 @@ describe('pages/register.vue', () => {
 
       expect(toastAddMock).toHaveBeenCalledWith({
         title: 'Registration failed',
-        description: 'User already registered',
+        description: 'Could not create that account',
         color: 'error'
       })
       expect(pushSpy).not.toHaveBeenCalled()
     })
 
     it('falls back to a generic message when the thrown error is not an Error instance', async () => {
-      signUpMock.mockRejectedValue('boom')
+      authStub.register.mockRejectedValue('boom')
       const wrapper = await mountSuspended(RegisterPage)
 
       await fillAndSubmit(wrapper)

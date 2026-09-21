@@ -18,7 +18,7 @@ import pytest
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from agent.llm_factory import (  # noqa: E402
+from domains.negotiation.llm_factory import (  # noqa: E402
     current_provider,
     hybrid_llm_session,
 )
@@ -26,8 +26,8 @@ from agent.llm_factory import (  # noqa: E402
 
 @pytest.fixture(autouse=True)
 def _clean_provider_context():
-    from agent.llm_factory import LOCAL_LLM_LEASE_KEY
-    from cache import redis_client
+    from core.cache import redis_client
+    from domains.negotiation.llm_factory import LOCAL_LLM_LEASE_KEY
 
     redis_client.delete(LOCAL_LLM_LEASE_KEY)
     token = current_provider.set(None)
@@ -48,13 +48,13 @@ def tunnel_down(monkeypatch):
     async def _unhealthy(timeout=1.5):
         return False
 
-    monkeypatch.setattr("agent.llm_factory.is_local_llm_available", _unhealthy)
+    monkeypatch.setattr("domains.negotiation.llm_factory.is_local_llm_available", _unhealthy)
 
 
 @pytest.fixture(autouse=True)
 def _clear_model_cache():
     """Models are cached per configuration; a stale entry would mask a config change."""
-    import agent.llm_factory as factory
+    import domains.negotiation.llm_factory as factory
 
     factory._model_cache.clear()
     yield
@@ -65,8 +65,9 @@ def _clear_model_cache():
 # A1 — the cloud model is built with a timeout and a bounded retry policy
 # ---------------------------------------------------------------------------
 
+
 def test_gemini_model_is_built_with_an_explicit_request_timeout(gemini_env):
-    from agent.llm_factory import GEMINI_REQUEST_TIMEOUT, _build_gemini_model
+    from domains.negotiation.llm_factory import GEMINI_REQUEST_TIMEOUT, _build_gemini_model
 
     model = _build_gemini_model(temperature=0.7)
 
@@ -79,7 +80,7 @@ def test_gemini_model_is_built_with_bounded_retries(gemini_env):
     """`max_retries` is what turns a 429/ResourceExhausted burst into a retry
     with backoff instead of an immediate failure — but it has to be bounded,
     or a rate-limited provider becomes an unbounded stall."""
-    from agent.llm_factory import GEMINI_MAX_RETRIES, _build_gemini_model
+    from domains.negotiation.llm_factory import GEMINI_MAX_RETRIES, _build_gemini_model
 
     model = _build_gemini_model(temperature=0.7)
 
@@ -92,7 +93,7 @@ def test_local_model_keeps_its_own_timeouts(monkeypatch):
     monkeypatch.setenv("LOCAL_LLM_BASE_URL", "https://llm.negolah.my/v1")
     monkeypatch.setenv("LOCAL_LLM_MODEL", "mlx-community/Qwen3.6-35B-A3B-4bit")
 
-    from agent.llm_factory import (
+    from domains.negotiation.llm_factory import (
         LOCAL_CONNECT_TIMEOUT,
         LOCAL_READ_TIMEOUT,
         _build_local_model,
@@ -108,20 +109,19 @@ def test_local_model_keeps_its_own_timeouts(monkeypatch):
 # A2 — concurrent overflow turns are capped per worker
 # ---------------------------------------------------------------------------
 
+
 def test_a_gemini_concurrency_cap_is_configured():
-    from agent.llm_factory import GEMINI_MAX_CONCURRENCY
+    from domains.negotiation.llm_factory import GEMINI_MAX_CONCURRENCY
 
     assert GEMINI_MAX_CONCURRENCY >= 1
 
 
 @pytest.mark.asyncio
-async def test_overflow_turns_beyond_the_cap_wait_their_turn(
-    gemini_env, tunnel_down, monkeypatch
-):
+async def test_overflow_turns_beyond_the_cap_wait_their_turn(gemini_env, tunnel_down, monkeypatch):
     """Past the cap, a turn queues instead of piling onto an already-saturated
     box. Sized generously in production, so this only engages under real
     overload — SPEC-020's '0ms overflow' still holds below the cap."""
-    import agent.llm_factory as factory
+    import domains.negotiation.llm_factory as factory
 
     monkeypatch.setattr(factory, "_gemini_semaphore", asyncio.Semaphore(2))
 
@@ -148,7 +148,7 @@ async def test_overflow_turns_beyond_the_cap_wait_their_turn(
 async def test_the_cap_is_released_when_a_turn_raises(gemini_env, tunnel_down, monkeypatch):
     """A turn that blows up must not leak a permit, or the worker slowly
     strangles itself one failed turn at a time."""
-    import agent.llm_factory as factory
+    import domains.negotiation.llm_factory as factory
 
     semaphore = asyncio.Semaphore(1)
     monkeypatch.setattr(factory, "_gemini_semaphore", semaphore)
@@ -175,10 +175,10 @@ async def test_a_timed_out_turn_releases_the_lease_and_the_permit(
     burns a cloud permit for the life of the process, so the worker quietly
     throttles itself one bad turn at a time.
     """
-    import agent.bot as bot_module
-    import agent.llm_factory as factory
-    import routes.chat as chat_routes
-    from agent.llm_factory import hybrid_llm_session
+    import domains.negotiation.bot as bot_module
+    import domains.negotiation.llm_factory as factory
+    import domains.negotiation.routes as chat_routes
+    from domains.negotiation.llm_factory import hybrid_llm_session
 
     semaphore = asyncio.Semaphore(1)
     monkeypatch.setattr(factory, "_gemini_semaphore", semaphore)
@@ -192,13 +192,13 @@ async def test_a_timed_out_turn_releases_the_lease_and_the_permit(
     monkeypatch.setattr(chat_routes, "get_rate_limit_remaining", lambda *a, **k: 9)
     monkeypatch.setattr(chat_routes, "track_ai_tokens", lambda *a, **k: None)
     monkeypatch.setattr(chat_routes, "CHAT_TURN_DEADLINE_SECONDS", 0.15)
-    patch_supabase("routes.chat", admin=fake_supabase)
-    (
-        fake_supabase.table.return_value.select.return_value.eq.return_value
-        .execute.return_value
-    ) = SimpleNamespace(data=[])
+    patch_supabase("domains.negotiation.routes", admin=fake_supabase)
+    (fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value) = SimpleNamespace(
+        data=[]
+    )
 
-    import payment.fulfillment as fulfillment
+    import domains.billing.fulfillment as fulfillment
+
     monkeypatch.setattr(fulfillment, "broadcast_to_chat", lambda *a, **k: None)
 
     # A turn that takes the session (and therefore a permit) and then hangs,
@@ -226,7 +226,7 @@ async def test_local_turns_are_not_gated_by_the_cloud_cap(monkeypatch):
     """The cap exists to bound *Gemini* fan-out. The laptop already has its own
     lease of exactly one; making it also wait on the cloud permit would be a
     second, redundant queue."""
-    import agent.llm_factory as factory
+    import domains.negotiation.llm_factory as factory
 
     monkeypatch.setenv("LLM_PROVIDER", "auto")
     monkeypatch.setenv("LOCAL_LLM_BASE_URL", "https://llm.negolah.my/v1")

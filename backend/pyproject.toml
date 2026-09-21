@@ -47,6 +47,10 @@ dev = [
     "pytest>=9.0.3",
     "pytest-asyncio>=1.3.0",
     "pytest-cov>=7.1.0",
+    # tests/test_ci_workflow.py parses .github/workflows/deploy.yml. Arrives
+    # transitively today; declared so a transitive drop cannot take the CI
+    # wiring assertions with it.
+    "pyyaml>=6.0.3",
     "ruff>=0.15.20",
 ]
 

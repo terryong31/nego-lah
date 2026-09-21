@@ -27,7 +27,7 @@ mutable object across the whole test session).
 
 import json
 
-from agent.tools.market_price import (
+from domains.negotiation.tools.market_price import (
     CATEGORY_BASE_PRICES,
     CONDITION_MULTIPLIERS,
     MarketPriceService,
@@ -365,12 +365,14 @@ def _make_fake_chat_model(content):
 
 
 def test_get_market_valuation_success_parses_plain_json(monkeypatch):
-    content = json.dumps({
-        "market_average": 500.0,
-        "min_price": 100.0,
-        "max_price": 900.0,
-        "suggested_listing": 460.0,
-    })
+    content = json.dumps(
+        {
+            "market_average": 500.0,
+            "min_price": 100.0,
+            "max_price": 900.0,
+            "suggested_listing": 460.0,
+        }
+    )
     fake_class, fake_instance, fake_grounded = _make_fake_chat_model(content)
     monkeypatch.setattr("langchain_google_genai.ChatGoogleGenerativeAI", fake_class)
 
@@ -393,9 +395,14 @@ def test_get_market_valuation_success_parses_plain_json(monkeypatch):
 
 
 def test_get_market_valuation_success_category_none_reports_unknown(monkeypatch):
-    content = json.dumps({
-        "market_average": 10.0, "min_price": 5.0, "max_price": 20.0, "suggested_listing": 9.0,
-    })
+    content = json.dumps(
+        {
+            "market_average": 10.0,
+            "min_price": 5.0,
+            "max_price": 20.0,
+            "suggested_listing": 9.0,
+        }
+    )
     fake_class, _, _ = _make_fake_chat_model(content)
     monkeypatch.setattr("langchain_google_genai.ChatGoogleGenerativeAI", fake_class)
 
@@ -407,9 +414,18 @@ def test_get_market_valuation_success_category_none_reports_unknown(monkeypatch)
 
 
 def test_get_market_valuation_success_strips_markdown_code_fences(monkeypatch):
-    content = "```json\n" + json.dumps({
-        "market_average": 42.0, "min_price": 10.0, "max_price": 80.0, "suggested_listing": 39.0,
-    }) + "\n```"
+    content = (
+        "```json\n"
+        + json.dumps(
+            {
+                "market_average": 42.0,
+                "min_price": 10.0,
+                "max_price": 80.0,
+                "suggested_listing": 39.0,
+            }
+        )
+        + "\n```"
+    )
     fake_class, _, _ = _make_fake_chat_model(content)
     monkeypatch.setattr("langchain_google_genai.ChatGoogleGenerativeAI", fake_class)
 
@@ -421,9 +437,14 @@ def test_get_market_valuation_success_strips_markdown_code_fences(monkeypatch):
 
 
 def test_get_market_valuation_success_extracts_json_amid_surrounding_text(monkeypatch):
-    payload = json.dumps({
-        "market_average": 15.0, "min_price": 5.0, "max_price": 25.0, "suggested_listing": 14.0,
-    })
+    payload = json.dumps(
+        {
+            "market_average": 15.0,
+            "min_price": 5.0,
+            "max_price": 25.0,
+            "suggested_listing": 14.0,
+        }
+    )
     content = f"Here is my analysis:\n{payload}\nHope that helps!"
     fake_class, _, _ = _make_fake_chat_model(content)
     monkeypatch.setattr("langchain_google_genai.ChatGoogleGenerativeAI", fake_class)
@@ -439,9 +460,14 @@ def test_get_market_valuation_success_content_as_list_of_dict_parts(monkeypatch)
     """Some Gemini responses return `.content` as a list of parts instead
     of a plain string; the code joins string parts and dict parts' `text`
     key together before parsing."""
-    payload = json.dumps({
-        "market_average": 77.0, "min_price": 20.0, "max_price": 150.0, "suggested_listing": 70.0,
-    })
+    payload = json.dumps(
+        {
+            "market_average": 77.0,
+            "min_price": 20.0,
+            "max_price": 150.0,
+            "suggested_listing": 70.0,
+        }
+    )
     # Includes a part that is neither a plain string nor a dict with a
     # 'text' key (e.g. a dict carrying some other metadata field) -- it is
     # silently skipped by the join logic rather than raising.
@@ -477,7 +503,7 @@ def test_get_market_valuation_falls_back_when_gemini_api_key_unset(monkeypatch):
     internally, which is caught by the broad except and routed to
     `_fallback_estimate_price` -- confirmed here by comparing against a
     direct call to that method with identical arguments."""
-    monkeypatch.setattr("env.GEMINI_API_KEY", None)
+    monkeypatch.setattr("core.env.GEMINI_API_KEY", None)
 
     svc = MarketPriceService()
     expected = svc._fallback_estimate_price("gemini-less item", "good", "electronics")
@@ -531,7 +557,7 @@ def test_get_market_valuation_default_condition_is_good(monkeypatch):
     Forces the Gemini path to fail deterministically (unset API key) so the
     result comes from `_fallback_estimate_price`, then checks the default
     propagated all the way through as `condition_used`."""
-    monkeypatch.setattr("env.GEMINI_API_KEY", None)
+    monkeypatch.setattr("core.env.GEMINI_API_KEY", None)
 
     svc = MarketPriceService()
     result = svc.get_market_valuation("anything", category="other")
@@ -546,12 +572,14 @@ def test_get_market_valuation_default_condition_is_good(monkeypatch):
 
 
 async def test_aget_market_valuation_parses_the_grounded_response(monkeypatch):
-    content = json.dumps({
-        "market_average": 500.0,
-        "min_price": 100.0,
-        "max_price": 900.0,
-        "suggested_listing": 460.0,
-    })
+    content = json.dumps(
+        {
+            "market_average": 500.0,
+            "min_price": 100.0,
+            "max_price": 900.0,
+            "suggested_listing": 460.0,
+        }
+    )
     fake_class, fake_instance, fake_grounded = _make_fake_chat_model(content)
     monkeypatch.setattr("langchain_google_genai.ChatGoogleGenerativeAI", fake_class)
 
@@ -571,9 +599,7 @@ async def test_aget_market_valuation_falls_back_when_the_model_raises(monkeypatc
     fake_grounded_model.invoke.side_effect = RuntimeError("network is down")
     fake_model_instance = MagicMock()
     fake_model_instance.bind.return_value = fake_grounded_model
-    monkeypatch.setattr(
-        "langchain_google_genai.ChatGoogleGenerativeAI", MagicMock(return_value=fake_model_instance)
-    )
+    monkeypatch.setattr("langchain_google_genai.ChatGoogleGenerativeAI", MagicMock(return_value=fake_model_instance))
 
     svc = MarketPriceService()
     result = await svc.aget_market_valuation("flaky item", condition="good", category=None)
@@ -583,7 +609,7 @@ async def test_aget_market_valuation_falls_back_when_the_model_raises(monkeypatc
 
 
 async def test_aget_market_valuation_falls_back_without_an_api_key(monkeypatch):
-    monkeypatch.setattr("env.GEMINI_API_KEY", None)
+    monkeypatch.setattr("core.env.GEMINI_API_KEY", None)
 
     svc = MarketPriceService()
     result = await svc.aget_market_valuation("anything", category="other")
@@ -603,18 +629,21 @@ async def test_aget_market_valuation_does_not_block_the_event_loop(monkeypatch):
     def slow_invoke(_messages):
         loop.call_soon_threadsafe(started.set)
         response = MagicMock()
-        response.content = json.dumps({
-            "market_average": 1.0, "min_price": 1.0, "max_price": 1.0, "suggested_listing": 1.0,
-        })
+        response.content = json.dumps(
+            {
+                "market_average": 1.0,
+                "min_price": 1.0,
+                "max_price": 1.0,
+                "suggested_listing": 1.0,
+            }
+        )
         return response
 
     fake_grounded_model = MagicMock()
     fake_grounded_model.invoke = slow_invoke
     fake_model_instance = MagicMock()
     fake_model_instance.bind.return_value = fake_grounded_model
-    monkeypatch.setattr(
-        "langchain_google_genai.ChatGoogleGenerativeAI", MagicMock(return_value=fake_model_instance)
-    )
+    monkeypatch.setattr("langchain_google_genai.ChatGoogleGenerativeAI", MagicMock(return_value=fake_model_instance))
 
     svc = MarketPriceService()
     task = asyncio.create_task(svc.aget_market_valuation("widget"))

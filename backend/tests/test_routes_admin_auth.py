@@ -54,16 +54,17 @@ from unittest.mock import MagicMock
 
 from fastapi import HTTPException
 
-import admin_session
-import routes.admin.auth as admin_auth
-import routes.admin.chats as admin_chats
-import routes.admin.users as admin_users
-from agent.memory import conversation_memory
+import domains.identity.admin_auth as admin_auth
+import domains.identity.admin_session as admin_session
+import domains.identity.admin_users as admin_users
+import domains.negotiation.admin_routes as admin_chats
 from conftest import PNG_BYTES, make_supabase_result
+from domains.negotiation.memory import conversation_memory
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def table_router(mapping):
     """Build a callable for `fake_supabase.table.side_effect` that returns a
@@ -73,8 +74,10 @@ def table_router(mapping):
         profiles_mock.select.return_value.execute.return_value = make_supabase_result([...])
         fake_supabase.table.side_effect = table_router({"user_profiles": profiles_mock})
     """
+
     def _side_effect(name, *_a, **_kw):
         return mapping.get(name, MagicMock())
+
     return _side_effect
 
 
@@ -90,6 +93,7 @@ def make_user(user_id, email=None, metadata=None, created_at="2024-01-01T00:00:0
 # ===========================================================================
 # Auth: POST /admin/auth/login
 # ===========================================================================
+
 
 async def test_admin_login_success_returns_handle(client, monkeypatch):
     mock_send_otp = MagicMock(return_value="preauth-handle-xyz")
@@ -146,6 +150,7 @@ async def test_admin_login_rate_limited_after_max_attempts(client, monkeypatch):
 # Auth: POST /admin/auth/verify-2fa
 # ===========================================================================
 
+
 async def test_admin_verify_2fa_success(client, monkeypatch):
     monkeypatch.setattr(
         admin_auth,
@@ -193,6 +198,7 @@ async def test_admin_verify_2fa_invalid_code_returns_401(client, monkeypatch):
 # Auth: POST /admin/auth/logout, GET /admin/auth/session
 # ===========================================================================
 
+
 async def test_admin_logout_success(client, admin_user, monkeypatch):
     admin_user(user_id="admin-42", email="admin42@example.com", ip="1.2.3.4")
     mock_clear = MagicMock()
@@ -231,6 +237,7 @@ async def test_admin_session_check_requires_authentication(client):
 # GET /admin/users
 # ===========================================================================
 
+
 async def test_get_all_users_requires_admin(client):
     resp = await client.get("/admin/users")
     assert resp.status_code == 401
@@ -238,9 +245,11 @@ async def test_get_all_users_requires_admin(client):
 
 async def test_get_all_users_merges_auth_profile_and_settings(client, admin_user, fake_supabase, patch_supabase):
     admin_user()
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
 
-    user1 = make_user("u1", email="alice@example.com", metadata={"display_name": "Alice A", "avatar_url": "http://a/x.png"})
+    user1 = make_user(
+        "u1", email="alice@example.com", metadata={"display_name": "Alice A", "avatar_url": "http://a/x.png"}
+    )
     user2 = make_user("u2", email="bob@example.com", metadata={})
     fake_supabase.auth.admin.list_users.return_value = [user1, user2]
 
@@ -252,9 +261,7 @@ async def test_get_all_users_merges_auth_profile_and_settings(client, admin_user
     settings_mock.select.return_value.execute.return_value = make_supabase_result(
         [{"user_id": "u1", "ai_enabled": False, "admin_intervening": True}]
     )
-    fake_supabase.table.side_effect = table_router(
-        {"user_profiles": profiles_mock, "chat_settings": settings_mock}
-    )
+    fake_supabase.table.side_effect = table_router({"user_profiles": profiles_mock, "chat_settings": settings_mock})
 
     resp = await client.get("/admin/users")
 
@@ -279,24 +286,28 @@ async def test_get_all_users_merges_auth_profile_and_settings(client, admin_user
     assert body["u2"]["admin_intervening"] is False
 
 
-async def test_get_all_users_prefers_custom_avatar_over_provider_avatar(client, admin_user, fake_supabase, patch_supabase):
+async def test_get_all_users_prefers_custom_avatar_over_provider_avatar(
+    client, admin_user, fake_supabase, patch_supabase
+):
     """A self-uploaded avatar outranks the Google photo Supabase re-syncs on login."""
     admin_user()
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
 
-    user1 = make_user("u1", email="alice@example.com", metadata={
-        "custom_avatar_url": "http://cdn/uploaded.png",
-        "avatar_url": "https://lh3.googleusercontent.com/a/google-photo",
-    })
+    user1 = make_user(
+        "u1",
+        email="alice@example.com",
+        metadata={
+            "custom_avatar_url": "http://cdn/uploaded.png",
+            "avatar_url": "https://lh3.googleusercontent.com/a/google-photo",
+        },
+    )
     fake_supabase.auth.admin.list_users.return_value = [user1]
 
     profiles_mock = MagicMock()
     profiles_mock.select.return_value.execute.return_value = make_supabase_result([])
     settings_mock = MagicMock()
     settings_mock.select.return_value.execute.return_value = make_supabase_result([])
-    fake_supabase.table.side_effect = table_router(
-        {"user_profiles": profiles_mock, "chat_settings": settings_mock}
-    )
+    fake_supabase.table.side_effect = table_router({"user_profiles": profiles_mock, "chat_settings": settings_mock})
 
     resp = await client.get("/admin/users")
 
@@ -304,9 +315,11 @@ async def test_get_all_users_prefers_custom_avatar_over_provider_avatar(client, 
     assert resp.json()[0]["avatar_url"] == "http://cdn/uploaded.png"
 
 
-async def test_get_all_users_email_local_part_fallback_when_no_display_name(client, admin_user, fake_supabase, patch_supabase):
+async def test_get_all_users_email_local_part_fallback_when_no_display_name(
+    client, admin_user, fake_supabase, patch_supabase
+):
     admin_user()
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
 
     user = make_user("u3", email="noname@example.com", metadata={})
     fake_supabase.auth.admin.list_users.return_value = [user]
@@ -321,7 +334,7 @@ async def test_get_all_users_email_local_part_fallback_when_no_display_name(clie
 
 async def test_get_all_users_exception_returns_500(client, admin_user, fake_supabase, patch_supabase):
     admin_user()
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
     fake_supabase.auth.admin.list_users.side_effect = Exception("supabase is down")
 
     resp = await client.get("/admin/users")
@@ -334,9 +347,10 @@ async def test_get_all_users_exception_returns_500(client, admin_user, fake_supa
 # PUT /admin/users/{user_id}/profile
 # ===========================================================================
 
+
 async def test_update_user_profile_with_both_fields(client, admin_user, fake_supabase, patch_supabase, monkeypatch):
     admin_user(user_id="admin-1", email="admin@example.com", ip="9.9.9.9")
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
     mock_audit = MagicMock()
     monkeypatch.setattr(admin_users, "write_audit", mock_audit)
 
@@ -351,14 +365,14 @@ async def test_update_user_profile_with_both_fields(client, admin_user, fake_sup
     assert upsert_call["id"] == "target-user"
     assert upsert_call["display_name"] == "New Name"
     assert upsert_call["avatar_url"] == "http://cdn/avatar.png"
-    mock_audit.assert_called_once_with(
-        "admin-1", "admin@example.com", "user.profile_update", "target-user", "9.9.9.9"
-    )
+    mock_audit.assert_called_once_with("admin-1", "admin@example.com", "user.profile_update", "target-user", "9.9.9.9")
 
 
-async def test_update_user_profile_no_fields_provided_omits_optional_keys(client, admin_user, fake_supabase, patch_supabase, monkeypatch):
+async def test_update_user_profile_no_fields_provided_omits_optional_keys(
+    client, admin_user, fake_supabase, patch_supabase, monkeypatch
+):
     admin_user()
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
     monkeypatch.setattr(admin_users, "write_audit", MagicMock())
 
     resp = await client.put("/admin/users/target-user/profile", json={})
@@ -377,9 +391,10 @@ async def test_update_user_profile_requires_admin(client):
 # POST /admin/users/{user_id}/avatar
 # ===========================================================================
 
+
 async def test_upload_user_avatar_storage_success(client, admin_user, fake_supabase, patch_supabase, monkeypatch):
     admin_user()
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
     monkeypatch.setattr(admin_users, "write_audit", MagicMock())
     fake_supabase.storage.from_.return_value.get_public_url.return_value = "https://cdn.example.com/avatars/x.png"
 
@@ -398,9 +413,11 @@ async def test_upload_user_avatar_storage_success(client, admin_user, fake_supab
     assert upload_args[1] == PNG_BYTES
 
 
-async def test_upload_user_avatar_storage_failure_falls_back_to_base64(client, admin_user, fake_supabase, patch_supabase, monkeypatch):
+async def test_upload_user_avatar_storage_failure_falls_back_to_base64(
+    client, admin_user, fake_supabase, patch_supabase, monkeypatch
+):
     admin_user()
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
     monkeypatch.setattr(admin_users, "write_audit", MagicMock())
     fake_supabase.storage.from_.return_value.upload.side_effect = Exception("storage unavailable")
 
@@ -427,6 +444,7 @@ async def test_upload_user_avatar_requires_admin(client):
 # PUT /admin/users/{user_id}/ban
 # ===========================================================================
 
+
 async def test_ban_user_cannot_ban_self(client, admin_user, monkeypatch):
     admin_user(user_id="admin-self")
     mock_audit = MagicMock()
@@ -441,7 +459,7 @@ async def test_ban_user_cannot_ban_self(client, admin_user, monkeypatch):
 
 async def test_ban_user_cannot_ban_another_admin(client, admin_user, fake_supabase, patch_supabase, monkeypatch):
     admin_user(user_id="admin-self")
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
     monkeypatch.setattr(admin_session, "_is_admin_user", MagicMock(return_value=True))
     fake_supabase.auth.admin.get_user_by_id.return_value = SimpleNamespace(
         user=make_user("other-admin", email="other-admin@example.com")
@@ -459,11 +477,9 @@ async def test_ban_user_cannot_ban_another_admin(client, admin_user, fake_supaba
 
 async def test_ban_user_success_bans_normal_user(client, admin_user, fake_supabase, patch_supabase, monkeypatch):
     admin_user(user_id="admin-self", email="admin@example.com", ip="8.8.8.8")
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
     monkeypatch.setattr(admin_session, "_is_admin_user", MagicMock(return_value=False))
-    fake_supabase.auth.admin.get_user_by_id.return_value = SimpleNamespace(
-        user=make_user("normal-user")
-    )
+    fake_supabase.auth.admin.get_user_by_id.return_value = SimpleNamespace(user=make_user("normal-user"))
     mock_audit = MagicMock()
     monkeypatch.setattr(admin_users, "write_audit", mock_audit)
 
@@ -473,15 +489,13 @@ async def test_ban_user_success_bans_normal_user(client, admin_user, fake_supaba
     assert resp.json() == {"message": "User banned successfully"}
     upsert_call = fake_supabase.table.return_value.upsert.call_args[0][0]
     assert upsert_call == {"id": "normal-user", "is_banned": True, "updated_at": "now()"}
-    fake_supabase.auth.admin.update_user_by_id.assert_called_once_with(
-        "normal-user", {"ban_duration": "876000h"}
-    )
+    fake_supabase.auth.admin.update_user_by_id.assert_called_once_with("normal-user", {"ban_duration": "876000h"})
     mock_audit.assert_called_once_with("admin-self", "admin@example.com", "user.ban", "normal-user", "8.8.8.8")
 
 
 async def test_ban_user_unban_lifts_ban(client, admin_user, fake_supabase, patch_supabase, monkeypatch):
     admin_user()
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
     monkeypatch.setattr(admin_users, "write_audit", MagicMock())
 
     resp = await client.put("/admin/users/normal-user/ban", json={"is_banned": False})
@@ -490,14 +504,14 @@ async def test_ban_user_unban_lifts_ban(client, admin_user, fake_supabase, patch
     assert resp.json() == {"message": "User unbanned successfully"}
     # Unbanning never triggers the self-ban/admin-ban lookup at all.
     fake_supabase.auth.admin.get_user_by_id.assert_not_called()
-    fake_supabase.auth.admin.update_user_by_id.assert_called_once_with(
-        "normal-user", {"ban_duration": "none"}
-    )
+    fake_supabase.auth.admin.update_user_by_id.assert_called_once_with("normal-user", {"ban_duration": "none"})
 
 
-async def test_ban_user_admin_lookup_exception_is_swallowed_and_ban_still_proceeds(client, admin_user, fake_supabase, patch_supabase, monkeypatch):
+async def test_ban_user_admin_lookup_exception_is_swallowed_and_ban_still_proceeds(
+    client, admin_user, fake_supabase, patch_supabase, monkeypatch
+):
     admin_user()
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
     fake_supabase.auth.admin.get_user_by_id.side_effect = Exception("lookup service down")
     monkeypatch.setattr(admin_users, "write_audit", MagicMock())
 
@@ -518,19 +532,30 @@ async def test_ban_user_requires_admin(client):
 # PUT /admin/users/{user_id}/ai
 # ===========================================================================
 
-async def test_toggle_user_ai_enable_broadcasts_via_supabase(client, admin_user, fake_supabase, patch_supabase, monkeypatch):
-    """Enabling AI upserts chat_settings, records the system message, and
-    broadcasts it to the user's realtime channel via Supabase's REST broadcast
-    endpoint, authenticated with the service-role key (ADMIN_SUPABASE_KEY)."""
+
+async def test_toggle_user_ai_enable_broadcasts_the_separator(
+    client, admin_user, fake_supabase, patch_supabase, monkeypatch
+):
+    """Enabling AI upserts chat_settings, records the system message, and pushes
+    it to the buyer's open tab.
+
+    SPEC-094: that push is now a publish to the authenticated notification
+    broker. It used to be a POST to Supabase's REST broadcast endpoint, onto a
+    public realtime topic that anyone holding the bundled anon key could read."""
     admin_user(user_id="admin-1", email="admin@example.com", ip="1.1.1.1")
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
     mock_add_message = MagicMock()
     monkeypatch.setattr(conversation_memory, "add_message", mock_add_message)
     monkeypatch.setattr(admin_users, "write_audit", MagicMock())
 
-    import requests
-    mock_post = MagicMock(return_value=SimpleNamespace(status_code=200, text="ok"))
-    monkeypatch.setattr(requests, "post", mock_post)
+    import core.notifications
+
+    published = []
+    monkeypatch.setattr(
+        core.notifications.notification_broker,
+        "publish",
+        lambda user_id, payload: published.append((user_id, payload)),
+    )
 
     resp = await client.put("/admin/users/target-user/ai", json={"ai_enabled": True})
 
@@ -543,35 +568,34 @@ async def test_toggle_user_ai_enable_broadcasts_via_supabase(client, admin_user,
     assert upsert_call["admin_intervening"] is False
 
     mock_add_message.assert_called_once_with(
-        "target-user", "system",
+        "target-user",
+        "system",
         "--- Terry has retired from the chat and the AI will take over now ---",
         source="system",
     )
 
-    # The broadcast now actually fires (the old SUPABASE_KEY ImportError is
-    # fixed), authenticated with the service-role key and targeting the user's
-    # channel with the system message.
-    mock_post.assert_called_once()
-    _args, kwargs = mock_post.call_args
-    assert kwargs["headers"]["apikey"] == "test-admin-service-role-key"
-    assert kwargs["headers"]["Authorization"] == "Bearer test-admin-service-role-key"
-    broadcast_msg = kwargs["json"]["messages"][0]
-    assert broadcast_msg["topic"] == "chat:target-user"
-    assert broadcast_msg["event"] == "new_message"
-    assert broadcast_msg["payload"]["content"] == (
-        "--- Terry has retired from the chat and the AI will take over now ---"
-    )
+    # It reaches the buyer's own channel, and only theirs.
+    assert len(published) == 1
+    target_user, event = published[0]
+    assert target_user == "target-user"
+    assert event["type"] == "new_message"
+    assert event["message"] == "--- Terry has retired from the chat and the AI will take over now ---"
+    # A separator is not a "you have a new message" toast.
+    assert event["notify"] is False
 
 
-async def test_toggle_user_ai_disable_sets_admin_intervening(client, admin_user, fake_supabase, patch_supabase, monkeypatch):
+async def test_toggle_user_ai_disable_sets_admin_intervening(
+    client, admin_user, fake_supabase, patch_supabase, monkeypatch
+):
     admin_user()
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
     mock_add_message = MagicMock()
     monkeypatch.setattr(conversation_memory, "add_message", mock_add_message)
     monkeypatch.setattr(admin_users, "write_audit", MagicMock())
 
-    import requests
-    monkeypatch.setattr(requests, "post", MagicMock(return_value=SimpleNamespace(status_code=200, text="ok")))
+    import core.notifications
+
+    monkeypatch.setattr(core.notifications.notification_broker, "publish", MagicMock())
 
     resp = await client.put("/admin/users/target-user/ai", json={"ai_enabled": False})
 
@@ -581,7 +605,8 @@ async def test_toggle_user_ai_disable_sets_admin_intervening(client, admin_user,
     assert upsert_call["ai_enabled"] is False
     assert upsert_call["admin_intervening"] is True
     mock_add_message.assert_called_once_with(
-        "target-user", "system",
+        "target-user",
+        "system",
         "--- Terry has joined the chat, the AI will retire for now ---",
         source="system",
     )
@@ -594,7 +619,7 @@ async def test_toggle_user_ai_requires_admin(client):
 
 async def test_get_user_ai_status_success(client, admin_user, fake_supabase, patch_supabase):
     admin_user()
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
     settings_mock = MagicMock()
     settings_mock.select.return_value.eq.return_value.execute.return_value = make_supabase_result(
         [{"user_id": "target-user", "ai_enabled": False}]
@@ -615,9 +640,10 @@ async def test_get_user_ai_status_requires_admin(client):
 # DELETE /admin/users/{user_id}
 # ===========================================================================
 
+
 async def test_admin_delete_user_success(client, admin_user, fake_supabase, patch_supabase, monkeypatch):
     admin_user(user_id="admin-1", email="admin@example.com", ip="2.2.2.2")
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
     mock_audit = MagicMock()
     monkeypatch.setattr(admin_users, "write_audit", mock_audit)
 
@@ -629,9 +655,11 @@ async def test_admin_delete_user_success(client, admin_user, fake_supabase, patc
     mock_audit.assert_called_once_with("admin-1", "admin@example.com", "user.delete", "doomed-user", "2.2.2.2")
 
 
-async def test_admin_delete_user_cleanup_exceptions_are_swallowed(client, admin_user, fake_supabase, patch_supabase, monkeypatch):
+async def test_admin_delete_user_cleanup_exceptions_are_swallowed(
+    client, admin_user, fake_supabase, patch_supabase, monkeypatch
+):
     admin_user()
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
     monkeypatch.setattr(admin_users, "write_audit", MagicMock())
     # One of the three best-effort cleanup tables blows up.
     fake_supabase.table.return_value.delete.return_value.eq.return_value.execute.side_effect = Exception("row locked")
@@ -642,9 +670,11 @@ async def test_admin_delete_user_cleanup_exceptions_are_swallowed(client, admin_
     fake_supabase.auth.admin.delete_user.assert_called_once_with("doomed-user")
 
 
-async def test_admin_delete_user_auth_delete_failure_returns_500(client, admin_user, fake_supabase, patch_supabase, monkeypatch):
+async def test_admin_delete_user_auth_delete_failure_returns_500(
+    client, admin_user, fake_supabase, patch_supabase, monkeypatch
+):
     admin_user()
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
     monkeypatch.setattr(admin_users, "write_audit", MagicMock())
     fake_supabase.auth.admin.delete_user.side_effect = Exception("cannot delete")
 
@@ -663,6 +693,7 @@ async def test_admin_delete_user_requires_admin(client):
 # GET /admin/chats
 # ===========================================================================
 
+
 def _chats_tables(profiles=None, settings=None, messages=None):
     """table_router mapping for GET /admin/chats: user_profiles + chat_settings
     (SPEC-046 #39) + the messages last-activity read (SPEC-046 #42)."""
@@ -672,16 +703,20 @@ def _chats_tables(profiles=None, settings=None, messages=None):
     settings_mock.select.return_value.execute.return_value = make_supabase_result(settings or [])
     messages_mock = MagicMock()
     messages_mock.select.return_value.order.return_value.execute.return_value = make_supabase_result(messages or [])
-    return table_router({
-        "user_profiles": profiles_mock,
-        "chat_settings": settings_mock,
-        "messages": messages_mock,
-    })
+    return table_router(
+        {
+            "user_profiles": profiles_mock,
+            "chat_settings": settings_mock,
+            "messages": messages_mock,
+        }
+    )
 
 
-async def test_get_all_chats_marks_unread_when_last_message_from_human(client, admin_user, fake_supabase, patch_supabase, monkeypatch):
+async def test_get_all_chats_marks_unread_when_last_message_from_human(
+    client, admin_user, fake_supabase, patch_supabase, monkeypatch
+):
     admin_user()
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
     fake_supabase.table.side_effect = _chats_tables(
         profiles=[{"id": "user-a", "display_name": "Profile Name", "avatar_url": "http://p/a.png"}]
     )
@@ -691,13 +726,15 @@ async def test_get_all_chats_marks_unread_when_last_message_from_human(client, a
     monkeypatch.setattr(
         conversation_memory,
         "get_all_histories",
-        MagicMock(return_value={
-            "user-a": [
-                {"role": "ai", "content": "hello", "source": "ai"},
-                {"role": "human", "content": "still waiting on a reply here", "source": "human"},
-            ],
-            "user-empty": [],
-        }),
+        MagicMock(
+            return_value={
+                "user-a": [
+                    {"role": "ai", "content": "hello", "source": "ai"},
+                    {"role": "human", "content": "still waiting on a reply here", "source": "human"},
+                ],
+                "user-empty": [],
+            }
+        ),
     )
 
     resp = await client.get("/admin/chats")
@@ -716,11 +753,13 @@ async def test_get_all_chats_marks_unread_when_last_message_from_human(client, a
     assert chat["admin_intervening"] is False
 
 
-async def test_get_all_chats_includes_hitl_status_and_last_activity(client, admin_user, fake_supabase, patch_supabase, monkeypatch):
+async def test_get_all_chats_includes_hitl_status_and_last_activity(
+    client, admin_user, fake_supabase, patch_supabase, monkeypatch
+):
     """SPEC-046: a paused conversation reports ai_enabled=false /
     admin_intervening=true, and last_activity is the newest message's timestamp."""
     admin_user()
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
     fake_supabase.table.side_effect = _chats_tables(
         settings=[{"user_id": "user-a", "ai_enabled": False, "admin_intervening": True}],
         messages=[
@@ -728,10 +767,13 @@ async def test_get_all_chats_includes_hitl_status_and_last_activity(client, admi
             {"user_id": "user-a", "created_at": "2026-09-09T09:00:00Z"},
         ],
     )
-    fake_supabase.auth.admin.list_users.return_value = [make_user("user-a", email="a@example.com", metadata={"display_name": "Al"})]
+    fake_supabase.auth.admin.list_users.return_value = [
+        make_user("user-a", email="a@example.com", metadata={"display_name": "Al"})
+    ]
 
     monkeypatch.setattr(
-        conversation_memory, "get_all_histories",
+        conversation_memory,
+        "get_all_histories",
         MagicMock(return_value={"user-a": [{"role": "human", "content": "hi", "source": "human"}]}),
     )
 
@@ -744,22 +786,28 @@ async def test_get_all_chats_includes_hitl_status_and_last_activity(client, admi
     assert chat["last_activity"] == "2026-09-09T12:00:00Z"
 
 
-async def test_get_all_chats_survives_a_failing_settings_query(client, admin_user, fake_supabase, patch_supabase, monkeypatch):
+async def test_get_all_chats_survives_a_failing_settings_query(
+    client, admin_user, fake_supabase, patch_supabase, monkeypatch
+):
     """SPEC-046: an enrichment query blowing up must not 500 the endpoint —
     conversations still list, with the HITL fields defaulted."""
     admin_user()
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
     profiles_mock = MagicMock()
     profiles_mock.select.return_value.execute.return_value = make_supabase_result([])
     settings_mock = MagicMock()
     settings_mock.select.return_value.execute.side_effect = Exception("chat_settings unavailable")
-    fake_supabase.table.side_effect = table_router({
-        "user_profiles": profiles_mock, "chat_settings": settings_mock,
-    })
+    fake_supabase.table.side_effect = table_router(
+        {
+            "user_profiles": profiles_mock,
+            "chat_settings": settings_mock,
+        }
+    )
     fake_supabase.auth.admin.list_users.return_value = [make_user("user-a", email="a@example.com")]
 
     monkeypatch.setattr(
-        conversation_memory, "get_all_histories",
+        conversation_memory,
+        "get_all_histories",
         MagicMock(return_value={"user-a": [{"role": "human", "content": "hi", "source": "human"}]}),
     )
 
@@ -772,15 +820,21 @@ async def test_get_all_chats_survives_a_failing_settings_query(client, admin_use
     assert chat["last_activity"] is None
 
 
-async def test_get_all_chats_prefers_custom_avatar_over_provider_avatar(client, admin_user, fake_supabase, patch_supabase, monkeypatch):
+async def test_get_all_chats_prefers_custom_avatar_over_provider_avatar(
+    client, admin_user, fake_supabase, patch_supabase, monkeypatch
+):
     admin_user()
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
     fake_supabase.table.side_effect = _chats_tables()
-    user_a = make_user("user-a", email="a@example.com", metadata={
-        "display_name": "Alice",
-        "custom_avatar_url": "http://cdn/uploaded.png",
-        "avatar_url": "https://lh3.googleusercontent.com/a/google-photo",
-    })
+    user_a = make_user(
+        "user-a",
+        email="a@example.com",
+        metadata={
+            "display_name": "Alice",
+            "custom_avatar_url": "http://cdn/uploaded.png",
+            "avatar_url": "https://lh3.googleusercontent.com/a/google-photo",
+        },
+    )
     fake_supabase.auth.admin.list_users.return_value = [user_a]
 
     monkeypatch.setattr(
@@ -795,18 +849,22 @@ async def test_get_all_chats_prefers_custom_avatar_over_provider_avatar(client, 
     assert resp.json()[0]["avatar_url"] == "http://cdn/uploaded.png"
 
 
-async def test_get_all_chats_not_unread_when_last_message_from_ai(client, admin_user, fake_supabase, patch_supabase, monkeypatch):
+async def test_get_all_chats_not_unread_when_last_message_from_ai(
+    client, admin_user, fake_supabase, patch_supabase, monkeypatch
+):
     admin_user()
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
     fake_supabase.table.side_effect = _chats_tables()
     fake_supabase.auth.admin.list_users.return_value = []
 
     monkeypatch.setattr(
         conversation_memory,
         "get_all_histories",
-        MagicMock(return_value={
-            "user-b": [{"role": "ai", "content": "already replied", "source": "ai"}],
-        }),
+        MagicMock(
+            return_value={
+                "user-b": [{"role": "ai", "content": "already replied", "source": "ai"}],
+            }
+        ),
     )
 
     resp = await client.get("/admin/chats")
@@ -817,9 +875,11 @@ async def test_get_all_chats_not_unread_when_last_message_from_ai(client, admin_
     assert chat["display_name"] == "Unknown user"  # no user/profile match at all
 
 
-async def test_get_all_chats_enrichment_failure_falls_back_gracefully(client, admin_user, fake_supabase, patch_supabase, monkeypatch):
+async def test_get_all_chats_enrichment_failure_falls_back_gracefully(
+    client, admin_user, fake_supabase, patch_supabase, monkeypatch
+):
     admin_user()
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
     fake_supabase.table.return_value.select.return_value.execute.side_effect = Exception("profiles table down")
 
     monkeypatch.setattr(
@@ -845,6 +905,7 @@ async def test_get_all_chats_requires_admin(client):
 # ===========================================================================
 # GET /admin/chats/{user_id}
 # ===========================================================================
+
 
 async def test_get_user_chat_returns_history_with_paging_params(client, admin_user, monkeypatch):
     admin_user()
@@ -880,6 +941,7 @@ async def test_get_user_chat_requires_admin(client):
 # ===========================================================================
 # POST /admin/chats/{user_id}/message
 # ===========================================================================
+
 
 async def test_admin_send_message_success(client, admin_user, monkeypatch):
     admin_user(user_id="admin-1", email="admin@example.com", ip="3.3.3.3")

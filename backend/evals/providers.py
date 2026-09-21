@@ -18,7 +18,7 @@ This lives here, and not in `runner.py`, because `runner.py` is coverage-omitted
 
 from contextlib import contextmanager
 
-from agent.llm_factory import (
+from domains.negotiation.llm_factory import (
     ProviderInfo,
     cloud_provider_info,
     current_provider,

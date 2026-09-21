@@ -15,10 +15,10 @@ Seam notes (see conftest): `routes/items.py` binds `get_items` /
 import json
 from unittest.mock import MagicMock
 
-import items as items_module
-import routes.items as routes_items
+import domains.catalog.items as items_module
+import domains.catalog.routes as routes_items
 from conftest import make_supabase_result
-from items import CONFIDENTIAL_ITEM_COLUMNS, PUBLIC_ITEM_SELECT
+from domains.catalog.items import CONFIDENTIAL_ITEM_COLUMNS, PUBLIC_ITEM_SELECT
 
 # A row exactly as Postgres hands it back: everything, secrets included.
 RAW_ROW = {
@@ -45,6 +45,7 @@ def _assert_clean(payload: dict):
 # ---------------------------------------------------------------------------
 # _to_public is an allowlist, not a copy
 # ---------------------------------------------------------------------------
+
 
 def test_to_public_drops_confidential_columns():
     out = routes_items._to_public(RAW_ROW)
@@ -75,6 +76,7 @@ def test_to_public_preserves_the_storefront_shape():
 # The three public endpoints
 # ---------------------------------------------------------------------------
 
+
 async def test_get_all_items_does_not_leak_min_price(client, monkeypatch):
     monkeypatch.setattr(routes_items, "get_items", lambda keyword=None: [RAW_ROW])
 
@@ -93,12 +95,11 @@ async def test_get_featured_does_not_leak_min_price(client, monkeypatch):
     _assert_clean(body[0])
 
 
-async def test_get_item_by_id_does_not_leak_min_price(
-    client, fake_supabase, patch_supabase
-):
-    (fake_supabase.table.return_value.select.return_value
-     .eq.return_value.is_.return_value.execute.return_value) = make_supabase_result([RAW_ROW])
-    patch_supabase("connector", user=fake_supabase)
+async def test_get_item_by_id_does_not_leak_min_price(client, fake_supabase, patch_supabase):
+    (
+        fake_supabase.table.return_value.select.return_value.eq.return_value.is_.return_value.execute.return_value
+    ) = make_supabase_result([RAW_ROW])
+    patch_supabase("core.connector", user=fake_supabase)
 
     response = await client.get("/items/item-1")
 
@@ -111,6 +112,7 @@ async def test_get_item_by_id_does_not_leak_min_price(
 # place — belt (API projection) and braces (query projection).
 # ---------------------------------------------------------------------------
 
+
 def test_public_select_excludes_confidential_columns():
     requested = {c.strip() for c in PUBLIC_ITEM_SELECT.split(",")}
     assert requested.isdisjoint(CONFIDENTIAL_ITEM_COLUMNS)
@@ -120,8 +122,9 @@ def test_public_select_excludes_confidential_columns():
 
 
 def test_get_items_requests_only_public_columns(monkeypatch, fake_supabase):
-    (fake_supabase.table.return_value.select.return_value.is_.return_value
-     .order.return_value.order.return_value.execute.return_value) = make_supabase_result([])
+    (
+        fake_supabase.table.return_value.select.return_value.is_.return_value.order.return_value.order.return_value.execute.return_value
+    ) = make_supabase_result([])
     monkeypatch.setattr(items_module, "user_supabase", fake_supabase)
     monkeypatch.setattr(items_module, "get_cached_items_with_hash", lambda: (None, None))
 
@@ -130,12 +133,10 @@ def test_get_items_requests_only_public_columns(monkeypatch, fake_supabase):
     fake_supabase.table.return_value.select.assert_called_with(PUBLIC_ITEM_SELECT)
 
 
-def test_get_featured_items_requests_only_public_columns(
-    monkeypatch, fake_supabase
-):
-    (fake_supabase.table.return_value.select.return_value.eq.return_value
-     .is_.return_value.order.return_value.limit.return_value
-     .execute.return_value) = make_supabase_result([])
+def test_get_featured_items_requests_only_public_columns(monkeypatch, fake_supabase):
+    (
+        fake_supabase.table.return_value.select.return_value.eq.return_value.is_.return_value.order.return_value.limit.return_value.execute.return_value
+    ) = make_supabase_result([])
     monkeypatch.setattr(items_module, "user_supabase", fake_supabase)
 
     items_module.get_featured_items()
@@ -146,13 +147,12 @@ def test_get_featured_items_requests_only_public_columns(
 async def test_cached_storefront_payload_holds_no_secrets(monkeypatch, fake_supabase):
     """The Redis cache is written from whatever the query returned, so a `*`
     select would park min_price in Redis even if the API filtered it later."""
-    from cache import get_cached_items_with_hash, invalidate_item_cache
+    from core.cache import get_cached_items_with_hash, invalidate_item_cache
 
     invalidate_item_cache()
-    (fake_supabase.table.return_value.select.return_value.is_.return_value
-     .order.return_value.order.return_value.execute.return_value) = make_supabase_result(
-        [{k: v for k, v in RAW_ROW.items() if k not in CONFIDENTIAL_ITEM_COLUMNS}]
-    )
+    (
+        fake_supabase.table.return_value.select.return_value.is_.return_value.order.return_value.order.return_value.execute.return_value
+    ) = make_supabase_result([{k: v for k, v in RAW_ROW.items() if k not in CONFIDENTIAL_ITEM_COLUMNS}])
     monkeypatch.setattr(items_module, "user_supabase", fake_supabase)
 
     items_module.get_items()
@@ -169,24 +169,19 @@ async def test_cached_storefront_payload_holds_no_secrets(monkeypatch, fake_supa
 # otherwise revoking `min_price` silently disarms them.
 # ---------------------------------------------------------------------------
 
-FLOOR_ROW = {"id": "item-1", "name": "Widget", "price": 100.0,
-             "min_price": 60.0, "status": "available"}
+FLOOR_ROW = {"id": "item-1", "name": "Widget", "price": 100.0, "min_price": 60.0, "status": "available"}
 
 
 def _bind_item(fake, row):
-    fake.table.return_value.select.return_value.eq.return_value.execute.return_value = (
-        make_supabase_result([row])
-    )
+    fake.table.return_value.select.return_value.eq.return_value.execute.return_value = make_supabase_result([row])
 
 
-def test_evaluate_offer_reads_the_floor_with_the_service_role(
-    fake_supabase, patch_supabase, monkeypatch
-):
-    from agent.tools.negotiation import evaluate_offer
+def test_evaluate_offer_reads_the_floor_with_the_service_role(fake_supabase, patch_supabase, monkeypatch):
+    from domains.negotiation.tools.negotiation import evaluate_offer
 
     _bind_item(fake_supabase, FLOOR_ROW)
     anon = MagicMock()
-    patch_supabase("connector", admin=fake_supabase, user=anon)
+    patch_supabase("core.connector", admin=fake_supabase, user=anon)
 
     result = evaluate_offer.func(item_id="item-1", offered_price=10.0)
 
@@ -194,19 +189,15 @@ def test_evaluate_offer_reads_the_floor_with_the_service_role(
     anon.table.assert_not_called()
 
 
-def test_create_checkout_reads_the_floor_with_the_service_role(
-    fake_supabase, patch_supabase, monkeypatch
-):
-    from agent import context
-    from agent.tools.payment import create_checkout_link
+def test_create_checkout_reads_the_floor_with_the_service_role(fake_supabase, patch_supabase, monkeypatch):
+    from domains.negotiation import context
+    from domains.negotiation.tools.payment import create_checkout_link
 
     _bind_item(fake_supabase, FLOOR_ROW)
     anon = MagicMock()
-    patch_supabase("connector", admin=fake_supabase, user=anon)
+    patch_supabase("core.connector", admin=fake_supabase, user=anon)
     context.set_context(user_id="user-1", item_id="item-1")
-    monkeypatch.setattr(
-        "payment.payment_state.get_pending_payment", lambda *a, **k: None
-    )
+    monkeypatch.setattr("domains.billing.payment_state.get_pending_payment", lambda *a, **k: None)
 
     result = create_checkout_link.func(item_id="item-1", agreed_price=10.0)
 
@@ -221,15 +212,18 @@ def test_create_checkout_reads_the_floor_with_the_service_role(
 # in the build fails if they drift apart, so assert they agree.
 # ---------------------------------------------------------------------------
 
+
 def test_column_grant_matches_the_python_allowlist():
     import pathlib
     import re
 
-    from items import PUBLIC_ITEM_COLUMNS
+    from domains.catalog.items import PUBLIC_ITEM_COLUMNS
 
     migration = (
         pathlib.Path(__file__).resolve().parents[2]
-        / "supabase" / "migrations" / "20260702000000_items_column_privileges.sql"
+        / "supabase"
+        / "migrations"
+        / "20260702000000_items_column_privileges.sql"
     ).read_text()
 
     granted_block = re.search(
@@ -255,7 +249,9 @@ def test_row_policy_hides_soft_deleted_listings():
 
     migration = (
         pathlib.Path(__file__).resolve().parents[2]
-        / "supabase" / "migrations" / "20260702000000_items_column_privileges.sql"
+        / "supabase"
+        / "migrations"
+        / "20260702000000_items_column_privileges.sql"
     ).read_text()
 
     assert "revoke select on public.items from anon, authenticated;" in migration

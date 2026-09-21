@@ -4,7 +4,7 @@ import { registerSchema, type RegisterForm } from '~/utils/schemas'
 import { loginRedirect } from '~/utils/auth'
 
 const { t } = useI18n()
-const supabase = useSupabaseClient()
+const { register } = useAuth()
 const router = useRouter()
 const route = useRoute()
 const toast = useToast()
@@ -47,26 +47,13 @@ async function onSubmit(payload: FormSubmitEvent<RegisterForm>) {
   }
   loading.value = true
   try {
-    const { data, error } = await supabase.auth.signUp({
-      email: payload.data.email,
-      password: payload.data.password,
-      options: turnstileToken.value ? { captchaToken: turnstileToken.value } : undefined
-    })
-    if (error) throw error
+    await register(payload.data.email, payload.data.password, turnstileToken.value)
 
-    // Anti-enumeration: when the email already belongs to an account (e.g. one
-    // created via Google sign-in), Supabase returns success with NO new identity
-    // rather than an error. Detect that and point the user at their real login.
-    if (data.user && (data.user.identities?.length ?? 0) === 0) {
-      toast.add({
-        title: 'Email already registered',
-        description: 'This email already has an account. If you signed up with Google, use the Google button.',
-        color: 'warning'
-      })
-      goToLogin()
-      return
-    }
-
+    // Anti-enumeration: an address that already has an account gets exactly this
+    // response too. The backend decided that (SPEC-093) — it will not tell the
+    // caller which case this was, and neither can we, so the copy has to work
+    // for both: check your inbox, and if nothing arrives you already have an
+    // account.
     toast.add({
       title: t('auth.registerSuccess'),
       description: t('auth.registerSuccessDesc'),
@@ -74,9 +61,10 @@ async function onSubmit(payload: FormSubmitEvent<RegisterForm>) {
     })
     goToLogin()
   } catch (err) {
+    const detail = (err as { data?: { detail?: string } })?.data?.detail
     toast.add({
       title: 'Registration failed',
-      description: err instanceof Error ? err.message : 'Something went wrong',
+      description: detail || (err instanceof Error ? err.message : 'Something went wrong'),
       color: 'error'
     })
   } finally {

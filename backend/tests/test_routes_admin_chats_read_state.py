@@ -21,9 +21,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import routes.admin.chats as admin_chats
-from agent.memory import conversation_memory
+import domains.negotiation.admin_routes as admin_chats
 from conftest import make_supabase_result
+from domains.negotiation.memory import conversation_memory
 
 pytestmark = pytest.mark.asyncio
 
@@ -31,6 +31,7 @@ pytestmark = pytest.mark.asyncio
 def table_router(mapping):
     def _side_effect(name, *_a, **_kw):
         return mapping.get(name, MagicMock())
+
     return _side_effect
 
 
@@ -45,22 +46,26 @@ def _chats_tables(settings=None, messages=None):
     settings_mock.select.return_value.execute.return_value = make_supabase_result(settings or [])
     messages_mock = MagicMock()
     messages_mock.select.return_value.order.return_value.execute.return_value = make_supabase_result(messages or [])
-    return table_router({
-        "user_profiles": profiles_mock,
-        "chat_settings": settings_mock,
-        "messages": messages_mock,
-    }), settings_mock
+    return table_router(
+        {
+            "user_profiles": profiles_mock,
+            "chat_settings": settings_mock,
+            "messages": messages_mock,
+        }
+    ), settings_mock
 
 
-async def _get_chats(client, admin_user, fake_supabase, patch_supabase, monkeypatch,
-                     *, settings=None, messages=None, history=None):
+async def _get_chats(
+    client, admin_user, fake_supabase, patch_supabase, monkeypatch, *, settings=None, messages=None, history=None
+):
     admin_user()
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
     router, settings_mock = _chats_tables(settings=settings, messages=messages)
     fake_supabase.table.side_effect = router
     fake_supabase.auth.admin.list_users.return_value = [make_user("user-a", email="a@example.com")]
     monkeypatch.setattr(
-        conversation_memory, "get_all_histories",
+        conversation_memory,
+        "get_all_histories",
         MagicMock(return_value={"user-a": history or [{"role": "human", "content": "hi", "source": "human"}]}),
     )
     resp = await client.get("/admin/chats")
@@ -72,19 +77,30 @@ async def _get_chats(client, admin_user, fake_supabase, patch_supabase, monkeypa
 # Scenario 1-3 — the watermark decides `unread`
 # ---------------------------------------------------------------------------
 
+
 async def test_no_watermark_falls_back_to_last_role(client, admin_user, fake_supabase, patch_supabase, monkeypatch):
     """A conversation predating the migration behaves exactly as it always did."""
     chat, _ = await _get_chats(
-        client, admin_user, fake_supabase, patch_supabase, monkeypatch,
+        client,
+        admin_user,
+        fake_supabase,
+        patch_supabase,
+        monkeypatch,
         messages=[{"user_id": "user-a", "role": "human", "created_at": "2026-09-09T12:00:00Z"}],
     )
     assert chat["unread"] is True
     assert chat["admin_last_read_at"] is None
 
 
-async def test_watermark_after_last_customer_message_marks_read(client, admin_user, fake_supabase, patch_supabase, monkeypatch):
+async def test_watermark_after_last_customer_message_marks_read(
+    client, admin_user, fake_supabase, patch_supabase, monkeypatch
+):
     chat, _ = await _get_chats(
-        client, admin_user, fake_supabase, patch_supabase, monkeypatch,
+        client,
+        admin_user,
+        fake_supabase,
+        patch_supabase,
+        monkeypatch,
         settings=[{"user_id": "user-a", "admin_last_read_at": "2026-09-09T13:00:00Z"}],
         messages=[{"user_id": "user-a", "role": "human", "created_at": "2026-09-09T12:00:00Z"}],
     )
@@ -94,17 +110,27 @@ async def test_watermark_after_last_customer_message_marks_read(client, admin_us
 
 async def test_newer_customer_message_re_arms_unread(client, admin_user, fake_supabase, patch_supabase, monkeypatch):
     chat, _ = await _get_chats(
-        client, admin_user, fake_supabase, patch_supabase, monkeypatch,
+        client,
+        admin_user,
+        fake_supabase,
+        patch_supabase,
+        monkeypatch,
         settings=[{"user_id": "user-a", "admin_last_read_at": "2026-09-09T12:00:00Z"}],
         messages=[{"user_id": "user-a", "role": "human", "created_at": "2026-09-09T14:00:00Z"}],
     )
     assert chat["unread"] is True
 
 
-async def test_seller_reply_after_the_watermark_stays_read(client, admin_user, fake_supabase, patch_supabase, monkeypatch):
+async def test_seller_reply_after_the_watermark_stays_read(
+    client, admin_user, fake_supabase, patch_supabase, monkeypatch
+):
     """Only CUSTOMER messages re-arm the dot — the seller's own reply must not."""
     chat, _ = await _get_chats(
-        client, admin_user, fake_supabase, patch_supabase, monkeypatch,
+        client,
+        admin_user,
+        fake_supabase,
+        patch_supabase,
+        monkeypatch,
         settings=[{"user_id": "user-a", "admin_last_read_at": "2026-09-09T13:00:00Z"}],
         messages=[
             {"user_id": "user-a", "role": "ai", "created_at": "2026-09-09T15:00:00Z"},
@@ -116,7 +142,9 @@ async def test_seller_reply_after_the_watermark_stays_read(client, admin_user, f
     assert chat["last_activity"] == "2026-09-09T15:00:00Z"
 
 
-async def test_a_customer_message_from_the_future_does_not_re_arm_unread(client, admin_user, fake_supabase, patch_supabase, monkeypatch):
+async def test_a_customer_message_from_the_future_does_not_re_arm_unread(
+    client, admin_user, fake_supabase, patch_supabase, monkeypatch
+):
     """SPEC-066. Before the fix `created_at` was the API host's local time in a
     UTC column, so on a UTC+8 box every customer row is dated eight hours out
     and beats any watermark the seller can write — the dot clears on the click
@@ -124,16 +152,26 @@ async def test_a_customer_message_from_the_future_does_not_re_arm_unread(client,
     read; it is one they read this morning."""
     skewed = (datetime.now(UTC) + timedelta(hours=8)).isoformat()
     chat, _ = await _get_chats(
-        client, admin_user, fake_supabase, patch_supabase, monkeypatch,
+        client,
+        admin_user,
+        fake_supabase,
+        patch_supabase,
+        monkeypatch,
         settings=[{"user_id": "user-a", "admin_last_read_at": datetime.now(UTC).isoformat()}],
         messages=[{"user_id": "user-a", "role": "human", "created_at": skewed}],
     )
     assert chat["unread"] is False
 
 
-async def test_unparseable_watermark_falls_back_to_last_role(client, admin_user, fake_supabase, patch_supabase, monkeypatch):
+async def test_unparseable_watermark_falls_back_to_last_role(
+    client, admin_user, fake_supabase, patch_supabase, monkeypatch
+):
     chat, _ = await _get_chats(
-        client, admin_user, fake_supabase, patch_supabase, monkeypatch,
+        client,
+        admin_user,
+        fake_supabase,
+        patch_supabase,
+        monkeypatch,
         settings=[{"user_id": "user-a", "admin_last_read_at": "not-a-timestamp"}],
         messages=[{"user_id": "user-a", "role": "human", "created_at": "2026-09-09T12:00:00Z"}],
     )
@@ -144,9 +182,10 @@ async def test_unparseable_watermark_falls_back_to_last_role(client, admin_user,
 # Scenario 4-5 — the endpoint that writes it
 # ---------------------------------------------------------------------------
 
+
 async def test_mark_read_writes_a_watermark_and_audits(client, admin_user, fake_supabase, patch_supabase, monkeypatch):
     admin_user()
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
     audit = MagicMock()
     monkeypatch.setattr(admin_chats, "write_audit", audit)
 
@@ -165,15 +204,18 @@ async def test_mark_read_writes_a_watermark_and_audits(client, admin_user, fake_
     assert audit.call_args[0][2] == "chat.read"
 
 
-async def test_mark_read_covers_messages_the_clock_cannot_reach(client, admin_user, fake_supabase, patch_supabase, monkeypatch):
+async def test_mark_read_covers_messages_the_clock_cannot_reach(
+    client, admin_user, fake_supabase, patch_supabase, monkeypatch
+):
     """SPEC-066. The mark has to cover the newest customer message it claims to
     have read — `now` is only this process's opinion of when that was."""
     admin_user()
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
     monkeypatch.setattr(admin_chats, "write_audit", MagicMock())
     skewed = (datetime.now(UTC) + timedelta(seconds=30)).isoformat()
     monkeypatch.setattr(
-        conversation_memory, "newest_at",
+        conversation_memory,
+        "newest_at",
         MagicMock(side_effect=lambda user_id, role: skewed if role == "human" else None),
     )
 
@@ -186,7 +228,7 @@ async def test_mark_read_covers_messages_the_clock_cannot_reach(client, admin_us
 
 async def test_mark_unread_clears_the_watermark(client, admin_user, fake_supabase, patch_supabase, monkeypatch):
     admin_user()
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
     monkeypatch.setattr(admin_chats, "write_audit", MagicMock())
 
     resp = await client.post("/admin/chats/user-a/read", json={"read": False})
@@ -199,9 +241,11 @@ async def test_mark_unread_clears_the_watermark(client, admin_user, fake_supabas
     assert written["admin_last_read_at"] is None
 
 
-async def test_mark_read_defaults_to_read_with_an_empty_body(client, admin_user, fake_supabase, patch_supabase, monkeypatch):
+async def test_mark_read_defaults_to_read_with_an_empty_body(
+    client, admin_user, fake_supabase, patch_supabase, monkeypatch
+):
     admin_user()
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
     monkeypatch.setattr(admin_chats, "write_audit", MagicMock())
 
     resp = await client.post("/admin/chats/user-a/read", json={})
@@ -218,7 +262,7 @@ async def test_mark_read_requires_admin(client):
 async def test_mark_read_survives_a_failing_write(client, admin_user, fake_supabase, patch_supabase, monkeypatch):
     """A console click must not 500 because chat_settings is briefly unavailable."""
     admin_user()
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
     monkeypatch.setattr(admin_chats, "write_audit", MagicMock())
     fake_supabase.table.return_value.upsert.side_effect = Exception("postgrest down")
 
@@ -231,12 +275,13 @@ async def test_mark_read_survives_a_failing_write(client, admin_user, fake_supab
 # Scenario 6 — replying from the console counts as having read it
 # ---------------------------------------------------------------------------
 
+
 async def test_console_send_stamps_the_watermark(client, admin_user, fake_supabase, patch_supabase, monkeypatch):
     admin_user()
-    patch_supabase("connector", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
     monkeypatch.setattr(admin_chats, "write_audit", MagicMock())
     monkeypatch.setattr(conversation_memory, "add_message", MagicMock())
-    monkeypatch.setattr("agent.memory.conversation_memory", conversation_memory)
+    monkeypatch.setattr("domains.negotiation.memory.conversation_memory", conversation_memory)
 
     settings_mock = MagicMock()
     fake_supabase.table.side_effect = table_router({"chat_settings": settings_mock})

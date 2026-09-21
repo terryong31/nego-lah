@@ -32,7 +32,7 @@ import pytest
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from admin_session import client_ip  # noqa: E402
+from domains.identity.admin_session import client_ip  # noqa: E402
 
 DOCKERFILE = pathlib.Path(__file__).resolve().parents[1] / "Dockerfile"
 
@@ -40,6 +40,7 @@ DOCKERFILE = pathlib.Path(__file__).resolve().parents[1] / "Dockerfile"
 # ---------------------------------------------------------------------------
 # Half one: uvicorn is told which peers may speak for someone else
 # ---------------------------------------------------------------------------
+
 
 def test_uvicorn_trusts_the_reverse_proxy_for_forwarded_headers():
     cmd = DOCKERFILE.read_text()
@@ -61,9 +62,7 @@ def test_the_proxy_trust_list_is_not_a_wildcard():
     cmd = DOCKERFILE.read_text()
     match = re.search(r"--forwarded-allow-ips[= ]+['\"]?([^'\"\s]+)", cmd)
     assert match, "could not read the configured trust list"
-    assert match.group(1) != "*", (
-        "a wildcard trust list makes the client's own header authoritative"
-    )
+    assert match.group(1) != "*", "a wildcard trust list makes the client's own header authoritative"
 
 
 def test_the_trust_list_covers_the_docker_bridge_range():
@@ -77,6 +76,7 @@ def test_the_trust_list_covers_the_docker_bridge_range():
 # ---------------------------------------------------------------------------
 # Half two: client_ip trusts uvicorn's answer, not the raw header
 # ---------------------------------------------------------------------------
+
 
 def _request(headers: dict, peer: str | None = "203.0.113.9"):
     return SimpleNamespace(
@@ -98,16 +98,12 @@ def test_a_forged_forwarded_header_cannot_change_the_bucket():
     )
 
     assert client_ip(forged) == "203.0.113.9", (
-        "the header won over the real peer — the admin login limiter is "
-        "bypassable by rotating one header value"
+        "the header won over the real peer — the admin login limiter is bypassable by rotating one header value"
     )
 
 
 def test_rotating_the_forged_header_keeps_hitting_the_same_bucket():
-    seen = {
-        client_ip(_request({"X-Forwarded-For": f"10.0.0.{i}"}, peer="203.0.113.9"))
-        for i in range(10)
-    }
+    seen = {client_ip(_request({"X-Forwarded-For": f"10.0.0.{i}"}, peer="203.0.113.9")) for i in range(10)}
     assert seen == {"203.0.113.9"}
 
 

@@ -9,6 +9,7 @@ admin_supabase` binding, so we patch the name on the *consuming* script module) 
 `grant_admin`/`revoke_admin` (same story, `from admin_session import ...`) plus
 `sys.argv` and capturing stdout via `capsys`.
 """
+
 import sys
 from types import SimpleNamespace
 
@@ -120,12 +121,14 @@ def test_create_admin_main_creates_new_user_when_not_found(monkeypatch, capsys, 
 
     create_admin.main()
 
-    fake_supabase.auth.admin.create_user.assert_called_once_with({
-        "email": "new@example.com",
-        "password": "s3cret",
-        "email_confirm": True,
-        "app_metadata": {"role": "admin"},
-    })
+    fake_supabase.auth.admin.create_user.assert_called_once_with(
+        {
+            "email": "new@example.com",
+            "password": "s3cret",
+            "email_confirm": True,
+            "app_metadata": {"role": "admin"},
+        }
+    )
     grant_mock.assert_called_once_with("new-user-id", "new@example.com")
 
     out = capsys.readouterr().out
@@ -139,6 +142,7 @@ def test_create_admin_main_updates_existing_user_and_merges_app_metadata(monkeyp
     fake_supabase.auth.admin.list_users.return_value = [existing]
 
     from unittest.mock import MagicMock
+
     grant_mock = MagicMock()
     monkeypatch.setattr(create_admin, "admin_supabase", fake_supabase)
     monkeypatch.setattr(create_admin, "grant_admin", grant_mock)
@@ -146,11 +150,14 @@ def test_create_admin_main_updates_existing_user_and_merges_app_metadata(monkeyp
 
     create_admin.main()
 
-    fake_supabase.auth.admin.update_user_by_id.assert_called_once_with("existing-id", {
-        "password": "newpass",
-        "email_confirm": True,
-        "app_metadata": {"plan": "pro", "role": "admin"},
-    })
+    fake_supabase.auth.admin.update_user_by_id.assert_called_once_with(
+        "existing-id",
+        {
+            "password": "newpass",
+            "email_confirm": True,
+            "app_metadata": {"plan": "pro", "role": "admin"},
+        },
+    )
     grant_mock.assert_called_once_with("existing-id", "existing@example.com")
 
     out = capsys.readouterr().out
@@ -163,17 +170,21 @@ def test_create_admin_main_existing_user_with_none_app_metadata(monkeypatch, cap
     fake_supabase.auth.admin.list_users.return_value = [existing]
 
     from unittest.mock import MagicMock
+
     monkeypatch.setattr(create_admin, "admin_supabase", fake_supabase)
     monkeypatch.setattr(create_admin, "grant_admin", MagicMock())
     monkeypatch.setattr(sys, "argv", ["create_admin.py", "noattrs@example.com", "pw"])
 
     create_admin.main()
 
-    fake_supabase.auth.admin.update_user_by_id.assert_called_once_with("existing-id-2", {
-        "password": "pw",
-        "email_confirm": True,
-        "app_metadata": {"role": "admin"},
-    })
+    fake_supabase.auth.admin.update_user_by_id.assert_called_once_with(
+        "existing-id-2",
+        {
+            "password": "pw",
+            "email_confirm": True,
+            "app_metadata": {"role": "admin"},
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -237,6 +248,7 @@ def test_promote_admin_grant_success_merges_app_metadata(monkeypatch, capsys, fa
     fake_supabase.auth.admin.list_users.return_value = [user]
 
     from unittest.mock import MagicMock
+
     grant_mock = MagicMock()
     monkeypatch.setattr(promote_admin, "admin_supabase", fake_supabase)
     monkeypatch.setattr(promote_admin, "grant_admin", grant_mock)
@@ -256,14 +268,13 @@ def test_promote_admin_grant_success_with_no_existing_app_metadata(monkeypatch, 
     fake_supabase.auth.admin.list_users.return_value = [user]
 
     from unittest.mock import MagicMock
+
     monkeypatch.setattr(promote_admin, "admin_supabase", fake_supabase)
     monkeypatch.setattr(promote_admin, "grant_admin", MagicMock())
 
     promote_admin.grant("bare@example.com")
 
-    fake_supabase.auth.admin.update_user_by_id.assert_called_once_with(
-        "u-2", {"app_metadata": {"role": "admin"}}
-    )
+    fake_supabase.auth.admin.update_user_by_id.assert_called_once_with("u-2", {"app_metadata": {"role": "admin"}})
 
 
 def test_promote_admin_revoke_user_not_found_exits_1(monkeypatch, capsys, fake_supabase):
@@ -283,15 +294,14 @@ def test_promote_admin_revoke_success_pops_role(monkeypatch, capsys, fake_supaba
     fake_supabase.auth.admin.list_users.return_value = [user]
 
     from unittest.mock import MagicMock
+
     revoke_mock = MagicMock()
     monkeypatch.setattr(promote_admin, "admin_supabase", fake_supabase)
     monkeypatch.setattr(promote_admin, "revoke_admin", revoke_mock)
 
     promote_admin.revoke("admin@example.com")
 
-    fake_supabase.auth.admin.update_user_by_id.assert_called_once_with(
-        "u-3", {"app_metadata": {"plan": "pro"}}
-    )
+    fake_supabase.auth.admin.update_user_by_id.assert_called_once_with("u-3", {"app_metadata": {"plan": "pro"}})
     revoke_mock.assert_called_once_with("u-3")
     out = capsys.readouterr().out
     assert "Revoked admin from admin@example.com (u-3)" in out
@@ -303,14 +313,13 @@ def test_promote_admin_revoke_success_when_role_absent(monkeypatch, capsys, fake
     fake_supabase.auth.admin.list_users.return_value = [user]
 
     from unittest.mock import MagicMock
+
     monkeypatch.setattr(promote_admin, "admin_supabase", fake_supabase)
     monkeypatch.setattr(promote_admin, "revoke_admin", MagicMock())
 
     promote_admin.revoke("norole@example.com")
 
-    fake_supabase.auth.admin.update_user_by_id.assert_called_once_with(
-        "u-4", {"app_metadata": {"plan": "pro"}}
-    )
+    fake_supabase.auth.admin.update_user_by_id.assert_called_once_with("u-4", {"app_metadata": {"plan": "pro"}})
 
 
 def test_promote_admin_main_wrong_argv_count_prints_usage(monkeypatch, capsys):
@@ -458,7 +467,7 @@ def test_unban_user_main_success_lifts_ban_and_invalidates_cache(monkeypatch, ca
     monkeypatch.setattr(unban_user, "admin_supabase", fake_supabase)
 
     invalidate_mock = MagicMock()
-    monkeypatch.setattr("cache.invalidate_ban_status", invalidate_mock)
+    monkeypatch.setattr("core.cache.invalidate_ban_status", invalidate_mock)
     monkeypatch.setattr(sys, "argv", ["unban_user.py", "banned@example.com"])
 
     unban_user.main()
@@ -487,7 +496,7 @@ def test_unban_user_main_cache_invalidate_failure_is_caught(monkeypatch, capsys,
     def _boom(_user_id):
         raise RuntimeError("redis is down")
 
-    monkeypatch.setattr("cache.invalidate_ban_status", _boom)
+    monkeypatch.setattr("core.cache.invalidate_ban_status", _boom)
     monkeypatch.setattr(sys, "argv", ["unban_user.py", "banned2@example.com"])
 
     # Should not raise -- the script wraps cache invalidation in try/except.

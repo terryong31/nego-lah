@@ -6,8 +6,7 @@ definePageMeta({
 })
 
 const { call } = useApi()
-const supabase = useSupabaseClient()
-const user = useSupabaseUser()
+const { user } = useAuth()
 const { t } = useI18n()
 
 interface Order {
@@ -29,8 +28,7 @@ const userId = computed(() => resolveUserId(user.value))
 const { data: orders, pending } = useAsyncData<Order[]>(
   'user-orders',
   async () => {
-    const { data: { session } } = await supabase.auth.getSession()
-    const uid = resolveUserId(session?.user) ?? resolveUserId(user.value)
+    const uid = resolveUserId(user.value)
     if (!uid) return []
     const res = await call<{ orders: Order[] }>(`/payment/orders/user/${uid}`)
     return res.orders ?? []

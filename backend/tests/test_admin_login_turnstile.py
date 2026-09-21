@@ -31,6 +31,7 @@ from core.security import verify_turnstile
 
 # --- the route is actually gated ---------------------------------------------
 
+
 def test_admin_login_depends_on_turnstile():
     """Asserted against the route's dependency list rather than by driving a
     request, because the interesting failure is the control silently not being
@@ -51,26 +52,20 @@ def test_admin_login_depends_on_turnstile():
                 yield from walk(nested.routes)
 
     login = next(
-        route for route in walk(app.routes)
-        if getattr(route, "path", None) == "/auth/login"
-        and "POST" in getattr(route, "methods", set())
+        route
+        for route in walk(app.routes)
+        if getattr(route, "path", None) == "/auth/login" and "POST" in getattr(route, "methods", set())
     )
     dependency_calls = [d.call for d in login.dependant.dependencies]
 
     assert verify_turnstile in dependency_calls
 
 
-async def test_admin_login_still_works_without_a_token_in_development(
-    client, monkeypatch
-):
+async def test_admin_login_still_works_without_a_token_in_development(client, monkeypatch):
     """The dev bypass is what keeps local development from needing a widget and
     a Cloudflare account. It has to survive the route being gated."""
-    monkeypatch.setattr(
-        "routes.admin.auth.enforce_login_rate_limit", lambda email, ip: None
-    )
-    monkeypatch.setattr(
-        "routes.admin.auth.password_then_send_otp", lambda email, pw: "handle-123"
-    )
+    monkeypatch.setattr("domains.identity.admin_auth.enforce_login_rate_limit", lambda email, ip: None)
+    monkeypatch.setattr("domains.identity.admin_auth.password_then_send_otp", lambda email, pw: "handle-123")
 
     resp = await client.post(
         "/admin/auth/login",
@@ -82,6 +77,7 @@ async def test_admin_login_still_works_without_a_token_in_development(
 
 
 # --- fail closed on a verdict, open on an outage -----------------------------
+
 
 @pytest.fixture
 def prod_turnstile(monkeypatch):
@@ -111,9 +107,7 @@ async def test_a_rejected_token_is_refused(prod_turnstile):
     ],
     ids=["connect-error", "timeout", "protocol-error"],
 )
-async def test_an_unreachable_cloudflare_does_not_lock_the_operator_out(
-    prod_turnstile, failure
-):
+async def test_an_unreachable_cloudflare_does_not_lock_the_operator_out(prod_turnstile, failure):
     """No verdict was returned, so there is nothing to fail closed on. Refusing
     here would mean a Cloudflare outage takes the admin console down with it,
     and the console is what the AI hands conversations to."""

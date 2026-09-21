@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 import pytest
 
-from agent.link_guard import (
+from domains.negotiation.link_guard import (
     PAY_LINK_RE,
     STRIPPED_NOTICE,
     issued_payment_urls,
@@ -28,12 +28,13 @@ FABRICATED = f"https://checkout.stripe.com/pay/{ITEM}?price=2500"
 
 
 def _issued(urls):
-    return patch("agent.link_guard.issued_payment_urls", lambda _u, _i: set(urls))
+    return patch("domains.negotiation.link_guard.issued_payment_urls", lambda _u, _i: set(urls))
 
 
 # ---------------------------------------------------------------------------
 # S1-S4 — what survives
 # ---------------------------------------------------------------------------
+
 
 def test_the_fabricated_link_is_stripped():
     text = f"RM2500? 😊\n\n[Pay RM2500 Now]({FABRICATED})\n\nOnce you pay I'll ship it."
@@ -86,9 +87,12 @@ def test_every_link_in_a_message_is_judged_separately():
 # S3/S8 — fail closed
 # ---------------------------------------------------------------------------
 
+
 def test_no_pending_payment_strips_everything():
-    with patch("payment.payment_state.get_pending_payment", lambda *a: None), \
-         patch("payment.payment_state.get_active_payments_for_user", lambda *a: []):
+    with (
+        patch("domains.billing.payment_state.get_pending_payment", lambda *a: None),
+        patch("domains.billing.payment_state.get_active_payments_for_user", lambda *a: []),
+    ):
         out = sanitize_payment_links(f"[Pay]({FABRICATED})", USER, ITEM)
 
     assert FABRICATED not in out
@@ -98,7 +102,7 @@ def test_a_lookup_failure_strips_rather_than_trusts():
     def boom(*_a, **_kw):
         raise RuntimeError("redis down")
 
-    with patch("payment.payment_state.get_pending_payment", boom):
+    with patch("domains.billing.payment_state.get_pending_payment", boom):
         assert issued_payment_urls(USER, ITEM) == set()
         assert REAL not in sanitize_payment_links(f"[Pay]({REAL})", USER, ITEM)
 
@@ -111,11 +115,15 @@ def test_an_anonymous_turn_has_no_issued_links():
 # S6 — the streaming split never lets a half-written URL out
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("partial", [
-    "Here you go [Pay RM2500",
-    "Here you go [Pay RM2500 Now](https://checkout.stri",
-    "Here you go [",
-])
+
+@pytest.mark.parametrize(
+    "partial",
+    [
+        "Here you go [Pay RM2500",
+        "Here you go [Pay RM2500 Now](https://checkout.stri",
+        "Here you go [",
+    ],
+)
 def test_an_unclosed_link_is_held_back(partial):
     emit, hold = split_safe_prefix(partial)
 
@@ -140,10 +148,11 @@ def test_plain_text_is_never_held():
 # S7 — nothing of a fabricated URL survives a stream, in any chunking
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize("size", [1, 3, 7, 40], ids=["char", "tiny", "small", "chunky"])
 def test_no_fragment_of_a_fabricated_url_is_ever_emitted(size):
     full = f"RM2500? 😊\n\n[Pay RM2500 Now]({FABRICATED})\n\nOnce you pay I'll ship it."
-    chunks = [full[i:i + size] for i in range(0, len(full), size)]
+    chunks = [full[i : i + size] for i in range(0, len(full), size)]
 
     emitted = []
     buffer = ""
@@ -171,6 +180,7 @@ def test_the_regex_matches_what_the_frontend_looks_for():
 # The real stream path, not just the helpers
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_chat_stream_never_yields_a_fabricated_link(monkeypatch):
     """Drives `bot.chat_stream` with the exact message the model produced."""
@@ -178,24 +188,23 @@ async def test_chat_stream_never_yields_a_fabricated_link(monkeypatch):
 
     from langchain_core.messages import AIMessageChunk
 
-    import agent.bot as bot
+    import domains.negotiation.bot as bot
 
     full = f"RM2500? 😊\n\nLet me check...\n\n[Pay RM2500 Now]({FABRICATED})\n\nOnce you pay I'll ship it."
 
     class FakeAgent:
         async def astream(self, _payload, stream_mode="messages"):
             for i in range(0, len(full), 5):
-                yield AIMessageChunk(content=full[i:i + 5]), {}
+                yield AIMessageChunk(content=full[i : i + 5]), {}
 
     fake_memory = MagicMock()
     fake_memory.get_history.return_value = []
     monkeypatch.setattr(bot, "conversation_memory", fake_memory)
     monkeypatch.setattr(bot, "_get_customer_agent", lambda: FakeAgent())
     monkeypatch.setattr(bot, "get_item_details_for_context", lambda _i: None)
-    monkeypatch.setattr("agent.link_guard.issued_payment_urls", lambda _u, _i: set())
+    monkeypatch.setattr("domains.negotiation.link_guard.issued_payment_urls", lambda _u, _i: set())
 
-    emitted = [c for c in [x async for x in bot.chat_stream(USER, "2500?", item_id=ITEM)]
-               if isinstance(c, str)]
+    emitted = [c for c in [x async for x in bot.chat_stream(USER, "2500?", item_id=ITEM)] if isinstance(c, str)]
     out = "".join(emitted)
 
     assert "checkout.stripe.com" not in out
@@ -213,23 +222,22 @@ async def test_chat_stream_passes_a_real_issued_link_through(monkeypatch):
 
     from langchain_core.messages import AIMessageChunk
 
-    import agent.bot as bot
+    import domains.negotiation.bot as bot
 
     full = f"Great! 😊\n\n[Pay RM2500 Now]({REAL})"
 
     class FakeAgent:
         async def astream(self, _payload, stream_mode="messages"):
             for i in range(0, len(full), 5):
-                yield AIMessageChunk(content=full[i:i + 5]), {}
+                yield AIMessageChunk(content=full[i : i + 5]), {}
 
     fake_memory = MagicMock()
     fake_memory.get_history.return_value = []
     monkeypatch.setattr(bot, "conversation_memory", fake_memory)
     monkeypatch.setattr(bot, "_get_customer_agent", lambda: FakeAgent())
     monkeypatch.setattr(bot, "get_item_details_for_context", lambda _i: None)
-    monkeypatch.setattr("agent.link_guard.issued_payment_urls", lambda _u, _i: {REAL})
+    monkeypatch.setattr("domains.negotiation.link_guard.issued_payment_urls", lambda _u, _i: {REAL})
 
-    out = "".join(c for c in [x async for x in bot.chat_stream(USER, "2500?", item_id=ITEM)]
-                  if isinstance(c, str))
+    out = "".join(c for c in [x async for x in bot.chat_stream(USER, "2500?", item_id=ITEM)] if isinstance(c, str))
 
     assert REAL in out

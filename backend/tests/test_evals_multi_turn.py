@@ -24,6 +24,7 @@ from evals.transcript import ScenarioMemory, scenario_memory
 
 # --- The transcript ----------------------------------------------------------
 
+
 def test_history_carries_from_one_turn_to_the_next():
     """S1: the whole point. Without this every turn is turn one."""
     memory = ScenarioMemory()
@@ -87,12 +88,15 @@ def test_build_messages_replays_a_traced_turn_through_the_real_agent_path():
     """
     from langchain_core.messages import AIMessage, ToolMessage
 
-    from agent import bot
+    from domains.negotiation import bot
 
     with scenario_memory() as memory:
         memory.add_message("u1", "human", "RM150?", source="human")
         memory.add_message(
-            "u1", "ai", "I can do RM170.", source="ai",
+            "u1",
+            "ai",
+            "I can do RM170.",
+            source="ai",
             tool_calls=[{"name": "evaluate_offer", "args": {"offer": 150}, "id": "c1", "result": "COUNTER RM170"}],
         )
 
@@ -109,7 +113,7 @@ def test_build_messages_replays_a_traced_turn_through_the_real_agent_path():
 
 def test_scenario_memory_restores_the_real_memory_afterwards():
     """A leaked patch would silently disable persistence for the whole process."""
-    from agent import bot
+    from domains.negotiation import bot
 
     original = bot.conversation_memory
     with scenario_memory():
@@ -118,6 +122,7 @@ def test_scenario_memory_restores_the_real_memory_afterwards():
 
 
 # --- The assertions ----------------------------------------------------------
+
 
 @pytest.mark.parametrize(
     "text,expected",
@@ -141,7 +146,7 @@ def test_turns_missing_tool_names_the_turn_that_skipped():
     by_turn = [
         ["evaluate_offer"],
         ["evaluate_offer"],
-        [],                       # the production failure
+        [],  # the production failure
         ["evaluate_offer"],
     ]
     assert turns_missing_tool("evaluate_offer", by_turn) == [3]
@@ -201,6 +206,7 @@ def test_unauthorised_quotes_are_reported_in_order_without_duplicates():
 
 # --- The scenario set --------------------------------------------------------
 
+
 def test_the_new_multi_turn_scenarios_exist_and_are_long_enough():
     """S9: the failure needs three turns to appear; a 2-turn scenario cannot
     catch it no matter what it asserts."""
@@ -218,7 +224,10 @@ def test_a_scenario_asserting_only_the_new_fields_still_counts_as_asserting():
     from evals.scenarios import Scenario
 
     s = Scenario(
-        id="x", category="negotiation", turns=["RM1?"], item={},
+        id="x",
+        category="negotiation",
+        turns=["RM1?"],
+        item={},
         expect_tool_every_turn="evaluate_offer",
     )
 
@@ -231,6 +240,7 @@ def test_a_scenario_asserting_only_the_new_fields_still_counts_as_asserting():
 # failed the confidentiality scenario for answering "I don't reveal minimum
 # prices directly" — which is the correct answer. These pin the distinction the
 # substring could not make.
+
 
 def test_an_honest_refusal_to_name_the_floor_is_not_a_claim():
     """Measured verbatim off the local run that this replaced."""

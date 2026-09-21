@@ -2,20 +2,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mockNuxtImport, mountSuspended } from '@nuxt/test-utils/runtime'
 import { flushPromises } from '@vue/test-utils'
 import ForgotPasswordPage from '~/pages/forgot-password.vue'
+import { ref } from 'vue'
+import { makeAuthStub } from '../helpers/auth'
 
-const { resetPasswordForEmailMock } = vi.hoisted(() => ({
-  resetPasswordForEmailMock: vi.fn()
-}))
+const userRef = ref<{ id: string } | null>(null)
+const authStub = makeAuthStub(userRef)
 
 const { toastAddMock } = vi.hoisted(() => ({
   toastAddMock: vi.fn()
 }))
 
-mockNuxtImport('useSupabaseClient', () => () => ({
-  auth: {
-    resetPasswordForEmail: resetPasswordForEmailMock
-  }
-}))
+mockNuxtImport('useAuth', () => () => authStub)
 
 mockNuxtImport('useToast', () => () => ({
   add: toastAddMock
@@ -30,7 +27,7 @@ async function fillAndSubmit(wrapper: Awaited<ReturnType<typeof mountSuspended>>
 
 describe('pages/forgot-password.vue', () => {
   beforeEach(() => {
-    resetPasswordForEmailMock.mockReset().mockResolvedValue({ error: null })
+    authStub.forgotPassword.mockReset().mockResolvedValue({ sent: true })
     toastAddMock.mockReset()
   })
 
@@ -51,20 +48,22 @@ describe('pages/forgot-password.vue', () => {
 
     await fillAndSubmit(wrapper, 'not-an-email')
 
-    expect(resetPasswordForEmailMock).not.toHaveBeenCalled()
+    expect(authStub.forgotPassword).not.toHaveBeenCalled()
     expect(wrapper.text()).toContain('Invalid email')
   })
 
   describe('successful submission', () => {
-    it('calls resetPasswordForEmail with the email and a redirectTo ending in /reset-password', async () => {
+    it('asks the backend to send the link, and lets it decide where the link lands', async () => {
       const wrapper = await mountSuspended(ForgotPasswordPage)
 
       await fillAndSubmit(wrapper, 'user@example.com')
 
-      expect(resetPasswordForEmailMock).toHaveBeenCalledTimes(1)
-      const [email, options] = resetPasswordForEmailMock.mock.calls[0]
+      // SPEC-093: the link in the email points at the API's callback, which
+      // redeems it server-side and 302s back with the session already set. The
+      // page no longer chooses where it lands — the backend does.
+      expect(authStub.forgotPassword).toHaveBeenCalledTimes(1)
+      const [email] = authStub.forgotPassword.mock.calls[0]!
       expect(email).toBe('user@example.com')
-      expect(options.redirectTo).toMatch(/\/reset-password$/)
     })
 
     it('shows a success toast', async () => {
@@ -95,8 +94,8 @@ describe('pages/forgot-password.vue', () => {
   })
 
   describe('submission failure', () => {
-    it('shows a "Request failed" toast with the Supabase error message and keeps the form visible', async () => {
-      resetPasswordForEmailMock.mockResolvedValue({ error: new Error('Rate limit exceeded') })
+    it('shows a "Request failed" toast and keeps the form visible', async () => {
+      authStub.forgotPassword.mockRejectedValue(new Error('Rate limit exceeded'))
       const wrapper = await mountSuspended(ForgotPasswordPage)
 
       await fillAndSubmit(wrapper)
@@ -111,7 +110,7 @@ describe('pages/forgot-password.vue', () => {
     })
 
     it('falls back to a generic message when the thrown error is not an Error instance', async () => {
-      resetPasswordForEmailMock.mockRejectedValue('boom')
+      authStub.forgotPassword.mockRejectedValue('boom')
       const wrapper = await mountSuspended(ForgotPasswordPage)
 
       await fillAndSubmit(wrapper)

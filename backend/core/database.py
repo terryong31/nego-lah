@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 
 import asyncpg
 
-from core.config import DATABASE_URL
+from core.env import DATABASE_URL
 from core.telemetry import logger
 
 # This module owns the asyncpg pool and nothing else (SPEC-056 #8).
@@ -21,10 +21,7 @@ _pool: asyncpg.Pool | None = None
 
 
 async def init_db_pool(
-    dsn: str | None = None,
-    min_size: int = 1,
-    max_size: int = 10,
-    timeout: float = 10.0
+    dsn: str | None = None, min_size: int = 1, max_size: int = 10, timeout: float = 10.0
 ) -> asyncpg.Pool | None:
     """
     Initialize an asynchronous PostgreSQL connection pool targeting Supabase.

@@ -14,9 +14,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import agent.bot as bot
-from agent.config import COD_POLICY, SELLER_PERSONA
-from agent.context import set_context
+import domains.negotiation.bot as bot
+from domains.negotiation.config import COD_POLICY, SELLER_PERSONA
+from domains.negotiation.context import set_context
 
 
 def _lower(text: str) -> str:
@@ -30,6 +30,7 @@ POLICY = _lower(COD_POLICY)
 # ---------------------------------------------------------------------------
 # Scenario 1 — the policy is in the prompt the model actually receives
 # ---------------------------------------------------------------------------
+
 
 def test_persona_refuses_cash_on_delivery():
     assert "cash-on-delivery" in PERSONA or "cash on delivery" in PERSONA
@@ -58,6 +59,7 @@ def test_persona_forbids_promising_cod_terms():
 # Scenario 2 — the wording is one editable knob, not a prompt rewrite
 # ---------------------------------------------------------------------------
 
+
 def test_cod_policy_is_an_editable_knob():
     assert isinstance(COD_POLICY, str)
     assert COD_POLICY.strip()
@@ -68,6 +70,7 @@ def test_cod_policy_is_an_editable_knob():
 # Scenario 3 — the supervisor can find the tool for this case
 # ---------------------------------------------------------------------------
 
+
 def test_transfer_tool_documents_the_cod_case():
     doc = _lower(bot.transfer_to_human.description or "")
     assert "cash on delivery" in doc or "cash-on-delivery" in doc or "cod" in doc
@@ -77,6 +80,7 @@ def test_transfer_tool_documents_the_cod_case():
 # Scenario 4 — the handoff itself works when the reason is COD
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_cod_transfer_disables_ai_and_alerts_terry(monkeypatch):
     set_context(user_id="user-cod-1", item_id="item-1")
@@ -84,15 +88,17 @@ async def test_cod_transfer_disables_ai_and_alerts_terry(monkeypatch):
     fake_memory = MagicMock()
     monkeypatch.setattr(bot, "conversation_memory", fake_memory)
     fake_supabase = MagicMock()
-    monkeypatch.setattr("connector.admin_supabase", fake_supabase)
-    monkeypatch.setattr("payment.fulfillment.broadcast_to_chat", MagicMock())
+    monkeypatch.setattr("core.connector.admin_supabase", fake_supabase)
+    monkeypatch.setattr("domains.billing.fulfillment.broadcast_to_chat", MagicMock())
     fake_alert = MagicMock(return_value=True)
-    monkeypatch.setattr("services.email_service.send_human_transfer_alert", fake_alert)
+    monkeypatch.setattr("core.email_service.send_human_transfer_alert", fake_alert)
 
-    result = await bot.transfer_to_human.ainvoke({
-        "reason": "Cash-on-delivery arrangement requested",
-        "summary": "Buyer wants to meet in KL to pay cash.",
-    })
+    result = await bot.transfer_to_human.ainvoke(
+        {
+            "reason": "Cash-on-delivery arrangement requested",
+            "summary": "Buyer wants to meet in KL to pay cash.",
+        }
+    )
 
     assert "transferred" in result.lower()
     upserted = fake_supabase.table.return_value.upsert.call_args[0][0]
@@ -104,6 +110,7 @@ async def test_cod_transfer_disables_ai_and_alerts_terry(monkeypatch):
 # ---------------------------------------------------------------------------
 # Scenario 5 — the new text leaks nothing the rest of the persona protects
 # ---------------------------------------------------------------------------
+
 
 def test_cod_policy_leaks_no_pricing_floor():
     assert "min_price" not in POLICY

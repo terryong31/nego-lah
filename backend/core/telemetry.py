@@ -10,10 +10,12 @@ def get_logger(name: str = "nego_lah") -> logging.Logger:
     logger = logging.getLogger(name)
     if not logger.handlers:
         handler = logging.StreamHandler(sys.stdout)
-        handler.setFormatter(jsonlogger.JsonFormatter(
-            fmt="%(asctime)s %(levelname)s %(name)s %(message)s",
-            rename_fields={"asctime": "timestamp", "levelname": "level"}
-        ))
+        handler.setFormatter(
+            jsonlogger.JsonFormatter(
+                fmt="%(asctime)s %(levelname)s %(name)s %(message)s",
+                rename_fields={"asctime": "timestamp", "levelname": "level"},
+            )
+        )
         logger.addHandler(handler)
         logger.setLevel(logging.INFO)
     return logger

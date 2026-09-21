@@ -10,8 +10,8 @@ prompt. So the directive is necessary and not sufficient — the previous reply 
 also handed over explicitly as text not to reuse.
 """
 
-import agent.speak as speak
-from agent.config import COD_POLICY
+import domains.negotiation.speak as speak
+from domains.negotiation.config import COD_POLICY
 
 
 def _lower(text: str) -> str:
@@ -24,6 +24,7 @@ PROMPT = _lower(speak.LOCAL_SPEAKER_PROMPT)
 # ---------------------------------------------------------------------------
 # S4 — a speaker turn cannot call a tool by construction
 # ---------------------------------------------------------------------------
+
 
 def test_speaker_model_is_built_with_no_tools(monkeypatch):
     built = {}
@@ -49,6 +50,7 @@ def test_speaker_prompt_lists_no_tools():
 # S5 — what the speaker is allowed to say
 # ---------------------------------------------------------------------------
 
+
 def test_speaker_prompt_bans_floor_vocabulary():
     assert "lowest i can go" in PROMPT
     assert "minimum" in PROMPT or "floor" in PROMPT
@@ -70,6 +72,7 @@ def test_speaker_prompt_forbids_unlicensed_numbers():
 # ---------------------------------------------------------------------------
 # S5 (cont.) — the previous reply is handed over as text not to reuse
 # ---------------------------------------------------------------------------
+
 
 def test_previous_reply_is_included_as_a_do_not_reuse_block():
     previous = "RM1000 is still quite a bit lower than what I'm asking, bro!"
@@ -125,7 +128,7 @@ def test_tool_result_is_carried_verbatim():
 
 
 def test_speaker_runs_warmer_than_the_decider():
-    from agent.config import LOCAL_AGENT_TEMPERATURE, LOCAL_SPEAKER_TEMPERATURE
+    from domains.negotiation.config import LOCAL_AGENT_TEMPERATURE, LOCAL_SPEAKER_TEMPERATURE
 
     assert LOCAL_SPEAKER_TEMPERATURE > LOCAL_AGENT_TEMPERATURE
 
@@ -139,6 +142,7 @@ def test_speaker_runs_warmer_than_the_decider():
 # to sound firm it reached for "that's my best for you", which is the floor
 # vocabulary SPEC-044 A bans, just worded around the blocklist.
 # ---------------------------------------------------------------------------
+
 
 def test_counter_says_only_the_counter_amount():
     assert "only that amount" in PROMPT

@@ -1,7 +1,7 @@
 from unittest.mock import MagicMock, patch
 
-from env import RESEND_FORWARD_TO
-from services import email_service
+from core import email_service
+from core.env import RESEND_FORWARD_TO
 
 
 def test_send_purchase_receipt_success():
@@ -71,9 +71,7 @@ def test_send_unread_message_email_success():
         mock_client_cls.return_value.__enter__.return_value = mock_client
 
         res = email_service.send_unread_message_email(
-            "buyer@example.com",
-            "I can offer RM120 if you pick it up today!",
-            item_name="Mechanical Keyboard"
+            "buyer@example.com", "I can offer RM120 if you pick it up today!", item_name="Mechanical Keyboard"
         )
 
         assert res is True
@@ -87,6 +85,7 @@ def test_send_unread_message_email_success():
 # ---------------------------------------------------------------------------
 # SPEC-052 — the batched digest that replaced the per-message send
 # ---------------------------------------------------------------------------
+
 
 def _capture_send(fn, *args, **kwargs):
     """Run a sender against a mocked Resend and hand back its request payload."""
@@ -139,9 +138,7 @@ def test_send_unread_digest_email_reads_naturally_for_a_single_message():
 
 
 def test_send_unread_digest_email_skips_empty_bodies():
-    res, payload = _capture_send(
-        email_service.send_unread_digest_email, "buyer@example.com", [{"content": "   "}, {}]
-    )
+    res, payload = _capture_send(email_service.send_unread_digest_email, "buyer@example.com", [{"content": "   "}, {}])
     assert res is False
     assert payload is None
 
@@ -160,7 +157,7 @@ def test_send_human_transfer_alert_success():
             user_id="user_test_456",
             reason="Customer wants to speak to manager",
             user_email="buyer@example.com",
-            summary="User asked for direct discussion on discount."
+            summary="User asked for direct discussion on discount.",
         )
 
         assert res is True
@@ -192,66 +189,81 @@ def test_send_email_gracefully_handles_http_failure():
 
 
 def test_render_email_template_all_templates():
-    receipt = email_service.render_email_template("purchase_receipt.html", {
-        "subject": "Receipt",
-        "item_name": "Vintage Camera",
-        "amount": 250.0,
-        "order_id": "ord_999",
-        "date_str": "September 05, 2026",
-        "chat_url": "https://example.com/chat",
-        "orders_url": "https://example.com/orders",
-    })
+    receipt = email_service.render_email_template(
+        "purchase_receipt.html",
+        {
+            "subject": "Receipt",
+            "item_name": "Vintage Camera",
+            "amount": 250.0,
+            "order_id": "ord_999",
+            "date_str": "September 05, 2026",
+            "chat_url": "https://example.com/chat",
+            "orders_url": "https://example.com/orders",
+        },
+    )
     assert "Payment received" in receipt
     assert "RM250.00" in receipt
     assert "Vintage Camera" in receipt
     assert "ord_999" in receipt
     assert "https://example.com/chat" in receipt
 
-    alert = email_service.render_email_template("seller_sale_alert.html", {
-        "subject": "Sale Alert",
-        "item_name": "Vintage Camera",
-        "amount": 250.0,
-        "order_id": "ord_999",
-        "buyer_email": "buyer@example.com",
-        "date_str": "September 05, 2026",
-        "admin_orders_url": "https://example.com/_console/orders",
-    })
+    alert = email_service.render_email_template(
+        "seller_sale_alert.html",
+        {
+            "subject": "Sale Alert",
+            "item_name": "Vintage Camera",
+            "amount": 250.0,
+            "order_id": "ord_999",
+            "buyer_email": "buyer@example.com",
+            "date_str": "September 05, 2026",
+            "admin_orders_url": "https://example.com/_console/orders",
+        },
+    )
     assert "Item sold" in alert
     assert "RM250.00" in alert
     assert "buyer@example.com" in alert
     assert "https://example.com/_console/orders" in alert
 
-    unread = email_service.render_email_template("unread_message.html", {
-        "subject": "New Message",
-        "message_snippet": "Can we meet tomorrow?",
-        "item_name": "Vintage Camera",
-        "chat_url": "https://example.com/chat",
-    })
+    unread = email_service.render_email_template(
+        "unread_message.html",
+        {
+            "subject": "New Message",
+            "message_snippet": "Can we meet tomorrow?",
+            "item_name": "Vintage Camera",
+            "chat_url": "https://example.com/chat",
+        },
+    )
     assert "New message" in unread
     assert "Can we meet tomorrow?" in unread
 
-    digest = email_service.render_email_template("unread_digest.html", {
-        "subject": "2 new messages",
-        "messages": [{"content": "Can we meet tomorrow?"}, {"content": "Or Friday?"}],
-        "count": 2,
-        "item_name": "Vintage Camera",
-        "chat_url": "https://example.com/chat",
-    })
+    digest = email_service.render_email_template(
+        "unread_digest.html",
+        {
+            "subject": "2 new messages",
+            "messages": [{"content": "Can we meet tomorrow?"}, {"content": "Or Friday?"}],
+            "count": 2,
+            "item_name": "Vintage Camera",
+            "chat_url": "https://example.com/chat",
+        },
+    )
     assert "2 new messages" in digest
     assert "Can we meet tomorrow?" in digest
     assert "Or Friday?" in digest
     # Same Ledger vocabulary as every other template (SPEC-049).
     assert "#10b981" in digest
 
-    transfer = email_service.render_email_template("human_transfer_alert.html", {
-        "subject": "Transfer",
-        "user_id": "usr_123",
-        "user_display": "Alice",
-        "reason": "Technical inquiry",
-        "summary": "User wants specs",
-        "console_chat_url": "https://example.com/_console/chats?user=usr_123",
-        "date_str": "September 05, 2026 12:00 UTC",
-    })
+    transfer = email_service.render_email_template(
+        "human_transfer_alert.html",
+        {
+            "subject": "Transfer",
+            "user_id": "usr_123",
+            "user_display": "Alice",
+            "reason": "Technical inquiry",
+            "summary": "User wants specs",
+            "console_chat_url": "https://example.com/_console/chats?user=usr_123",
+            "date_str": "September 05, 2026 12:00 UTC",
+        },
+    )
     assert "Needs your response" in transfer
     assert "usr_123" in transfer
     assert "Technical inquiry" in transfer
@@ -259,14 +271,17 @@ def test_render_email_template_all_templates():
 
 
 def test_email_template_renders_cdn_brand_logo():
-    html = email_service.render_email_template("purchase_receipt.html", {
-        "subject": "Receipt",
-        "item_name": "Mechanical Keyboard",
-        "amount": 150.0,
-        "price_formatted": "RM150.00",
-        "order_id": "ord_123",
-        "order_date": "Sept 06, 2026",
-    })
+    html = email_service.render_email_template(
+        "purchase_receipt.html",
+        {
+            "subject": "Receipt",
+            "item_name": "Mechanical Keyboard",
+            "amount": 150.0,
+            "price_formatted": "RM150.00",
+            "order_id": "ord_123",
+            "order_date": "Sept 06, 2026",
+        },
+    )
     # Must render brand logo image from Supabase Storage CDN
     assert "branding/logo.png" in html
     assert "<img src=" in html
@@ -274,10 +289,10 @@ def test_email_template_renders_cdn_brand_logo():
     assert 'width="24"' in html
 
 
-
 # ---------------------------------------------------------------------------
 # Shipment notices (SPEC-057)
 # ---------------------------------------------------------------------------
+
 
 def _resend_stub():
     """The httpx.Client patch every sender test in this file uses."""
@@ -291,6 +306,15 @@ def _resend_stub():
 def _sent_payload(mock_client):
     call_args = mock_client.post.call_args
     return call_args.kwargs.get("json") or call_args[1].get("json")
+
+
+# `send_shipment_notice` takes assembled facts, not an order (SPEC-097) — core/
+# renders, billing decides what a shipment is. Derivation of a missing tracking
+# URL and the unknown-courier fallback are asserted in tests/test_shipping_notice.py.
+def _facts(order: dict) -> dict:
+    from domains.billing import shipment_summary
+
+    return shipment_summary(order)
 
 
 SHIPPED_ORDER = {
@@ -307,7 +331,7 @@ def test_send_shipment_notice_carries_the_courier_and_a_track_button():
         mock_client = _resend_stub()
         mock_client_cls.return_value.__enter__.return_value = mock_client
 
-        assert email_service.send_shipment_notice("buyer@example.com", SHIPPED_ORDER) is True
+        assert email_service.send_shipment_notice("buyer@example.com", _facts(SHIPPED_ORDER)) is True
 
         payload = _sent_payload(mock_client)
         assert payload["to"] == ["buyer@example.com"]
@@ -326,9 +350,7 @@ def test_send_shipment_notice_derives_a_missing_tracking_url():
         mock_client = _resend_stub()
         mock_client_cls.return_value.__enter__.return_value = mock_client
 
-        email_service.send_shipment_notice(
-            "buyer@example.com", {**SHIPPED_ORDER, "tracking_url": None}
-        )
+        email_service.send_shipment_notice("buyer@example.com", _facts({**SHIPPED_ORDER, "tracking_url": None}))
 
         assert "630123456789" in _sent_payload(mock_client)["html"]
 
@@ -341,7 +363,7 @@ def test_send_shipment_notice_falls_back_to_the_chat_when_there_is_no_link():
 
         email_service.send_shipment_notice(
             "buyer@example.com",
-            {**SHIPPED_ORDER, "courier": "Some Local Bike Guy", "tracking_url": None},
+            _facts({**SHIPPED_ORDER, "courier": "Some Local Bike Guy", "tracking_url": None}),
         )
 
         html = _sent_payload(mock_client)["html"]
@@ -355,7 +377,7 @@ def test_send_shipment_notice_words_a_delivery_as_a_delivery():
         mock_client = _resend_stub()
         mock_client_cls.return_value.__enter__.return_value = mock_client
 
-        email_service.send_shipment_notice("buyer@example.com", SHIPPED_ORDER, delivered=True)
+        email_service.send_shipment_notice("buyer@example.com", _facts(SHIPPED_ORDER), delivered=True)
 
         payload = _sent_payload(mock_client)
         assert "delivered" in payload["subject"].lower()
@@ -367,24 +389,27 @@ def test_send_shipment_notice_without_a_recipient_is_a_no_op():
         mock_client = _resend_stub()
         mock_client_cls.return_value.__enter__.return_value = mock_client
 
-        assert email_service.send_shipment_notice("", SHIPPED_ORDER) is False
+        assert email_service.send_shipment_notice("", _facts(SHIPPED_ORDER)) is False
         assert not mock_client.post.called
 
 
 def test_shipment_template_renders_without_a_courier_or_tracking_number():
     """The seller may only know the status. The template must not break on it."""
-    html = email_service.render_email_template("shipment_notice.html", {
-        "subject": "On its way",
-        "item_name": "Casio VX-4",
-        "order_id": "order-777",
-        "courier": None,
-        "tracking_number": None,
-        "tracking_url": None,
-        "date_str": "September 10, 2026",
-        "chat_url": "https://negolah.my/chat",
-        "orders_url": "https://negolah.my/orders",
-        "delivered": False,
-    })
+    html = email_service.render_email_template(
+        "shipment_notice.html",
+        {
+            "subject": "On its way",
+            "item_name": "Casio VX-4",
+            "order_id": "order-777",
+            "courier": None,
+            "tracking_number": None,
+            "tracking_url": None,
+            "date_str": "September 10, 2026",
+            "chat_url": "https://negolah.my/chat",
+            "orders_url": "https://negolah.my/orders",
+            "delivered": False,
+        },
+    )
     assert "Casio VX-4" in html
     assert "Open chat" in html
 
@@ -463,6 +488,7 @@ def test_no_smtp_host_keeps_the_resend_path(monkeypatch):
 # ---------------------------------------------------------------------------
 # SPEC-074 Phase 2 — dev Resend is retired; Resend keeps one verified sender
 # ---------------------------------------------------------------------------
+
 
 def test_resend_sends_from_the_verified_domain_sender_only(monkeypatch):
     monkeypatch.setattr(email_service, "RESEND_FORWARD_FROM", "Nego-Lah <receipts@negolah.my>")

@@ -62,6 +62,7 @@ def open_bytes(data: bytes) -> Image.Image:
 # Scenario 1 — HEIF is recognised by the sniffer
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize("brand", [b"heic", b"heix", b"heim", b"heis", b"hevc", b"hevx", b"mif1", b"msf1"])
 def test_sniff_recognises_the_heif_family(brand):
     header = b"\x00\x00\x00\x18ftyp" + brand + b"\x00" * 40
@@ -82,6 +83,7 @@ def test_sniff_still_rejects_svg():
 # ---------------------------------------------------------------------------
 # Scenario 2-3 — resizing
 # ---------------------------------------------------------------------------
+
 
 def test_downscales_a_large_photo_to_the_long_edge():
     data = make_image(size=(4000, 3000), fmt="JPEG")
@@ -111,6 +113,7 @@ def test_avatars_use_a_much_smaller_edge():
 # Scenario 4-5 — format selection
 # ---------------------------------------------------------------------------
 
+
 def test_transparent_images_become_webp_and_keep_their_alpha():
     data = make_image(size=(800, 600), mode="RGBA", fmt="PNG", photo=True)
     out, content_type, ext = normalize_image(data)
@@ -135,6 +138,7 @@ def test_opaque_images_become_jpeg_and_get_smaller():
 # ---------------------------------------------------------------------------
 # Scenario 6 — orientation and metadata
 # ---------------------------------------------------------------------------
+
 
 def test_exif_orientation_is_baked_into_the_pixels_and_stripped():
     """An iPhone photo is landscape bytes plus "rotate me". Storing that verbatim
@@ -167,6 +171,7 @@ def test_metadata_including_gps_is_dropped():
 # Scenario 7 — never make it worse
 # ---------------------------------------------------------------------------
 
+
 def test_keeps_the_original_when_re_encoding_would_be_bigger():
     """An already heavily-compressed JPEG must not be inflated by re-encoding it
     at our quality — and the returned type must still describe what we kept."""
@@ -182,6 +187,7 @@ def test_keeps_the_original_when_re_encoding_would_be_bigger():
 # ---------------------------------------------------------------------------
 # Scenario 8 — bad input
 # ---------------------------------------------------------------------------
+
 
 def test_a_corrupt_payload_is_a_400_not_a_500():
     with pytest.raises(HTTPException) as exc:
@@ -205,6 +211,7 @@ def test_an_oversized_upload_is_rejected():
 # ---------------------------------------------------------------------------
 # Scenario 9 — HEIF round trip
 # ---------------------------------------------------------------------------
+
 
 def test_heif_decodes_and_comes_back_as_jpeg():
     pillow_heif = pytest.importorskip("pillow_heif")
@@ -240,6 +247,7 @@ def test_heif_is_always_converted_even_when_that_costs_bytes():
 # ---------------------------------------------------------------------------
 # Degradation — Pillow absent must not break uploads
 # ---------------------------------------------------------------------------
+
 
 def test_passes_bytes_through_when_pillow_is_unavailable(monkeypatch):
     import core.images as images

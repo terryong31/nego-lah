@@ -20,7 +20,7 @@ import json
 from starlette.requests import Request
 
 from conftest import make_supabase_result
-from routes.chat import chat_stream
+from domains.negotiation.routes import chat_stream
 
 
 def _make_request(user_id, message="hi"):
@@ -51,6 +51,7 @@ def _make_request(user_id, message="hi"):
 def fake_verify_user_token(user_id):
     async def _fake(request):
         return user_id
+
     return _fake
 
 
@@ -68,10 +69,7 @@ async def _settle(deadline=2.0):
     loop_deadline = asyncio.get_running_loop().time() + deadline
     while asyncio.get_running_loop().time() < loop_deadline:
         await asyncio.sleep(0.01)
-        pending = [
-            t for t in asyncio.all_tasks()
-            if t is not asyncio.current_task() and not t.done()
-        ]
+        pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()]
         if not pending:
             return
     return
@@ -80,6 +78,7 @@ async def _settle(deadline=2.0):
 # ---------------------------------------------------------------------------
 # the turn finishes even though nobody is listening
 # ---------------------------------------------------------------------------
+
 
 async def test_abandoned_turn_still_persists_the_full_reply(monkeypatch, turn_env):
     record = turn_env("detached-persist")
@@ -93,10 +92,11 @@ async def test_abandoned_turn_still_persists_the_full_reply(monkeypatch, turn_en
             collected.append(delta)
             yield delta
             await asyncio.sleep(0.05)
-        from agent.memory import conversation_memory
+        from domains.negotiation.memory import conversation_memory
+
         conversation_memory.add_message(user_id, "ai", "".join(collected), item_id)
 
-    monkeypatch.setattr("agent.bot.chat_stream", stream)
+    monkeypatch.setattr("domains.negotiation.bot.chat_stream", stream)
 
     response = await chat_stream(_make_request("detached-persist"))
     await _hang_up_after_first_token(response)
@@ -104,9 +104,7 @@ async def test_abandoned_turn_still_persists_the_full_reply(monkeypatch, turn_en
 
     ai_messages = [m for m in record["persisted"] if m[1] == "ai"]
     assert ai_messages, "the reply was never persisted after the buyer hung up"
-    assert ai_messages[0][2] == "RM240 can lah", (
-        f"only a fragment survived the hang-up: {ai_messages}"
-    )
+    assert ai_messages[0][2] == "RM240 can lah", f"only a fragment survived the hang-up: {ai_messages}"
 
 
 async def test_abandoned_turn_still_broadcasts_the_reply(monkeypatch, turn_env):
@@ -117,7 +115,7 @@ async def test_abandoned_turn_still_broadcasts_the_reply(monkeypatch, turn_env):
         await asyncio.sleep(0.05)
         yield "here!"
 
-    monkeypatch.setattr("agent.bot.chat_stream", stream)
+    monkeypatch.setattr("domains.negotiation.bot.chat_stream", stream)
 
     response = await chat_stream(_make_request("detached-broadcast"))
     await _hang_up_after_first_token(response)
@@ -135,7 +133,7 @@ async def test_reply_to_an_absent_buyer_is_queued_for_the_digest(monkeypatch, tu
     async def stream(user_id, message, item_id=None, files=None):
         yield "Deal at RM240"
 
-    monkeypatch.setattr("agent.bot.chat_stream", stream)
+    monkeypatch.setattr("domains.negotiation.bot.chat_stream", stream)
 
     response = await chat_stream(_make_request("detached-digest"))
     async for _ in response.body_iterator:
@@ -152,7 +150,7 @@ async def test_reply_to_a_present_buyer_is_not_queued(monkeypatch, turn_env):
     async def stream(user_id, message, item_id=None, files=None):
         yield "Deal at RM240"
 
-    monkeypatch.setattr("agent.bot.chat_stream", stream)
+    monkeypatch.setattr("domains.negotiation.bot.chat_stream", stream)
 
     response = await chat_stream(_make_request("detached-live"))
     async for _ in response.body_iterator:
@@ -162,9 +160,7 @@ async def test_reply_to_a_present_buyer_is_not_queued(monkeypatch, turn_env):
     assert record["queued"] == []
 
 
-async def test_abandoned_turn_is_charged_once_for_everything_it_generated(
-    monkeypatch, turn_env
-):
+async def test_abandoned_turn_is_charged_once_for_everything_it_generated(monkeypatch, turn_env):
     """SPEC-044 B still holds: the budget is settled exactly once, and now it
     covers the tokens produced after the buyer stopped reading."""
     record = turn_env("detached-budget")
@@ -174,39 +170,34 @@ async def test_abandoned_turn_is_charged_once_for_everything_it_generated(
         await asyncio.sleep(0.05)
         yield "b" * 400
 
-    monkeypatch.setattr("agent.bot.chat_stream", stream)
+    monkeypatch.setattr("domains.negotiation.bot.chat_stream", stream)
 
     response = await chat_stream(_make_request("detached-budget"))
     await _hang_up_after_first_token(response)
     await _settle()
 
     assert len(record["charged"]) == 1, f"charged {len(record['charged'])} times"
-    assert record["charged"][0][2] > 50, (
-        "the charge only covered the fragment the buyer saw: "
-        f"{record['charged'][0]}"
-    )
+    assert record["charged"][0][2] > 50, f"the charge only covered the fragment the buyer saw: {record['charged'][0]}"
 
 
 async def test_detached_turn_still_respects_the_deadline(monkeypatch, turn_env):
     """An abandoned turn must end, charge and persist — not run forever."""
     record = turn_env("detached-deadline")
-    monkeypatch.setattr("routes.chat.CHAT_TURN_DEADLINE_SECONDS", 0.2)
+    monkeypatch.setattr("domains.negotiation.routes.CHAT_TURN_DEADLINE_SECONDS", 0.2)
 
     async def hanging(user_id, message, item_id=None, files=None):
         yield "thinking"
         await asyncio.sleep(30)
         yield "never arrives"
 
-    monkeypatch.setattr("agent.bot.chat_stream", hanging)
+    monkeypatch.setattr("domains.negotiation.bot.chat_stream", hanging)
 
     response = await chat_stream(_make_request("detached-deadline"))
     await _hang_up_after_first_token(response)
     await _settle(deadline=3.0)
 
     assert len(record["charged"]) == 1
-    assert [b for b in record["broadcast"] if b[3] == "ai"], (
-        "a timed-out turn still generated text and must deliver it"
-    )
+    assert [b for b in record["broadcast"] if b[3] == "ai"], "a timed-out turn still generated text and must deliver it"
 
 
 async def test_hanging_up_does_not_cancel_the_agent_generator(monkeypatch, turn_env):
@@ -228,7 +219,7 @@ async def test_hanging_up_does_not_cancel_the_agent_generator(monkeypatch, turn_
             outcome["closed"] = True
             raise
 
-    monkeypatch.setattr("agent.bot.chat_stream", stream)
+    monkeypatch.setattr("domains.negotiation.bot.chat_stream", stream)
 
     response = await chat_stream(_make_request("detached-lease"))
     await _hang_up_after_first_token(response)
@@ -241,9 +232,8 @@ async def test_hanging_up_does_not_cancel_the_agent_generator(monkeypatch, turn_
 # ...and the buyer who walked away actually gets told
 # ---------------------------------------------------------------------------
 
-async def test_the_reply_reaches_a_live_stream_on_another_page(
-    monkeypatch, patch_supabase, fake_supabase
-):
+
+async def test_the_reply_reaches_a_live_stream_on_another_page(monkeypatch, patch_supabase, fake_supabase):
     """The whole point of finishing the turn: the buyer sent a message, went
     back to the storefront, and the answer has to reach the chip on the header
     without them reloading the site.
@@ -252,29 +242,23 @@ async def test_the_reply_reaches_a_live_stream_on_another_page(
     what the tests above assert against, and it cannot tell us whether the
     broker ever hears about the reply.
     """
-    from notifications import notification_broker
+    from core.notifications import notification_broker
 
     user_id = "delivered-live"
-    monkeypatch.setattr("routes.chat.verify_user_token", fake_verify_user_token(user_id))
-    (
-        fake_supabase.table.return_value.select.return_value.eq.return_value
-        .execute.return_value
-    ) = make_supabase_result([])
-    patch_supabase("routes.chat", admin=fake_supabase)
-    monkeypatch.setattr(
-        "agent.memory.conversation_memory.add_message", lambda *a, **k: None
+    monkeypatch.setattr("domains.negotiation.routes.verify_user_token", fake_verify_user_token(user_id))
+    (fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value) = make_supabase_result(
+        []
     )
-    monkeypatch.setattr("routes.chat.track_ai_tokens", lambda *a, **k: None)
-    # Supabase Realtime is the other half of broadcast_to_chat and is not what
-    # this is about; the broker is reached whether or not it answers.
-    monkeypatch.setattr("payment.fulfillment.requests.post", lambda *a, **k: None)
+    patch_supabase("domains.negotiation.routes", admin=fake_supabase)
+    monkeypatch.setattr("domains.negotiation.memory.conversation_memory.add_message", lambda *a, **k: None)
+    monkeypatch.setattr("domains.negotiation.routes.track_ai_tokens", lambda *a, **k: None)
 
     async def stream(user_id, message, item_id=None, files=None):
         yield "RM240 "
         await asyncio.sleep(0.05)
         yield "can lah"
 
-    monkeypatch.setattr("agent.bot.chat_stream", stream)
+    monkeypatch.setattr("domains.negotiation.bot.chat_stream", stream)
 
     # The header's notification stream, open on whatever page they walked to.
     queue = await notification_broker.subscribe(user_id)
@@ -284,9 +268,20 @@ async def test_the_reply_reaches_a_live_stream_on_another_page(
         await _settle()
 
         assert not queue.empty(), "the reply never reached the buyer's live stream"
-        event = queue.get_nowait()
-        assert event["type"] == "new_message"
-        assert event["message"] == "RM240 can lah"
-        assert event["source"] == "ai"
+
+        # Since SPEC-094 the one stream carries both halves of the exchange —
+        # the buyer's own text too, so the admin console stays in sync — so pick
+        # out the reply rather than assuming it arrived first.
+        events = []
+        while not queue.empty():
+            events.append(queue.get_nowait())
+
+        reply = next(e for e in events if e.get("source") == "ai")
+        assert reply["type"] == "new_message"
+        assert reply["message"] == "RM240 can lah"
+        assert reply["notify"] is True
+
+        own = next(e for e in events if e.get("source") == "human")
+        assert own["notify"] is False, "the buyer must not be toasted for their own message"
     finally:
         await notification_broker.unsubscribe(user_id, queue)

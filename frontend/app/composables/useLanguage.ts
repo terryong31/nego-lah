@@ -54,7 +54,7 @@ export function useLanguage() {
     }
   }
 
-  const user = useSupabaseUser()
+  const { user } = useAuth()
   const { call } = useApi()
 
   function detectBrowserLanguage(): SupportedLocale {

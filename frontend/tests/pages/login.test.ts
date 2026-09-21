@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mockNuxtImport, mountSuspended } from '@nuxt/test-utils/runtime'
 import { flushPromises } from '@vue/test-utils'
+import { ref } from 'vue'
 import LoginPage from '~/pages/login.vue'
+import { makeAuthStub } from '../helpers/auth'
 
-const { signInWithPasswordMock, signInWithOAuthMock } = vi.hoisted(() => ({
-  signInWithPasswordMock: vi.fn(),
-  signInWithOAuthMock: vi.fn()
-}))
+const userRef = ref<{ id: string } | null>(null)
+const authStub = makeAuthStub(userRef)
 
 const { callMock } = vi.hoisted(() => ({
   callMock: vi.fn()
@@ -16,12 +16,7 @@ const { toastAddMock } = vi.hoisted(() => ({
   toastAddMock: vi.fn()
 }))
 
-mockNuxtImport('useSupabaseClient', () => () => ({
-  auth: {
-    signInWithPassword: signInWithPasswordMock,
-    signInWithOAuth: signInWithOAuthMock
-  }
-}))
+mockNuxtImport('useAuth', () => () => authStub)
 
 mockNuxtImport('useApi', () => () => ({
   call: callMock
@@ -29,15 +24,6 @@ mockNuxtImport('useApi', () => () => ({
 
 mockNuxtImport('useToast', () => () => ({
   add: toastAddMock
-}))
-
-// The @nuxtjs/supabase guard redirects before our own `auth` middleware can
-// attach `?redirect=`, so it stashes the blocked page in a cookie instead
-// (`saveRedirectToCookie` in nuxt.config). `pluck()` reads-and-clears it.
-const { pluckMock } = vi.hoisted(() => ({ pluckMock: vi.fn() }))
-mockNuxtImport('useSupabaseCookieRedirect', () => () => ({
-  path: { value: null },
-  pluck: pluckMock
 }))
 
 // Note: useRouter is deliberately left un-mocked (see tests/pages/items/index.test.ts
@@ -59,11 +45,14 @@ async function fillAndSubmit(wrapper: Awaited<ReturnType<typeof mountSuspended>>
 
 describe('pages/login.vue', () => {
   beforeEach(() => {
-    signInWithPasswordMock.mockReset().mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null })
-    signInWithOAuthMock.mockReset().mockResolvedValue({ error: null })
+    userRef.value = null
+    authStub.login.mockReset().mockImplementation(async () => {
+      userRef.value = { id: 'user-1' }
+      return userRef.value
+    })
+    authStub.signInWithProvider.mockReset()
     callMock.mockReset().mockResolvedValue({ ok: true })
     toastAddMock.mockReset()
-    pluckMock.mockReset().mockReturnValue(null)
   })
 
   it('renders the login form fields, Google provider, and footer links', async () => {
@@ -85,7 +74,7 @@ describe('pages/login.vue', () => {
 
     await fillAndSubmit(wrapper, 'not-an-email', 'short')
 
-    expect(signInWithPasswordMock).not.toHaveBeenCalled()
+    expect(authStub.login).not.toHaveBeenCalled()
     expect(wrapper.text()).toContain('Invalid email')
     expect(wrapper.text()).toContain('Must be at least 8 characters')
   })
@@ -97,7 +86,7 @@ describe('pages/login.vue', () => {
 
       await fillAndSubmit(wrapper, 'user@example.com', 'password123')
 
-      expect(signInWithPasswordMock).toHaveBeenCalledWith({ email: 'user@example.com', password: 'password123' })
+      expect(authStub.login).toHaveBeenCalledWith('user@example.com', 'password123', undefined)
       expect(callMock).toHaveBeenCalledWith('/user/user-1/account')
       expect(toastAddMock).toHaveBeenCalledWith({
         title: 'Welcome back!',
@@ -107,36 +96,15 @@ describe('pages/login.vue', () => {
       expect(pushSpy).toHaveBeenCalledWith('/')
     })
 
-    it('falls back to the supabase redirect cookie when the route carries no redirect query', async () => {
-      pluckMock.mockReturnValue('/chat?item_id=item-9')
-      const wrapper = await mountSuspended(LoginPage)
-      const pushSpy = spyOnRouterPush(wrapper)
-
-      await fillAndSubmit(wrapper, 'user@example.com', 'password123')
-
-      expect(pushSpy).toHaveBeenCalledWith('/chat?item_id=item-9')
-    })
-
-    it('ignores an unsafe cookie value and goes home instead', async () => {
-      pluckMock.mockReturnValue('//evil.com/chat')
-      const wrapper = await mountSuspended(LoginPage)
-      const pushSpy = spyOnRouterPush(wrapper)
-
-      await fillAndSubmit(wrapper, 'user@example.com', 'password123')
-
-      expect(pushSpy).toHaveBeenCalledWith('/')
-    })
-
-    it('prefers an explicit ?redirect= query over the cookie', async () => {
-      pluckMock.mockReturnValue('/orders')
+    it('refuses an offsite redirect target and goes home instead', async () => {
       const wrapper = await mountSuspended(LoginPage, {
-        route: '/login?redirect=%2Fitems%2Fitem-1'
+        route: '/login?redirect=%2F%2Fevil.com%2Fchat'
       })
       const pushSpy = spyOnRouterPush(wrapper)
 
       await fillAndSubmit(wrapper, 'user@example.com', 'password123')
 
-      expect(pushSpy).toHaveBeenCalledWith('/items/item-1')
+      expect(pushSpy).toHaveBeenCalledWith('/')
     })
 
     it('signs in and redirects to the safe redirect target when present in route query', async () => {
@@ -162,7 +130,7 @@ describe('pages/login.vue', () => {
 
       await fillAndSubmit(wrapper)
 
-      expect(signInWithPasswordMock).toHaveBeenCalledTimes(1)
+      expect(authStub.login).toHaveBeenCalledTimes(1)
       expect(callMock).toHaveBeenCalledTimes(1)
       // No toast at all: the useApi call itself already handled sign-out/redirect/toast
       // internally (per the source comment) — login.vue must not pile on a second one.
@@ -213,8 +181,10 @@ describe('pages/login.vue', () => {
   })
 
   describe('password login failure', () => {
-    it('shows a "Login failed" toast with the Supabase error message and does not redirect', async () => {
-      signInWithPasswordMock.mockResolvedValue({ data: { user: null }, error: new Error('Invalid login credentials') })
+    it('shows a "Login failed" toast with the server\'s own message and does not redirect', async () => {
+      // The backend answers wrong password, unknown address and unconfirmed
+      // account with one message, on purpose — so it is safe to show verbatim.
+      authStub.login.mockRejectedValue({ data: { detail: 'Invalid email or password' } })
       const wrapper = await mountSuspended(LoginPage)
       const pushSpy = spyOnRouterPush(wrapper)
 
@@ -222,7 +192,7 @@ describe('pages/login.vue', () => {
 
       expect(toastAddMock).toHaveBeenCalledWith({
         title: 'Login failed',
-        description: 'Invalid login credentials',
+        description: 'Invalid email or password',
         color: 'error'
       })
       expect(callMock).not.toHaveBeenCalled()
@@ -230,7 +200,7 @@ describe('pages/login.vue', () => {
     })
 
     it('falls back to a generic message when the thrown error is not an Error instance', async () => {
-      signInWithPasswordMock.mockRejectedValue('boom')
+      authStub.login.mockRejectedValue('boom')
       const wrapper = await mountSuspended(LoginPage)
 
       await fillAndSubmit(wrapper)
@@ -244,7 +214,10 @@ describe('pages/login.vue', () => {
   })
 
   describe('Google OAuth', () => {
-    it('calls signInWithOAuth with the google provider and a root redirectTo tagged as the OAuth flow', async () => {
+    it('hands the browser to the API, which owns the exchange', async () => {
+      // SPEC-093: a full navigation to /auth/oauth/start. The authorization
+      // code goes to the backend and never reaches this tab, so there is no
+      // SDK call to make and no error for this page to catch.
       const wrapper = await mountSuspended(LoginPage)
 
       const googleButton = wrapper.findAll('button').find(b => b.text().includes('Google'))
@@ -252,33 +225,19 @@ describe('pages/login.vue', () => {
 
       await googleButton!.trigger('click')
 
-      expect(signInWithOAuthMock).toHaveBeenCalledTimes(1)
-      const [args] = signInWithOAuthMock.mock.calls[0]
-      expect(args.provider).toBe('google')
-
-      // Supabase returns to the site root, and the global auth-redirect
-      // middleware forwards any page carrying `?code=` on to /confirm with the
-      // query intact. Pointing Google straight at /confirm broke the callback,
-      // so the root is the registered redirect and `flow=oauth` rides along to
-      // tell /confirm this is the OAuth flow, not an email confirmation.
-      const redirectTo = new URL(args.options.redirectTo)
-      expect(redirectTo.pathname).toBe('/')
-      expect(redirectTo.searchParams.get('flow')).toBe('oauth')
+      expect(authStub.signInWithProvider).toHaveBeenCalledWith('google', '/')
       expect(toastAddMock).not.toHaveBeenCalled()
     })
 
-    it('shows an "Auth Error" toast when signInWithOAuth returns an error', async () => {
-      signInWithOAuthMock.mockResolvedValue({ error: new Error('OAuth provider unavailable') })
-      const wrapper = await mountSuspended(LoginPage)
+    it('carries the page the visitor was bounced from', async () => {
+      const wrapper = await mountSuspended(LoginPage, {
+        route: '/login?redirect=%2Fchat%3Fitem_id%3Ditem-9'
+      })
 
       const googleButton = wrapper.findAll('button').find(b => b.text().includes('Google'))
       await googleButton!.trigger('click')
 
-      expect(toastAddMock).toHaveBeenCalledWith({
-        title: 'Auth Error',
-        description: 'OAuth provider unavailable',
-        color: 'error'
-      })
+      expect(authStub.signInWithProvider).toHaveBeenCalledWith('google', '/chat?item_id=item-9')
     })
   })
 })

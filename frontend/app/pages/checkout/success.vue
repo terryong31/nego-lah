@@ -3,7 +3,7 @@ import { resolveUserId } from '~/utils/auth'
 
 const { call } = useApi()
 const route = useRoute()
-const user = useSupabaseUser()
+const { user } = useAuth()
 const toast = useToast()
 const { t } = useI18n()
 

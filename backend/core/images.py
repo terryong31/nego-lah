@@ -28,8 +28,8 @@ import io
 
 from fastapi import HTTPException
 
+from core.logger import logger
 from core.uploads import MAX_ITEM_IMAGE_BYTES, validate_image_upload
-from logger import logger
 
 try:
     from PIL import Image, ImageOps
@@ -83,6 +83,7 @@ def normalize_image(
         # Pass-through: fall back to the sniffer's opinion so callers still get
         # a usable content type rather than the client's claim.
         from core.uploads import sniff_image
+
         sniffed = sniff_image(data)
         if sniffed is None:
             raise HTTPException(status_code=400, detail="Unsupported image type.")
@@ -113,9 +114,7 @@ def normalize_image(
                 img.convert("RGBA").save(buf, format="WEBP", quality=WEBP_QUALITY, method=4)
                 content_type, ext, out_format = "image/webp", "webp", "WEBP"
             else:
-                img.convert("RGB").save(
-                    buf, format="JPEG", quality=quality, optimize=True, progressive=True
-                )
+                img.convert("RGB").save(buf, format="JPEG", quality=quality, optimize=True, progressive=True)
                 content_type, ext, out_format = "image/jpeg", "jpg", "JPEG"
     except HTTPException:
         raise
@@ -133,13 +132,13 @@ def normalize_image(
     # broken image everywhere but Safari.
     if len(encoded) >= len(data) and source_format not in _ALWAYS_CONVERT:
         from core.uploads import sniff_image
+
         sniffed = sniff_image(data)
         if sniffed is not None:
             return data, sniffed[0], sniffed[1]
 
     logger.info(
-        f"🖼️ Normalized image: {len(data)} -> {len(encoded)} bytes "
-        f"({source_format or 'unknown'} -> {out_format})"
+        f"🖼️ Normalized image: {len(data)} -> {len(encoded)} bytes ({source_format or 'unknown'} -> {out_format})"
     )
     return encoded, content_type, ext
 

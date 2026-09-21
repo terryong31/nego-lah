@@ -41,12 +41,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-import agent.tools.image_analyzer as image_analyzer_module
-import agent.tools.listing_pipeline as listing_pipeline_module
-import agent.tools.market_price as market_price_module
-import items as items_module
-import payment.payment_state as payment_state_module
-import payment.refunds as payment_refunds_module
+import domains.billing.payment_state as payment_state_module
+import domains.billing.refunds as payment_refunds_module
+import domains.catalog.items as items_module
+import domains.negotiation.tools.image_analyzer as image_analyzer_module
+import domains.negotiation.tools.listing_pipeline as listing_pipeline_module
+import domains.negotiation.tools.market_price as market_price_module
 from conftest import JPEG_BYTES, PNG_BYTES, make_supabase_result
 
 # ---------------------------------------------------------------------------
@@ -58,14 +58,15 @@ from conftest import JPEG_BYTES, PNG_BYTES, make_supabase_result
 
 @pytest.fixture
 def admin_supabase(patch_supabase, fake_supabase):
-    patch_supabase("connector", admin=fake_supabase)
-    patch_supabase("admin_session", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
+    patch_supabase("domains.identity.admin_session", admin=fake_supabase)
     return fake_supabase
 
 
 # ---------------------------------------------------------------------------
 # POST /admin/cleanup-stripe
 # ---------------------------------------------------------------------------
+
 
 async def test_cleanup_stripe_success(client, admin_user, monkeypatch):
     admin_user()
@@ -97,13 +98,14 @@ async def test_cleanup_stripe_exception_returns_error_dict(client, admin_user, m
 # GET /admin/orders
 # ---------------------------------------------------------------------------
 
+
 async def test_get_all_orders_success_with_buyer_enrichment(client, admin_user, admin_supabase):
     admin_user()
     orders_data = [
-        {"id": "o1", "buyer_id": "u1", "amount": 100},   # metadata name, no profile override
-        {"id": "o2", "buyer_id": "u2", "amount": 50},    # profile override wins
-        {"id": "o3", "buyer_id": "ghost", "amount": 25}, # buyer_id not found in auth users
-        {"id": "o4", "buyer_id": None, "amount": 10},    # no buyer at all
+        {"id": "o1", "buyer_id": "u1", "amount": 100},  # metadata name, no profile override
+        {"id": "o2", "buyer_id": "u2", "amount": 50},  # profile override wins
+        {"id": "o3", "buyer_id": "ghost", "amount": 25},  # buyer_id not found in auth users
+        {"id": "o4", "buyer_id": None, "amount": 10},  # no buyer at all
     ]
     admin_supabase.table.return_value.select.return_value.order.return_value.execute.return_value = (
         make_supabase_result(orders_data)
@@ -206,10 +208,11 @@ async def test_get_all_orders_missing_amount_treated_as_zero(client, admin_user,
 # GET /admin/orders/{order_id}
 # ---------------------------------------------------------------------------
 
+
 async def test_get_order_found(client, admin_user, admin_supabase):
     admin_user()
-    admin_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = (
-        make_supabase_result([{"id": "order-1", "amount": 50}])
+    admin_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = make_supabase_result(
+        [{"id": "order-1", "amount": 50}]
     )
 
     response = await client.get("/admin/orders/order-1")
@@ -220,8 +223,8 @@ async def test_get_order_found(client, admin_user, admin_supabase):
 
 async def test_get_order_not_found(client, admin_user, admin_supabase):
     admin_user()
-    admin_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = (
-        make_supabase_result([])
+    admin_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = make_supabase_result(
+        []
     )
 
     response = await client.get("/admin/orders/missing")
@@ -234,6 +237,7 @@ async def test_get_order_not_found(client, admin_user, admin_supabase):
 # PUT /admin/orders/{order_id}/status
 # ---------------------------------------------------------------------------
 
+
 async def test_update_order_status_invalid_status_400(client, admin_user, admin_supabase):
     admin_user()
 
@@ -245,8 +249,8 @@ async def test_update_order_status_invalid_status_400(client, admin_user, admin_
 
 async def test_update_order_status_success(client, admin_user, admin_supabase):
     admin_user()
-    admin_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value = (
-        make_supabase_result([{"id": "order-1", "status": "confirmed"}])
+    admin_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value = make_supabase_result(
+        [{"id": "order-1", "status": "confirmed"}]
     )
 
     response = await client.put("/admin/orders/order-1/status", json={"status": "confirmed"})
@@ -260,8 +264,8 @@ async def test_update_order_status_success(client, admin_user, admin_supabase):
 
 async def test_update_order_status_not_found_404(client, admin_user, admin_supabase):
     admin_user()
-    admin_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value = (
-        make_supabase_result([])
+    admin_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value = make_supabase_result(
+        []
     )
 
     response = await client.put("/admin/orders/missing/status", json={"status": "confirmed"})
@@ -273,6 +277,7 @@ async def test_update_order_status_not_found_404(client, admin_user, admin_supab
 # ---------------------------------------------------------------------------
 # PUT /admin/orders/{order_id}
 # ---------------------------------------------------------------------------
+
 
 async def test_update_order_no_fields_400(client, admin_user, admin_supabase):
     admin_user()
@@ -294,8 +299,8 @@ async def test_update_order_invalid_status_400(client, admin_user, admin_supabas
 
 async def test_update_order_success_with_frontend_field_aliases(client, admin_user, admin_supabase):
     admin_user()
-    admin_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value = (
-        make_supabase_result([{"id": "order-1", "address": "123 Street"}])
+    admin_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value = make_supabase_result(
+        [{"id": "order-1", "address": "123 Street"}]
     )
 
     payload = {
@@ -325,8 +330,8 @@ async def test_update_order_success_with_frontend_field_aliases(client, admin_us
 
 async def test_update_order_success_with_backend_field_names(client, admin_user, admin_supabase):
     admin_user()
-    admin_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value = (
-        make_supabase_result([{"id": "order-1"}])
+    admin_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value = make_supabase_result(
+        [{"id": "order-1"}]
     )
 
     # Only the backend-style field names are provided (no frontend aliases) --
@@ -350,8 +355,8 @@ async def test_update_order_success_with_backend_field_names(client, admin_user,
 
 async def test_update_order_success_with_valid_status_field(client, admin_user, admin_supabase):
     admin_user()
-    admin_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value = (
-        make_supabase_result([{"id": "order-1", "status": "shipped"}])
+    admin_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value = make_supabase_result(
+        [{"id": "order-1", "status": "shipped"}]
     )
 
     response = await client.put("/admin/orders/order-1", json={"status": "shipped"})
@@ -362,8 +367,8 @@ async def test_update_order_success_with_valid_status_field(client, admin_user, 
 
 async def test_update_order_not_found_404(client, admin_user, admin_supabase):
     admin_user()
-    admin_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value = (
-        make_supabase_result([])
+    admin_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value = make_supabase_result(
+        []
     )
 
     response = await client.put("/admin/orders/missing", json={"item_name": "Widget"})
@@ -376,10 +381,11 @@ async def test_update_order_not_found_404(client, admin_user, admin_supabase):
 # DELETE /admin/orders/{order_id}
 # ---------------------------------------------------------------------------
 
+
 async def test_delete_order_not_found_404(client, admin_user, admin_supabase):
     admin_user()
-    admin_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = (
-        make_supabase_result([])
+    admin_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = make_supabase_result(
+        []
     )
 
     response = await client.delete("/admin/orders/missing")
@@ -391,8 +397,8 @@ async def test_delete_order_not_found_404(client, admin_user, admin_supabase):
 
 async def test_delete_order_success(client, admin_user, admin_supabase):
     admin_user()
-    admin_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = (
-        make_supabase_result([{"id": "order-1"}])
+    admin_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = make_supabase_result(
+        [{"id": "order-1"}]
     )
 
     response = await client.delete("/admin/orders/order-1")
@@ -406,6 +412,7 @@ async def test_delete_order_success(client, admin_user, admin_supabase):
 # ---------------------------------------------------------------------------
 # POST /admin/analyze-image
 # ---------------------------------------------------------------------------
+
 
 async def test_analyze_image_success_with_market_data(client, admin_user, monkeypatch):
     admin_user()
@@ -499,7 +506,7 @@ def _sse_events(body: str) -> list[dict]:
     import json as _json
 
     return [
-        _json.loads(line[len("data:"):].strip())
+        _json.loads(line[len("data:") :].strip())
         for frame in body.split("\n\n")
         for line in frame.split("\n")
         if line.startswith("data:")
@@ -511,10 +518,14 @@ async def test_analyze_image_stream_emits_progress_then_the_final_result(client,
 
     async def fake_pipeline(images_data, on_progress=None):
         await on_progress({"stage": "identifying", "progress": 20, "message": "Looking…"})
-        await on_progress({
-            "stage": "identified", "progress": 50, "message": "Identified: Lamp",
-            "patch": {"name": "Lamp"},
-        })
+        await on_progress(
+            {
+                "stage": "identified",
+                "progress": 50,
+                "message": "Identified: Lamp",
+                "patch": {"name": "Lamp"},
+            }
+        )
         return {"name": "Lamp", "description": "A lamp", "market_data": {"suggested_listing": 90}}
 
     monkeypatch.setattr(listing_pipeline_module, "analyze_listing", fake_pipeline)
@@ -567,17 +578,19 @@ async def test_encode_images_takes_the_mime_type_from_the_bytes_not_the_upload()
 
     from fastapi import UploadFile
 
-    from routes.admin.listings import _encode_images
+    from console.admin_listings import _encode_images
 
     upload = UploadFile(filename="mystery", file=io.BytesIO(PNG_BYTES))
     assert upload.content_type is None
 
     encoded = await _encode_images([upload])
 
-    assert encoded == [{
-        "base64_image": base64.b64encode(PNG_BYTES).decode(),
-        "mime_type": "image/png",
-    }]
+    assert encoded == [
+        {
+            "base64_image": base64.b64encode(PNG_BYTES).decode(),
+            "mime_type": "image/png",
+        }
+    ]
 
 
 async def test_encode_images_converts_a_heic_photo_for_the_vision_model():
@@ -588,7 +601,7 @@ async def test_encode_images_converts_a_heic_photo_for_the_vision_model():
     from fastapi import UploadFile
     from PIL import Image
 
-    from routes.admin.listings import _encode_images
+    from console.admin_listings import _encode_images
 
     pillow_heif.register_heif_opener()
     buf = io.BytesIO()
@@ -623,6 +636,7 @@ async def test_analyze_image_stream_reports_a_pipeline_failure_as_an_error_event
 # ---------------------------------------------------------------------------
 # POST /admin/market-valuation
 # ---------------------------------------------------------------------------
+
 
 async def test_market_valuation_success(client, admin_user, monkeypatch):
     admin_user()
@@ -675,11 +689,12 @@ async def test_market_valuation_missing_query_422(client, admin_user):
 # GET /admin/summary
 # ---------------------------------------------------------------------------
 
+
 async def test_admin_summary_success(client, admin_user, admin_supabase):
     admin_user()
     admin_supabase.auth.admin.list_users.return_value = [SimpleNamespace(id="u1"), SimpleNamespace(id="u2")]
-    admin_supabase.table.return_value.select.return_value.is_.return_value.execute.return_value = (
-        make_supabase_result([{"status": "available"}, {"status": "sold"}, {"status": "available"}])
+    admin_supabase.table.return_value.select.return_value.is_.return_value.execute.return_value = make_supabase_result(
+        [{"status": "available"}, {"status": "sold"}, {"status": "available"}]
     )
     admin_supabase.table.return_value.select.return_value.execute.side_effect = [
         make_supabase_result(
@@ -693,10 +708,15 @@ async def test_admin_summary_success(client, admin_user, admin_supabase):
         # SPEC-043: history is one row per message, so the conversation count
         # is distinct authors — five messages from three people is three
         # conversations, the same number the old one-row-per-user table gave.
-        make_supabase_result([
-            {"user_id": "c1"}, {"user_id": "c2"}, {"user_id": "c1"},
-            {"user_id": "c3"}, {"user_id": "c2"},
-        ]),
+        make_supabase_result(
+            [
+                {"user_id": "c1"},
+                {"user_id": "c2"},
+                {"user_id": "c1"},
+                {"user_id": "c3"},
+                {"user_id": "c2"},
+            ]
+        ),
     ]
 
     response = await client.get("/admin/summary")
@@ -720,8 +740,8 @@ async def test_admin_summary_success(client, admin_user, admin_supabase):
 async def test_admin_summary_list_users_exception_falls_back_to_zero(client, admin_user, admin_supabase):
     admin_user()
     admin_supabase.auth.admin.list_users.side_effect = Exception("auth down")
-    admin_supabase.table.return_value.select.return_value.is_.return_value.execute.return_value = (
-        make_supabase_result([])
+    admin_supabase.table.return_value.select.return_value.is_.return_value.execute.return_value = make_supabase_result(
+        []
     )
     admin_supabase.table.return_value.select.return_value.execute.side_effect = [
         make_supabase_result([]),
@@ -740,6 +760,7 @@ async def test_admin_summary_list_users_exception_falls_back_to_zero(client, adm
 # ---------------------------------------------------------------------------
 # GET /admin/items
 # ---------------------------------------------------------------------------
+
 
 async def test_admin_list_items_success(client, admin_user, admin_supabase):
     admin_user()
@@ -768,6 +789,7 @@ async def test_admin_list_items_empty(client, admin_user, admin_supabase):
 # ---------------------------------------------------------------------------
 # POST /admin/items  (create)
 # ---------------------------------------------------------------------------
+
 
 async def test_admin_create_item_success(client, admin_user, admin_supabase, monkeypatch):
     admin_user()
@@ -847,6 +869,7 @@ async def test_admin_create_item_upload_failure_500(client, admin_user, admin_su
 # ---------------------------------------------------------------------------
 # PUT /admin/items/{item_id}  (update)
 # ---------------------------------------------------------------------------
+
 
 async def test_admin_update_item_success(client, admin_user, admin_supabase, monkeypatch):
     admin_user()
@@ -999,6 +1022,7 @@ async def test_admin_update_item_not_found_404(client, admin_user, admin_supabas
 # DELETE /admin/items/{item_id}
 # ---------------------------------------------------------------------------
 
+
 async def test_admin_delete_item_success(client, admin_user, admin_supabase, monkeypatch):
     admin_user()
     monkeypatch.setattr(items_module, "delete_item", MagicMock(return_value=True))
@@ -1026,6 +1050,7 @@ async def test_admin_delete_item_not_found_404(client, admin_user, admin_supabas
 # reachable without the verify_admin dependency doing its job.
 # ---------------------------------------------------------------------------
 
+
 async def test_admin_orders_requires_admin_session_401(client):
     response = await client.get("/admin/orders")
 
@@ -1046,22 +1071,23 @@ async def test_admin_orders_requires_admin_session_401(client):
 # cookie and the matching Redis token to reach the comparison.
 # ---------------------------------------------------------------------------
 
+
 def _admin_session_with_csrf(client, sid="sid-refund", token="csrf-token-refund"):
-    from cache import redis_client
-    from env import ADMIN_SESSION_TTL
+    from core.cache import redis_client
+    from core.env import ADMIN_SESSION_TTL
+
     redis_client.setex(f"csrf:{sid}", ADMIN_SESSION_TTL, token)
     client.cookies.set("admin_sid", sid)
     return token
 
 
-async def test_refund_rejects_a_request_without_the_csrf_header(
-    client, admin_user, admin_supabase, monkeypatch
-):
+async def test_refund_rejects_a_request_without_the_csrf_header(client, admin_user, admin_supabase, monkeypatch):
     admin_user()
     _admin_session_with_csrf(client)
     called = []
     monkeypatch.setattr(
-        payment_refunds_module, "process_refund",
+        payment_refunds_module,
+        "process_refund",
         lambda item_id, reason: called.append(item_id) or {"success": True},
     )
 
@@ -1075,13 +1101,12 @@ async def test_refund_rejects_a_forged_csrf_header(client, admin_user, admin_sup
     admin_user()
     _admin_session_with_csrf(client)
     monkeypatch.setattr(
-        payment_refunds_module, "process_refund",
+        payment_refunds_module,
+        "process_refund",
         lambda item_id, reason: {"success": True},
     )
 
-    response = await client.post(
-        "/admin/orders/refund/item-1", headers={"X-CSRF-Token": "guessed-wrong"}
-    )
+    response = await client.post("/admin/orders/refund/item-1", headers={"X-CSRF-Token": "guessed-wrong"})
 
     assert response.status_code == 403
 
@@ -1112,13 +1137,12 @@ async def test_refund_failure_returns_400(client, admin_user, admin_supabase, mo
     admin_user()
     token = _admin_session_with_csrf(client)
     monkeypatch.setattr(
-        payment_refunds_module, "process_refund",
+        payment_refunds_module,
+        "process_refund",
         lambda item_id, reason: {"success": False, "error": "No transaction found"},
     )
 
-    response = await client.post(
-        "/admin/orders/refund/item-1", headers={"X-CSRF-Token": token}
-    )
+    response = await client.post("/admin/orders/refund/item-1", headers={"X-CSRF-Token": token})
 
     assert response.status_code == 400
     assert response.json()["detail"] == "No transaction found"
@@ -1128,12 +1152,13 @@ async def test_refund_writes_an_audit_entry(client, admin_user, admin_supabase, 
     admin_user()
     token = _admin_session_with_csrf(client)
     monkeypatch.setattr(
-        payment_refunds_module, "process_refund",
+        payment_refunds_module,
+        "process_refund",
         lambda item_id, reason: {"success": True, "refund_id": "re_9"},
     )
     audited = []
     monkeypatch.setattr(
-        "routes.admin.orders.write_audit",
+        "domains.billing.admin_routes.write_audit",
         lambda *args, **kwargs: audited.append(args),
     )
 
@@ -1146,7 +1171,8 @@ async def test_the_old_unprotected_refund_route_is_gone(client, admin_user, monk
     """The whole point of the move: /payment/refund/* must no longer exist."""
     admin_user()
     monkeypatch.setattr(
-        payment_refunds_module, "process_refund",
+        payment_refunds_module,
+        "process_refund",
         lambda item_id, reason: {"success": True},
     )
 

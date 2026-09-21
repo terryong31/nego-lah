@@ -14,8 +14,8 @@ invisible to the log pipeline and to Sentry.
 
 import logging
 
-import payment.payment_state as payment_state
-from cache import redis_client
+import domains.billing.payment_state as payment_state
+from core.cache import redis_client
 
 
 def _store(user_id="user-1", item_id="item-1", **overrides):
@@ -97,9 +97,7 @@ def test_expired_cleanup_reports_through_the_logger(fake_stripe, caplog, capsys)
     import time as _time
 
     _store()
-    redis_client.zadd(
-        "payment:cleanup_queue", {"payment:user-1:item-1": _time.time() - 10}
-    )
+    redis_client.zadd("payment:cleanup_queue", {"payment:user-1:item-1": _time.time() - 10})
 
     with caplog.at_level(logging.INFO):
         assert payment_state.cleanup_expired_payments() == 1
@@ -114,9 +112,8 @@ def test_no_print_calls_remain_in_the_module():
 
     tree = ast.parse(inspect.getsource(payment_state))
     calls = [
-        node for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "print"
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "print"
     ]
     assert not calls, f"{len(calls)} print() call(s) still in payment_state"

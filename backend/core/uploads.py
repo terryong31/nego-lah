@@ -33,11 +33,21 @@ MAX_AVATAR_IMAGE_BYTES = 8 * 1024 * 1024
 # the video the same container is more famous for. `ftyp` alone is not a
 # signature: MP4 and QuickTime carry it too, so the brand at offset 8 is what
 # separates an iPhone photo from an iPhone video.
-_HEIF_BRANDS = frozenset({
-    b"heic", b"heix", b"heim", b"heis",   # HEVC still image
-    b"hevc", b"hevx", b"hevm", b"hevs",   # HEVC image sequence
-    b"heif", b"mif1", b"msf1",            # generic HEIF image / image sequence
-})
+_HEIF_BRANDS = frozenset(
+    {
+        b"heic",
+        b"heix",
+        b"heim",
+        b"heis",  # HEVC still image
+        b"hevc",
+        b"hevx",
+        b"hevm",
+        b"hevs",  # HEVC image sequence
+        b"heif",
+        b"mif1",
+        b"msf1",  # generic HEIF image / image sequence
+    }
+)
 
 _SIGNATURES: tuple[tuple[bytes, str, str], ...] = (
     (b"\xff\xd8\xff", "image/jpeg", "jpg"),
@@ -68,9 +78,7 @@ def sniff_image(data: bytes) -> tuple[str, str] | None:
     return None
 
 
-def validate_image_upload(
-    data: bytes, *, max_bytes: int = MAX_IMAGE_BYTES
-) -> tuple[str, str]:
+def validate_image_upload(data: bytes, *, max_bytes: int = MAX_IMAGE_BYTES) -> tuple[str, str]:
     """Return the `(content_type, extension)` to store this upload under.
 
     Raises 400 if it is too large or is not a supported image. Callers must use

@@ -22,15 +22,15 @@ from conftest import make_supabase_result
 
 @pytest.fixture
 def admin_supabase(patch_supabase, fake_supabase):
-    patch_supabase("connector", admin=fake_supabase)
-    patch_supabase("admin_session", admin=fake_supabase)
+    patch_supabase("core.connector", admin=fake_supabase)
+    patch_supabase("domains.identity.admin_session", admin=fake_supabase)
     return fake_supabase
 
 
 @pytest.fixture
 def csrf(client):
-    from cache import redis_client
-    from env import ADMIN_SESSION_TTL
+    from core.cache import redis_client
+    from core.env import ADMIN_SESSION_TTL
 
     sid, value = "sid-ship", "csrf-ship"
     redis_client.setex(f"csrf:{sid}", ADMIN_SESSION_TTL, value)
@@ -44,20 +44,20 @@ def notifications(monkeypatch):
     sent = {"emails": [], "chats": [], "persisted": []}
 
     monkeypatch.setattr(
-        "services.email_service.send_shipment_notice",
+        "core.email_service.send_shipment_notice",
         lambda email, order, delivered=False: sent["emails"].append((email, order, delivered)) or True,
     )
     monkeypatch.setattr(
-        "payment.fulfillment.broadcast_to_chat",
+        "core.broadcast.broadcast_to_chat",
         lambda user_id, content, role="ai", source="ai": sent["chats"].append((user_id, content, source)),
     )
     # SPEC-078: the shipment notice must be written to the transcript, not
     # just broadcast live — see `_notify_buyer_of_shipment`.
     monkeypatch.setattr(
-        "agent.memory.conversation_memory.add_message",
+        "domains.negotiation.memory.conversation_memory.add_message",
         lambda uid, role, msg, *a, **k: sent["persisted"].append((uid, role, msg)),
     )
-    monkeypatch.setattr("payment.buyer.account_email", lambda _uid: "buyer@example.com")
+    monkeypatch.setattr("domains.billing.buyer.account_email", lambda _uid: "buyer@example.com")
     return sent
 
 
@@ -70,15 +70,15 @@ ORDER = {
 
 
 def _order_lookup(fake_supabase, order=None):
-    (
-        fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value
-    ) = make_supabase_result([order] if order else [])
+    (fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value) = make_supabase_result(
+        [order] if order else []
+    )
 
 
 def _order_update(fake_supabase, order):
-    (
-        fake_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value
-    ) = make_supabase_result([order])
+    (fake_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value) = make_supabase_result(
+        [order]
+    )
 
 
 async def _ship(client, headers, **body):
@@ -89,6 +89,7 @@ async def _ship(client, headers, **body):
 # ---------------------------------------------------------------------------
 # The write
 # ---------------------------------------------------------------------------
+
 
 async def test_recording_postage_writes_tracking_and_moves_the_order_to_shipped(
     client, admin_user, admin_supabase, csrf, notifications
@@ -127,14 +128,10 @@ async def test_correcting_a_shipment_keeps_the_original_ship_date(
     assert res.status_code == 200
     written = admin_supabase.table.return_value.update.call_args[0][0]
     assert written["tracking_number"] == "630999999999"
-    assert written["shipped_at"] == "2026-09-01T02:00:00+00:00", (
-        "correcting a typo moved the ship date"
-    )
+    assert written["shipped_at"] == "2026-09-01T02:00:00+00:00", "correcting a typo moved the ship date"
 
 
-async def test_a_first_shipment_still_stamps_the_ship_date(
-    client, admin_user, admin_supabase, csrf, notifications
-):
+async def test_a_first_shipment_still_stamps_the_ship_date(client, admin_user, admin_supabase, csrf, notifications):
     """The order has never been posted, so now is exactly right."""
     admin_user()
     _order_lookup(admin_supabase, {**ORDER, "shipped_at": None})
@@ -146,9 +143,7 @@ async def test_a_first_shipment_still_stamps_the_ship_date(
     assert written["shipped_at"]
 
 
-async def test_the_tracking_url_is_derived_from_the_courier(
-    client, admin_user, admin_supabase, csrf, notifications
-):
+async def test_the_tracking_url_is_derived_from_the_courier(client, admin_user, admin_supabase, csrf, notifications):
     admin_user()
     _order_lookup(admin_supabase, ORDER)
     _order_update(admin_supabase, ORDER)
@@ -172,9 +167,7 @@ async def test_an_explicit_tracking_url_wins_over_the_derived_one(
     assert written["tracking_url"] == "https://tracking.example.test/xyz"
 
 
-async def test_an_unknown_courier_is_recorded_without_a_url(
-    client, admin_user, admin_supabase, csrf, notifications
-):
+async def test_an_unknown_courier_is_recorded_without_a_url(client, admin_user, admin_supabase, csrf, notifications):
     admin_user()
     _order_lookup(admin_supabase, ORDER)
     _order_update(admin_supabase, ORDER)
@@ -203,7 +196,7 @@ async def test_it_writes_an_audit_entry(client, admin_user, admin_supabase, csrf
     _order_lookup(admin_supabase, ORDER)
     _order_update(admin_supabase, ORDER)
     audited = []
-    monkeypatch.setattr("routes.admin.orders.write_audit", lambda *a, **k: audited.append(a))
+    monkeypatch.setattr("domains.billing.admin_routes.write_audit", lambda *a, **k: audited.append(a))
 
     await _ship(client, csrf)
 
@@ -213,6 +206,7 @@ async def test_it_writes_an_audit_entry(client, admin_user, admin_supabase, csrf
 # ---------------------------------------------------------------------------
 # Refusals
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.parametrize("headers", [{}, {"X-CSRF-Token": "forged"}], ids=["absent", "forged"])
 async def test_recording_postage_requires_a_csrf_token(
@@ -259,9 +253,8 @@ async def test_an_unknown_order_is_a_404(client, admin_user, admin_supabase, csr
 # The fan-out
 # ---------------------------------------------------------------------------
 
-async def test_the_buyer_is_told_by_email_and_in_the_chat(
-    client, admin_user, admin_supabase, csrf, notifications
-):
+
+async def test_the_buyer_is_told_by_email_and_in_the_chat(client, admin_user, admin_supabase, csrf, notifications):
     admin_user()
     _order_lookup(admin_supabase, ORDER)
     _order_update(admin_supabase, {**ORDER, "courier": "J&T Express", "tracking_number": "630123456789"})
@@ -307,9 +300,7 @@ async def test_the_chat_notice_is_persisted_even_when_notify_is_true_but_buyer_i
     assert notifications["persisted"], "shipment notice was never saved to the buyer's chat history"
 
 
-async def test_notify_false_records_the_shipment_silently(
-    client, admin_user, admin_supabase, csrf, notifications
-):
+async def test_notify_false_records_the_shipment_silently(client, admin_user, admin_supabase, csrf, notifications):
     """For fixing a typo in a shipment the buyer has already been told about."""
     admin_user()
     _order_lookup(admin_supabase, ORDER)
@@ -331,7 +322,7 @@ async def test_a_failing_email_does_not_lose_the_shipment(
     _order_lookup(admin_supabase, ORDER)
     _order_update(admin_supabase, ORDER)
     monkeypatch.setattr(
-        "services.email_service.send_shipment_notice",
+        "core.email_service.send_shipment_notice",
         MagicMock(side_effect=Exception("resend is down")),
     )
 
@@ -351,7 +342,7 @@ async def test_a_failing_broadcast_does_not_lose_the_shipment(
     _order_lookup(admin_supabase, ORDER)
     _order_update(admin_supabase, ORDER)
     monkeypatch.setattr(
-        "payment.fulfillment.broadcast_to_chat",
+        "core.broadcast.broadcast_to_chat",
         MagicMock(side_effect=Exception("realtime is down")),
     )
 
@@ -369,6 +360,7 @@ async def test_a_failing_broadcast_does_not_lose_the_shipment(
 # Delivery
 # ---------------------------------------------------------------------------
 
+
 async def test_marking_an_order_delivered_stamps_the_time_and_notifies(
     client, admin_user, admin_supabase, csrf, notifications
 ):
@@ -376,9 +368,7 @@ async def test_marking_an_order_delivered_stamps_the_time_and_notifies(
     _order_lookup(admin_supabase, {**ORDER, "status": "shipped"})
     _order_update(admin_supabase, {**ORDER, "status": "delivered"})
 
-    res = await client.put(
-        "/admin/orders/order-1/status", json={"status": "delivered"}, headers=csrf
-    )
+    res = await client.put("/admin/orders/order-1/status", json={"status": "delivered"}, headers=csrf)
 
     assert res.status_code == 200
     assert admin_supabase.table.return_value.update.call_args[0][0]["delivered_at"]
@@ -387,16 +377,12 @@ async def test_marking_an_order_delivered_stamps_the_time_and_notifies(
     assert len(notifications["persisted"]) == 1
 
 
-async def test_other_status_changes_do_not_notify_the_buyer(
-    client, admin_user, admin_supabase, csrf, notifications
-):
+async def test_other_status_changes_do_not_notify_the_buyer(client, admin_user, admin_supabase, csrf, notifications):
     admin_user()
     _order_lookup(admin_supabase, {**ORDER, "status": "delivered"})
     _order_update(admin_supabase, {**ORDER, "status": "shipped"})
 
-    res = await client.put(
-        "/admin/orders/order-1/status", json={"status": "shipped"}, headers=csrf
-    )
+    res = await client.put("/admin/orders/order-1/status", json={"status": "shipped"}, headers=csrf)
 
     assert res.status_code == 200
     assert notifications["emails"] == []

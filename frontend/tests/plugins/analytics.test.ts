@@ -1,4 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { describe, it, expect, beforeEach } from 'vitest'
 
 // ---------------------------------------------------------------------------
@@ -95,5 +97,34 @@ describe('analytics plugin logic', () => {
       page_path: '/items/vintage-jacket',
       page_title: 'Vintage Jacket - Nego-lah'
     })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Audit PRV-1 / PRV-2 (2026-10-06). The two telemetry configs are only active
+// in production builds, so their privacy properties are asserted on source.
+// ---------------------------------------------------------------------------
+describe('telemetry privacy defaults', () => {
+  const read = (rel: string) =>
+    readFileSync(resolve(__dirname, '..', '..', rel), 'utf-8')
+
+  it('denies advertising consent by default and only grants measurement', () => {
+    const src = read('app/plugins/analytics.client.ts')
+    for (const signal of ['ad_storage', 'ad_user_data', 'ad_personalization']) {
+      expect(src).toMatch(new RegExp(`${signal}: 'denied'`))
+    }
+    expect(src).toMatch(/analytics_storage: 'granted'/)
+  })
+
+  it('reports page views without their query string', () => {
+    const src = read('app/plugins/analytics.client.ts')
+    expect(src).toMatch(/page_path: to\.path,/)
+    expect(src).not.toMatch(/to\.fullPath/)
+  })
+
+  it('never records request bodies in Session Replay', () => {
+    const src = read('sentry.client.config.ts')
+    expect(src).toMatch(/networkCaptureBodies: false/)
+    expect(src).not.toMatch(/networkCaptureBodies: true/)
   })
 })

@@ -1,7 +1,6 @@
 import * as Sentry from '@sentry/nuxt'
 import {
   replayIntegration,
-  browserProfilingIntegration,
   consoleLoggingIntegration
 } from '@sentry/browser'
 import { useRuntimeConfig } from '#imports'
@@ -30,7 +29,11 @@ if (!import.meta.test && isProd) {
         'http://127.0.0.1:8000',
         'https://api.negolah.my'
       ].filter(Boolean),
-      networkCaptureBodies: true,
+      // Bodies stay out of replays. `maskAllInputs` masks the DOM, not the
+      // network log, so this captured `/auth/login` passwords, the
+      // `current_password` on account changes, and shipping addresses
+      // (audit PRV-1). URLs, status and timing are enough to debug with.
+      networkCaptureBodies: false,
       networkRequestHeaders: ['X-CSRF-Token', 'X-Turnstile-Token', 'sentry-trace', 'baggage'],
       networkResponseHeaders: ['content-type', 'sentry-trace', 'baggage'],
       // Capture all errors plus fatal exceptions
@@ -54,15 +57,16 @@ if (!import.meta.test && isProd) {
       }
     }),
 
-    // 2. Continuous Browser Profiling (Flame charts & CPU performance)
-    browserProfilingIntegration(),
+    // Browser profiling was removed (audit PRF-3): it needs a
+    // `Document-Policy: js-profiling` response header that nothing sends, so
+    // it shipped its code on every page and collected nothing.
 
-    // 3. Structured Logging (Pipes console.info/warn/error to Sentry Logs)
+    // 2. Structured Logging (Pipes console.info/warn/error to Sentry Logs)
     consoleLoggingIntegration({
       levels: ['info', 'warn', 'error']
     }),
 
-    // 4. Capture console.error as Sentry Error events
+    // 3. Capture console.error as Sentry Error events
     Sentry.captureConsoleIntegration({ levels: ['error'] })
   ]
 
@@ -82,8 +86,6 @@ if (!import.meta.test && isProd) {
       /^http:\/\/localhost:8000/,
       /^http:\/\/127\.0\.0\.1:8000/
     ],
-    // Profiles: 20% in production, 100% in development
-    profilesSampleRate: isProd ? 0.2 : 1.0,
     integrations,
     // Filter out noisy, benign browser errors and cancellation events
     beforeSend: (event, hint) => {

@@ -30,13 +30,16 @@ export default defineNuxtPlugin(() => {
   // Google can ship a region-based default-denied Consent Mode policy inside
   // the remote config for a measurement ID: the tag then fully initializes
   // (processes `config`, fires its internal load lifecycle) but silently
-  // drops every hit until the page sends its own consent signal. Nego-lah has
-  // no consent gate (Malaysia-only marketplace, no GDPR/UK exposure), so
-  // grant explicitly instead of leaving the default ambiguous.
+  // drops every hit until the page sends its own consent signal, so the
+  // default is set explicitly here.
+  //
+  // Measurement only. Malaysia's PDPA still requires notice and consent for
+  // personal data, and ad personalisation is not needed to measure a
+  // storefront, so the advertising signals stay denied (audit PRV-2).
   gtag('consent', 'default', {
-    ad_storage: 'granted',
-    ad_user_data: 'granted',
-    ad_personalization: 'granted',
+    ad_storage: 'denied',
+    ad_user_data: 'denied',
+    ad_personalization: 'denied',
     analytics_storage: 'granted'
   })
 
@@ -58,7 +61,9 @@ export default defineNuxtPlugin(() => {
     document.head.appendChild(script)
 
     gtag('js', new Date())
-    gtag('config', gaId)
+    // `page_location` without the query string: `/checkout/success?session_id=cs_…`
+    // is not something Google needs to hold.
+    gtag('config', gaId, { page_location: window.location.origin + window.location.pathname })
   }
 
   // Track SPA route changes. `config` (or GTM's own load) already reports the
@@ -74,7 +79,9 @@ export default defineNuxtPlugin(() => {
       return
     }
     gtag('event', 'page_view', {
-      page_path: to.fullPath,
+      // `path`, not `fullPath`: query strings carry ids (a Stripe
+      // `session_id`, search terms) that have no business in analytics.
+      page_path: to.path,
       // `afterEach` is queued, so it can run after the document has gone —
       // during teardown in a test environment, or a navigation racing unload.
       // A missing title is worth losing; an unhandled rejection out of an

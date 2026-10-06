@@ -1,6 +1,7 @@
 import { runtimeCaching } from './pwa/runtime-caching'
 import { navigateFallbackDenylist } from './pwa/navigate-fallback-denylist'
 import { injectLegalDocument } from './build/legal-prerender'
+import { contentSecurityPolicy } from './build/csp'
 
 /**
  * SPEC-045 / SPEC-099. The walkthrough recordings live on a zero-egress R2
@@ -27,8 +28,11 @@ export default defineNuxtConfig({
   ],
   ssr: false,
 
+  // Opt-in (NUXT_DEVTOOLS=true). Devtools runs an RPC server on the dev
+  // machine, and its advisories have included unauthenticated command
+  // execution, so it is not on for every `mise run dev` (audit SUP-1).
   devtools: {
-    enabled: true
+    enabled: process.env.NUXT_DEVTOOLS === 'true'
   },
 
   app: {
@@ -53,7 +57,6 @@ export default defineNuxtConfig({
         { property: 'og:image:width', content: '1200' },
         { property: 'og:image:height', content: '675' },
         { property: 'og:image:alt', content: 'Nego-Lah - Autonomous AI Price Negotiation Marketplace' },
-        { property: 'og:url', content: 'https://negolah.my' },
         // Twitter Cards
         { name: 'twitter:card', content: 'summary_large_image' },
         { name: 'twitter:site', content: '@negolah' },
@@ -66,7 +69,6 @@ export default defineNuxtConfig({
         { rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' },
         { rel: 'icon', type: 'image/x-icon', href: '/favicon.ico' },
         { rel: 'apple-touch-icon', sizes: '180x180', href: '/apple-touch-icon.png' },
-        { rel: 'canonical', href: 'https://negolah.my' },
         // Deliberately WITHOUT `crossorigin`: the <video> carries no
         // `crossorigin` attribute, so it fetches in no-cors mode. A preconnect
         // that opens an anonymous CORS connection would be a different socket
@@ -118,7 +120,7 @@ export default defineNuxtConfig({
         'X-Frame-Options': 'DENY',
         'Referrer-Policy': 'strict-origin-when-cross-origin',
         'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
-        'Content-Security-Policy': 'default-src \'self\'; script-src \'self\' \'unsafe-inline\' \'unsafe-eval\' https://challenges.cloudflare.com https://static.cloudflareinsights.com https://www.googletagmanager.com https://*.google-analytics.com; worker-src \'self\' blob:; child-src \'self\' blob:; style-src \'self\' \'unsafe-inline\' https://fonts.googleapis.com; font-src \'self\' data: https://fonts.gstatic.com; img-src \'self\' data: blob: https:; media-src \'self\' https: blob:; connect-src \'self\' https://api.negolah.my http://localhost:8000 http://127.0.0.1:8000 https://*.sentry.io https://challenges.cloudflare.com https://cloudflareinsights.com https://*.google-analytics.com https://*.analytics.google.com https://*.googletagmanager.com; frame-src \'self\' https://challenges.cloudflare.com https://js.stripe.com; object-src \'none\'; base-uri \'self\';'
+        'Content-Security-Policy': contentSecurityPolicy({ dev: process.env.NODE_ENV !== 'production' })
       }
     }
   },
@@ -306,7 +308,10 @@ export default defineNuxtConfig({
     workbox: {
       navigateFallback: '/',
       navigateFallbackDenylist,
-      globPatterns: ['**/*.{js,css,html,svg,png,ico,woff,woff2}'],
+      // No PNGs: the og-images and hero illustrations made the first visit
+      // precache 6.7 MB (audit PRF-3). Images are runtime-cached on use by
+      // the `static-images` rule in pwa/runtime-caching.ts instead.
+      globPatterns: ['**/*.{js,css,html,svg,ico,woff,woff2}'],
       cleanupOutdatedCaches: true,
       clientsClaim: true,
       skipWaiting: true,

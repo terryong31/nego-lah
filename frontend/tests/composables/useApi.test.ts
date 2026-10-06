@@ -35,9 +35,10 @@ mockNuxtImport('navigateTo', () => navigateToMock)
 const routeStub = reactive<{ fullPath: string }>({ fullPath: '/' })
 mockNuxtImport('useRoute', () => () => routeStub)
 
-// $fetch is exposed as a genuine global (by ofetch/Nitro), not routed through
-// Nuxt's unimport registry, so `mockNuxtImport('$fetch', ...)` fails with
-// "Cannot find import "$fetch" to mock" — stub the global directly instead.
+// Nuxt 4.5 made `$fetch` an auto-import (from `#build/fetch.mjs`), so it is
+// mocked like any other import; stubbing the global no longer reaches it.
+mockNuxtImport('$fetch', () => fetchMock)
+
 describe('composables/useApi', () => {
   beforeEach(() => {
     authStub.clearSession.mockClear()
@@ -46,7 +47,6 @@ describe('composables/useApi', () => {
     toastAddMock.mockReset()
     navigateToMock.mockReset()
     fetchMock.mockReset().mockResolvedValue({ ok: true })
-    vi.stubGlobal('$fetch', fetchMock)
     routeStub.fullPath = '/'
   })
 

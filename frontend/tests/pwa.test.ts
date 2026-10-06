@@ -35,7 +35,9 @@ describe('PWA & Cloudflare Pages Security Configuration', () => {
     expect(headersContent).toContain('child-src \'self\' blob:')
     expect(headersContent).toContain('connect-src \'self\'')
     expect(headersContent).toContain('https://api.negolah.my')
-    expect(headersContent).toContain('https://*.supabase.co')
+    // SPEC-093/094 took Supabase out of the browser; audit SEC-4 removed the
+    // stale allowance (see tests/security-headers.test.ts).
+    expect(headersContent).not.toContain('supabase.co')
     expect(headersContent).toContain('https://challenges.cloudflare.com')
   })
 

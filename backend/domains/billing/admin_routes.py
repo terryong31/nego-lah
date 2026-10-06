@@ -33,7 +33,9 @@ def _notify_buyer_of_shipment(order: dict, delivered: bool = False) -> dict:
     try:
         from core.email_service import send_shipment_notice
 
-        result["email"] = bool(send_shipment_notice(account_email(buyer_id), shipment_summary(order), delivered=delivered))
+        result["email"] = bool(
+            send_shipment_notice(account_email(buyer_id), shipment_summary(order), delivered=delivered)
+        )
     except Exception as e:
         logger.error(f"Shipment email failed for order {order.get('id')}: {e}")
 
@@ -92,7 +94,7 @@ def get_all_orders():
 
     # Enrich with buyer info
     try:
-        users_response = admin_supabase.auth.admin.list_users()
+        users_response = IdentityService.list_all_users(admin_supabase)
         users_map = {u.id: u.email for u in users_response}
 
         # Build map of names from auth metadata first

@@ -39,7 +39,7 @@ Mocking seam notes specific to this file:
   `connector.admin_supabase` afterwards would NOT be picked up by an already
   -cached instance. To sidestep this entirely we never touch that property:
   we monkeypatch `conversation_memory.add_message` / `.get_history` /
-  `.get_all_histories` directly on the singleton object every time.
+  `.get_inbox` directly on the singleton object every time.
 - `ban_user`'s admin-protection check does a lazy
   `from admin_session import _is_admin_user` -- patched as
   `admin_session._is_admin_user` directly.
@@ -58,7 +58,7 @@ import domains.identity.admin_auth as admin_auth
 import domains.identity.admin_session as admin_session
 import domains.identity.admin_users as admin_users
 import domains.negotiation.admin_routes as admin_chats
-from conftest import PNG_BYTES, make_supabase_result
+from conftest import PNG_BYTES, inbox_from, make_supabase_result
 from domains.negotiation.memory import conversation_memory
 
 # ---------------------------------------------------------------------------
@@ -340,7 +340,8 @@ async def test_get_all_users_exception_returns_500(client, admin_user, fake_supa
     resp = await client.get("/admin/users")
 
     assert resp.status_code == 500
-    assert "supabase is down" in resp.json()["detail"]
+    # Audit SEC-6: the exception text stays in the logs, not the response.
+    assert resp.json()["detail"] == "Failed to load users"
 
 
 # ===========================================================================
@@ -725,15 +726,18 @@ async def test_get_all_chats_marks_unread_when_last_message_from_human(
 
     monkeypatch.setattr(
         conversation_memory,
-        "get_all_histories",
+        "get_inbox",
         MagicMock(
-            return_value={
-                "user-a": [
-                    {"role": "ai", "content": "hello", "source": "ai"},
-                    {"role": "human", "content": "still waiting on a reply here", "source": "human"},
-                ],
-                "user-empty": [],
-            }
+            return_value=inbox_from(
+                {
+                    "user-a": [
+                        {"role": "ai", "content": "hello", "source": "ai"},
+                        {"role": "human", "content": "still waiting on a reply here", "source": "human"},
+                    ],
+                    "user-empty": [],
+                },
+                (),
+            )
         ),
     )
 
@@ -762,19 +766,21 @@ async def test_get_all_chats_includes_hitl_status_and_last_activity(
     patch_supabase("core.connector", admin=fake_supabase)
     fake_supabase.table.side_effect = _chats_tables(
         settings=[{"user_id": "user-a", "ai_enabled": False, "admin_intervening": True}],
-        messages=[
-            {"user_id": "user-a", "created_at": "2026-09-09T12:00:00Z"},
-            {"user_id": "user-a", "created_at": "2026-09-09T09:00:00Z"},
-        ],
     )
+    timestamps = [
+        {"user_id": "user-a", "created_at": "2026-09-09T12:00:00Z"},
+        {"user_id": "user-a", "created_at": "2026-09-09T09:00:00Z"},
+    ]
     fake_supabase.auth.admin.list_users.return_value = [
         make_user("user-a", email="a@example.com", metadata={"display_name": "Al"})
     ]
 
     monkeypatch.setattr(
         conversation_memory,
-        "get_all_histories",
-        MagicMock(return_value={"user-a": [{"role": "human", "content": "hi", "source": "human"}]}),
+        "get_inbox",
+        MagicMock(
+            return_value=inbox_from({"user-a": [{"role": "human", "content": "hi", "source": "human"}]}, timestamps)
+        ),
     )
 
     resp = await client.get("/admin/chats")
@@ -807,8 +813,8 @@ async def test_get_all_chats_survives_a_failing_settings_query(
 
     monkeypatch.setattr(
         conversation_memory,
-        "get_all_histories",
-        MagicMock(return_value={"user-a": [{"role": "human", "content": "hi", "source": "human"}]}),
+        "get_inbox",
+        MagicMock(return_value=inbox_from({"user-a": [{"role": "human", "content": "hi", "source": "human"}]}, ())),
     )
 
     resp = await client.get("/admin/chats")
@@ -839,8 +845,8 @@ async def test_get_all_chats_prefers_custom_avatar_over_provider_avatar(
 
     monkeypatch.setattr(
         conversation_memory,
-        "get_all_histories",
-        MagicMock(return_value={"user-a": [{"role": "human", "content": "hi", "source": "human"}]}),
+        "get_inbox",
+        MagicMock(return_value=inbox_from({"user-a": [{"role": "human", "content": "hi", "source": "human"}]}, ())),
     )
 
     resp = await client.get("/admin/chats")
@@ -859,11 +865,14 @@ async def test_get_all_chats_not_unread_when_last_message_from_ai(
 
     monkeypatch.setattr(
         conversation_memory,
-        "get_all_histories",
+        "get_inbox",
         MagicMock(
-            return_value={
-                "user-b": [{"role": "ai", "content": "already replied", "source": "ai"}],
-            }
+            return_value=inbox_from(
+                {
+                    "user-b": [{"role": "ai", "content": "already replied", "source": "ai"}],
+                },
+                (),
+            )
         ),
     )
 
@@ -884,8 +893,8 @@ async def test_get_all_chats_enrichment_failure_falls_back_gracefully(
 
     monkeypatch.setattr(
         conversation_memory,
-        "get_all_histories",
-        MagicMock(return_value={"user-c": [{"role": "human", "content": "hi", "source": "human"}]}),
+        "get_inbox",
+        MagicMock(return_value=inbox_from({"user-c": [{"role": "human", "content": "hi", "source": "human"}]}, ())),
     )
 
     resp = await client.get("/admin/chats")

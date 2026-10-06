@@ -273,15 +273,28 @@ def test_clear_history_removes_only_that_user(memory, messages_table):
     assert [r["content"] for r in messages_table.rows] == ["theirs"]
 
 
-def test_get_all_histories_groups_by_user(memory):
-    memory.add_message("user-1", "human", "a", source="human")
-    memory.add_message("user-2", "human", "b", source="human")
-    memory.add_message("user-1", "ai", "c", source="ai")
+def test_get_inbox_pages_past_postgrests_row_cap():
+    """Audit SCL-1: the inbox used to be built from the 1,000 OLDEST messages.
+    It is now one row per conversation, paged so no cap can truncate it."""
+    mem = ConversationMemory()
+    client = MagicMock()
+    size = mem.INBOX_PAGE_SIZE
+    pages = [
+        [{"user_id": f"u{i}", "message_count": 1} for i in range(size)],
+        [{"user_id": "last", "message_count": 3}],
+    ]
+    client.rpc.return_value.order.return_value.range.return_value.execute.side_effect = [
+        MagicMock(data=page) for page in pages
+    ]
+    mem._supabase = client
 
-    histories = memory.get_all_histories()
+    inbox = mem.get_inbox()
 
-    assert [m["content"] for m in histories["user-1"]] == ["a", "c"]
-    assert [m["content"] for m in histories["user-2"]] == ["b"]
+    assert len(inbox) == size + 1
+    assert inbox["last"]["message_count"] == 3
+    client.rpc.assert_called_with("admin_chat_inbox", {})
+    ranges = [c.args for c in client.rpc.return_value.order.return_value.range.call_args_list]
+    assert ranges == [(0, size - 1), (size, 2 * size - 1)]
 
 
 def test_reads_degrade_to_empty_rather_than_raising(monkeypatch):
@@ -294,4 +307,3 @@ def test_reads_degrade_to_empty_rather_than_raising(monkeypatch):
 
     assert mem.get_history("user-1") == []
     assert mem.get_history_page("user-1") == {"messages": [], "has_more": False, "next_offset": 0}
-    assert mem.get_all_histories() == {}

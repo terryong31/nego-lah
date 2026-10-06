@@ -34,7 +34,7 @@ def get_all_users():
 
     try:
         # Get all users from auth
-        users_response = admin_supabase.auth.admin.list_users()
+        users_response = IdentityService.list_all_users(admin_supabase)
 
         # Get profiles and chat settings
         profiles = admin_supabase.table("user_profiles").select("*").execute()
@@ -75,7 +75,7 @@ def get_all_users():
         return users
     except Exception as e:
         logger.error(f"Error in get_all_users: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Failed to load users") from e
 
 
 @router.put("/users/{user_id}/profile")

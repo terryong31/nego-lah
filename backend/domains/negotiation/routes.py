@@ -123,7 +123,7 @@ async def get_chat_history(
         return await asyncio.to_thread(conversation_memory.get_history_page, user_id, limit=limit, offset=offset)
     except Exception as e:
         logger.error(f"Error getting chat history: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Failed to load chat history") from e
 
 
 @router.delete("/chat/history/{user_id}", dependencies=[Depends(verify_user_csrf_token)])
@@ -139,7 +139,7 @@ async def clear_chat_history(user_id: str, token_user_id: str = Depends(verify_u
         return {"message": "Chat history cleared"}
     except Exception as e:
         logger.error(f"Error clearing chat history: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Failed to clear chat history") from e
 
 
 @router.get("/chat/settings/{user_id}")
@@ -174,6 +174,21 @@ async def get_chat_settings(user_id: str, token_user_id: str = Depends(verify_us
 # stop a turn mid-sentence, which is the exact failure this indirection exists
 # to prevent.
 _running_turns: set[asyncio.Task] = set()
+
+
+async def drain_running_turns(timeout: float) -> int:
+    """Give in-flight turns up to `timeout` seconds to finish on shutdown.
+
+    Without this a deploy's SIGTERM cancelled every turn mid-generation, which
+    is the lost-reply failure SPEC-060 fixed for closed tabs (audit REL-5).
+    Returns how many were still running when the wait gave up.
+    """
+    pending = {t for t in _running_turns if not t.done()}
+    if not pending:
+        return 0
+    _, still_running = await asyncio.wait(pending, timeout=timeout)
+    return len(still_running)
+
 
 # Pushed by the producer when there is nothing more to send.
 _TURN_END = object()

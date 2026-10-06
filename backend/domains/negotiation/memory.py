@@ -291,26 +291,33 @@ class ConversationMemory:
             logger.info(f"[ConversationMemory] Error counting {role} messages: {e}")
             return 0
 
-    def get_all_histories(self) -> dict[str, list[dict]]:
-        """Get all conversation histories grouped by user_id (admin console)."""
-        try:
+    # PostgREST's `max_rows`. A page shorter than this is the last one.
+    INBOX_PAGE_SIZE = 1000
+
+    def get_inbox(self) -> dict[str, dict]:
+        """One summary per conversation, newest message first-class (audit SCL-1).
+
+        Computed by the `admin_chat_inbox()` function rather than by reading
+        every message here: the old read was capped at the 1,000 OLDEST rows, so
+        newer buyers never reached the seller's inbox. Paged, so the cap now
+        applies to conversations per page rather than to the whole answer.
+        """
+        inbox: dict[str, dict] = {}
+        start = 0
+        while True:
             result = (
-                self.supabase.table("messages")
-                .select("user_id, role, content, source")
-                .order("id", desc=False)
+                self.supabase.rpc("admin_chat_inbox", {})
+                .order("user_id")
+                .range(start, start + self.INBOX_PAGE_SIZE - 1)
                 .execute()
             )
-
-            all_histories: dict[str, list[dict]] = {}
-            for row in result.data or []:
-                user_id = row.get("user_id")
-                all_histories.setdefault(user_id, []).append(self._to_public(row))
-
-            # Last 50 per user, matching what the console has always shown.
-            return {user_id: messages[-DEFAULT_HISTORY_LIMIT:] for user_id, messages in all_histories.items()}
-        except Exception as e:
-            logger.info(f"[ConversationMemory] Error getting all histories: {e}")
-            return {}
+            rows = result.data or []
+            for row in rows:
+                if row.get("user_id"):
+                    inbox[str(row["user_id"])] = row
+            if len(rows) < self.INBOX_PAGE_SIZE:
+                return inbox
+            start += self.INBOX_PAGE_SIZE
 
     def clear_history(self, user_id: str):
         """Clear conversation history for a user."""

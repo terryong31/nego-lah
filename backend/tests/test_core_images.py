@@ -23,6 +23,7 @@ from PIL import Image, ImageFilter
 
 from core.images import (
     MAX_AVATAR_EDGE,
+    MAX_IMAGE_PIXELS,
     MAX_ITEM_EDGE,
     normalize_image,
     process_upload,
@@ -258,3 +259,32 @@ def test_passes_bytes_through_when_pillow_is_unavailable(monkeypatch):
     out, content_type, ext = images.normalize_image(data)
     assert out == data
     assert (content_type, ext) == ("image/jpeg", "jpg")
+
+
+def test_a_decompression_bomb_is_rejected_before_it_is_decoded(monkeypatch):
+    """Audit AVL-1: a few hundred KB of PNG can decode to over a gigabyte. The
+    pixel count comes from the header, so the cap must apply before `load()`."""
+    monkeypatch.setattr("core.images.MAX_IMAGE_PIXELS", 100 * 100)
+    buf = io.BytesIO()
+    Image.new("RGB", (101, 100), (1, 2, 3)).save(buf, format="PNG")
+
+    loaded = []
+    monkeypatch.setattr(Image.Image, "load", lambda self: loaded.append(self))
+
+    with pytest.raises(HTTPException) as exc:
+        normalize_image(buf.getvalue(), max_edge=MAX_AVATAR_EDGE)
+    assert exc.value.status_code == 400
+    assert loaded == []
+
+
+def test_the_pixel_cap_clears_a_48_megapixel_phone_sensor():
+    assert MAX_IMAGE_PIXELS >= 8064 * 6048
+
+
+def test_a_large_jpeg_is_decoded_at_reduced_size():
+    """`draft` lets libjpeg scale while decoding, so the full bitmap never exists."""
+    buf = io.BytesIO()
+    photographic((4096, 3072)).save(buf, format="JPEG", quality=90)
+    out, content_type, _ = normalize_image(buf.getvalue(), max_edge=MAX_AVATAR_EDGE)
+    assert content_type == "image/jpeg"
+    assert max(Image.open(io.BytesIO(out)).size) == MAX_AVATAR_EDGE

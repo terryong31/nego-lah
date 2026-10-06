@@ -23,10 +23,9 @@ def checkout(
 ):
     """Create a Stripe checkout session for an item.
 
-    `request` is the raw Starlette request, which slowapi requires by that
-    exact name to key the limit; the JSON body moved to `payload`. FastAPI
-    derives the body from the Pydantic type, not the parameter name, so the
-    HTTP contract is unchanged.
+    The JSON body is `payload` (a slowapi decorator once required `request` by
+    that name). FastAPI derives the body from the Pydantic type, not the
+    parameter name, so the HTTP contract is unchanged.
     """
     try:
         # Require a valid (and non-banned) JWT. The buyer is always the

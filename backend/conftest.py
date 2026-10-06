@@ -197,26 +197,6 @@ def _flush_in_memory_redis():
         cache.redis_client.delete(key)
 
 
-@pytest.fixture(autouse=True)
-def _disable_ip_rate_limits():
-    """SPEC-043: the per-IP limits are off during tests.
-
-    Every request in the suite arrives from the same client address, so a
-    session-wide counter would make unrelated tests fail each other depending
-    on ordering. Tests that assert limiting behaviour turn `limiter.enabled`
-    back on for their own scope (see test_request_path_backpressure.py).
-    """
-    from core.limiter import limiter
-
-    was_enabled = limiter.enabled
-    limiter.enabled = False
-    try:
-        yield
-    finally:
-        limiter.enabled = was_enabled
-        limiter.reset()
-
-
 # --- 3. Auth override fixtures ----------------------------------------------
 @pytest.fixture
 def auth_user(app):
@@ -250,6 +230,30 @@ def make_supabase_result(data=None, count=None):
     result.data = data if data is not None else []
     result.count = count
     return result
+
+
+def inbox_from(histories: dict, messages=()) -> dict:
+    """What `admin_chat_inbox()` returns for these transcripts (audit SCL-1).
+
+    `messages` are timestamped rows, newest first, standing in for the
+    `created_at` column the transcripts themselves don't carry.
+    """
+    inbox = {}
+    for user_id, history in histories.items():
+        if not history:
+            continue
+        last = history[-1]
+        mine = [m for m in messages if m.get("user_id") == user_id]
+        inbox[user_id] = {
+            "user_id": user_id,
+            "message_count": len(history),
+            "last_content": (last.get("content") or "")[:100],
+            "last_role": last.get("role"),
+            "last_source": last.get("source"),
+            "last_activity": next((m.get("created_at") for m in mine), None),
+            "last_human_at": next((m.get("created_at") for m in mine if m.get("role") == "human"), None),
+        }
+    return inbox
 
 
 @pytest.fixture

@@ -26,7 +26,7 @@ from core.cache import (
     get_cached_user_by_token,
 )
 from core.connector import admin_supabase
-from core.env import USER_COOKIE_NAME
+from core.env import IS_PROD, USER_COOKIE_NAME
 from core.jwt_auth import InvalidTokenError, TokenExpiredError, jwt_verifier
 from core.logger import logger
 from domains.identity.user_session import resolve_user_id
@@ -75,6 +75,12 @@ async def _resolve_token_to_user_id(token: str) -> str:
             raise HTTPException(status_code=401, detail="Token expired") from e
         except InvalidTokenError as e:
             raise HTTPException(status_code=401, detail="Invalid token") from e
+
+    # Anything that is not a JWT is not a Supabase access token. In production
+    # the network fallback below only let an anonymous client turn each request
+    # into a service-role call to Supabase Auth (audit SEC-2).
+    if IS_PROD:
+        raise HTTPException(status_code=401, detail="Invalid token")
 
     # Fallback for mock test environments passing non-JWT dummy strings to fake_supabase.auth.get_user
     try:

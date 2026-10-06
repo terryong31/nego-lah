@@ -165,3 +165,18 @@ def test_billing_service_get_active_negotiated_price_delegates_to_pricing():
     with patch("domains.billing.pricing.active_negotiated_price", return_value=85.0) as priced:
         assert BillingService.get_active_negotiated_price("user-1", "item-1") == 85.0
     priced.assert_called_once_with("user-1", "item-1")
+
+
+def test_list_all_users_pages_past_gotrues_default_of_fifty():
+    """Audit SCL-2: an unpaged `list_users()` returns 50 accounts and stops."""
+    from domains.identity import IdentityService
+
+    size = IdentityService.USERS_PAGE_SIZE
+    pages = {1: [f"u{i}" for i in range(size)], 2: [f"v{i}" for i in range(size)], 3: ["w0"]}
+    client = MagicMock()
+    client.auth.admin.list_users.side_effect = lambda page, per_page: pages.get(page, [])
+
+    users = IdentityService.list_all_users(client)
+
+    assert len(users) == 2 * size + 1
+    assert [c.kwargs["page"] for c in client.auth.admin.list_users.call_args_list] == [1, 2, 3]

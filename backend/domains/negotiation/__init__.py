@@ -25,6 +25,8 @@ _EXPORTS = {
     "flush_due_digests": ("domains.negotiation.unread_digest", "flush_due_digests"),
     "UNREAD_DIGEST_SWEEP_SECONDS": ("domains.negotiation.unread_digest", "UNREAD_DIGEST_SWEEP_SECONDS"),
     "negotiation_router": ("domains.negotiation.routes", "router"),
+    # Shutdown lets in-flight agent turns finish (audit REL-5).
+    "drain_running_turns": ("domains.negotiation.routes", "drain_running_turns"),
     "admin_chats_router": ("domains.negotiation.admin_routes", "router"),
 }
 

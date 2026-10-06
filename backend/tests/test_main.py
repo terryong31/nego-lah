@@ -297,3 +297,53 @@ async def test_lifespan_can_disable_the_digest_worker_alone(monkeypatch):
         main.asyncio.create_task = orig_create_task
 
     assert _started_worker_names(mock_create_task) == {"_payment_cleanup_loop"}
+
+
+@pytest.mark.asyncio
+async def test_lifespan_sizes_the_default_executor():
+    """Audit REL-1: `asyncio.to_thread` ran on 5-6 threads on a small box."""
+    async with main.lifespan(main.app):
+        executor = asyncio.get_running_loop()._default_executor
+        assert executor._max_workers == main.ASYNCIO_EXECUTOR_THREADS >= 32
+
+
+@pytest.mark.asyncio
+async def test_lifespan_lets_in_flight_turns_finish(monkeypatch):
+    """Audit REL-5: a deploy's SIGTERM used to cut agent replies mid-sentence."""
+    from domains.negotiation import routes as chat_routes
+
+    finished = []
+
+    async def turn():
+        await asyncio.sleep(0.05)
+        finished.append(True)
+
+    async with main.lifespan(main.app):
+        t = asyncio.create_task(turn())
+        chat_routes._running_turns.add(t)
+        t.add_done_callback(chat_routes._running_turns.discard)
+    assert finished == [True]
+
+
+@pytest.mark.asyncio
+async def test_ready_reports_redis_and_notification_state():
+    """Audit OBS-1: `/health` is a constant, so nothing could see Redis fail."""
+    async with AsyncClient(transport=ASGITransport(app=main.app), base_url="http://test") as ac:
+        resp = await ac.get("/ready")
+    assert resp.status_code == 200
+    assert resp.json()["redis"] is True
+    assert "notifications_distributed" in resp.json()
+
+
+@pytest.mark.asyncio
+async def test_ready_is_503_when_redis_does_not_answer(monkeypatch):
+    from core.cache import redis_client
+
+    def down():
+        raise ConnectionError("redis down")
+
+    monkeypatch.setattr(redis_client, "ping", down)
+    async with AsyncClient(transport=ASGITransport(app=main.app), base_url="http://test") as ac:
+        resp = await ac.get("/ready")
+    assert resp.status_code == 503
+    assert resp.json()["redis"] is False

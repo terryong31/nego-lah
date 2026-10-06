@@ -22,7 +22,7 @@ from unittest.mock import MagicMock
 import pytest
 
 import domains.negotiation.admin_routes as admin_chats
-from conftest import make_supabase_result
+from conftest import inbox_from, make_supabase_result
 from domains.negotiation.memory import conversation_memory
 
 pytestmark = pytest.mark.asyncio
@@ -65,8 +65,12 @@ async def _get_chats(
     fake_supabase.auth.admin.list_users.return_value = [make_user("user-a", email="a@example.com")]
     monkeypatch.setattr(
         conversation_memory,
-        "get_all_histories",
-        MagicMock(return_value={"user-a": history or [{"role": "human", "content": "hi", "source": "human"}]}),
+        "get_inbox",
+        MagicMock(
+            return_value=inbox_from(
+                {"user-a": history or [{"role": "human", "content": "hi", "source": "human"}]}, messages or ()
+            )
+        ),
     )
     resp = await client.get("/admin/chats")
     assert resp.status_code == 200

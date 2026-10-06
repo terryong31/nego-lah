@@ -122,3 +122,39 @@ class TestDeployOrdering:
         assert "needs.build-backend.result == 'success'" in condition, (
             "always() defeats implicit success checks — build-backend must be asserted explicitly"
         )
+
+
+class TestHardening:
+    """Audit DEP-1 / DEP-2 / SUP-1."""
+
+    def test_the_default_token_is_read_only(self, workflow):
+        assert workflow["permissions"] == {"contents": "read"}
+
+    def test_third_party_actions_are_pinned_by_sha(self, jobs):
+        first_party = ("actions/", "docker/", "oven-sh/", "astral-sh/")
+        for name, job in jobs.items():
+            for step in job.get("steps", []):
+                uses = step.get("uses")
+                if not uses or uses.startswith(first_party):
+                    continue
+                ref = uses.split("@", 1)[1]
+                assert len(ref) == 40 and all(c in "0123456789abcdef" for c in ref), f"{name}: {uses}"
+
+    def test_backend_ci_runs_bandit(self, jobs):
+        assert any("bandit" in step.get("run", "") for step in jobs["backend-ci"]["steps"])
+
+    def test_frontend_lint_runs_a_real_vulnerability_audit(self, jobs):
+        runs = " ".join(step.get("run", "") for step in jobs["frontend-lint"]["steps"])
+        assert "scripts/audit.sh" in runs
+        script = (WORKFLOW.parent.parent.parent / "frontend" / "scripts" / "audit.sh").read_text()
+        assert "bun audit --audit-level=high" in script
+        assert "bun pm untrusted" not in runs
+
+    def test_the_deploy_pins_the_commit_sha_and_waits_for_health(self, jobs):
+        step = next(s for s in jobs["deploy-backend"]["steps"] if "restart on server" in s.get("name", ""))
+        assert step["env"]["IMAGE_TAG"] == "${{ github.sha }}"
+        script = step["with"]["script"]
+        assert 'env BACKEND_IMAGE_TAG="$IMAGE_TAG" docker compose up' in script
+        assert "Health.Status" in script
+        assert "rollback" in script
+        assert "docker compose restart caddy\n" not in script.replace("|| sudo docker compose restart caddy", "")

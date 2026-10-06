@@ -4,6 +4,14 @@
 # every request slows, not just the busy ones. The two sidecars get hard
 # ceilings (they're cheap and must stay cheap); the API gets the remaining
 # memory and is left CPU-uncapped so it can use whatever is genuinely spare.
+# Docker's json-file driver grows without bound by default; on a small
+# Lightsail disk that is an outage on a timer.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   caddy:
     image: caddy:2.7
@@ -18,12 +26,15 @@ services:
       - caddy_config:/config
     mem_limit: 128m
     cpus: 0.4
+    logging: *default-logging
     depends_on:
       - backend
 
   backend:
     # Image is built & pushed by CI; the server pulls it (never builds locally).
-    image: ghcr.io/terryong31/nego-lah-backend:latest
+    # CI pins BACKEND_IMAGE_TAG to the commit SHA; a rollback is
+    # `sudo env BACKEND_IMAGE_TAG=<previous sha> docker compose up -d backend`.
+    image: ghcr.io/terryong31/nego-lah-backend:${BACKEND_IMAGE_TAG:-latest}
     build: ./backend
     container_name: nego-lah-backend
     restart: always
@@ -49,6 +60,10 @@ services:
     # memory the sidecars don't and stays CPU-uncapped — a ceiling here would
     # idle capacity that nothing else is asking for.
     mem_limit: 1200m
+    # Shutdown waits up to SHUTDOWN_TURN_GRACE_SECONDS (20 s) for in-flight
+    # agent turns; Docker's default 10 s would SIGKILL them first.
+    stop_grace_period: 30s
+    logging: *default-logging
     depends_on:
       redis:
         condition: service_healthy
@@ -79,6 +94,7 @@ services:
     command: ["redis-server", "--maxmemory", "192mb", "--maxmemory-policy", "volatile-ttl"]
     mem_limit: 256m
     cpus: 0.4
+    logging: *default-logging
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s

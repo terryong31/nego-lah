@@ -1,6 +1,8 @@
 import os
 import sys
 
+import pytest
+
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from unittest.mock import MagicMock
@@ -275,6 +277,28 @@ def test_create_redis_client_falls_back_to_inmemory_on_exception(monkeypatch):
     assert isinstance(client, _InMemoryRedis)
 
 
+def test_create_redis_client_sets_socket_timeouts(monkeypatch):
+    """Audit REL-1: a stalled connection must not park a thread forever."""
+    from_url = MagicMock()
+    monkeypatch.setattr(cache, "REDIS_URL", "redis://fake-host:6379")
+    monkeypatch.setattr(cache.redis, "from_url", from_url)
+    cache._create_redis_client()
+    kwargs = from_url.call_args.kwargs
+    assert 0 < kwargs["socket_timeout"] <= 5
+    assert 0 < kwargs["socket_connect_timeout"] <= 5
+
+
+def test_create_redis_client_refuses_the_inmemory_fallback_in_production(monkeypatch):
+    """Per-worker sessions and CSRF tokens are worse than a restart."""
+    broken_client = MagicMock()
+    broken_client.ping.side_effect = Exception("connection refused")
+    monkeypatch.setattr(cache, "REDIS_URL", "redis://fake-host:6379")
+    monkeypatch.setattr(cache, "IS_PROD", True)
+    monkeypatch.setattr(cache.redis, "from_url", MagicMock(return_value=broken_client))
+    with pytest.raises(RuntimeError, match="Redis unavailable"):
+        cache._create_redis_client()
+
+
 def test_module_level_redis_client_is_inmemory_in_tests():
     # conftest.py forces VERCEL=1 and strips REDIS_URL, so this must always be
     # the in-memory fallback for the whole test suite.
@@ -474,6 +498,30 @@ def test_check_rate_limit_resets_after_window_expires(monkeypatch):
     assert cache.check_rate_limit(key, max_requests=2, window=30) is True
 
 
+def test_check_rate_limit_window_is_fixed_not_sliding(monkeypatch):
+    """Audit REL-2: re-arming EXPIRE on every allowed request meant the counter
+    only reset after a full window of silence, so a steady buyer under the limit
+    (one message every 7 s against 10/min) was throttled anyway."""
+    fake_now = [5000.0]
+    monkeypatch.setattr(cache.time, "time", lambda: fake_now[0])
+    results = []
+    for _ in range(14):
+        results.append(cache.check_rate_limit("rl-steady", max_requests=10, window=60))
+        fake_now[0] += 7
+    assert all(results)
+
+
+def test_check_rate_limit_runs_as_one_atomic_script(monkeypatch):
+    """GET-then-INCR let concurrent requests overshoot; the check is one Lua call."""
+    calls = []
+    real_eval = cache.redis_client.eval
+    monkeypatch.setattr(cache.redis_client, "eval", lambda *a: calls.append(a) or real_eval(*a))
+    monkeypatch.setattr(cache.redis_client, "get", lambda *a: pytest.fail("non-atomic GET"))
+    assert cache.check_rate_limit("rl-atomic", max_requests=1, window=60) is True
+    assert cache.check_rate_limit("rl-atomic", max_requests=1, window=60) is False
+    assert len(calls) == 2
+
+
 def test_get_rate_limit_remaining_when_uncached_returns_max():
     assert cache.get_rate_limit_remaining("rl-fresh", max_requests=10) == 10
 
@@ -490,7 +538,7 @@ def test_get_rate_limit_remaining_floors_at_zero_when_over_limit():
     key = "rl-over"
     for _ in range(3):
         cache.check_rate_limit(key, max_requests=3, window=60)
-    # one more attempt is blocked and does not increment the counter further
+    # one more attempt is blocked
     cache.check_rate_limit(key, max_requests=3, window=60)
     assert cache.get_rate_limit_remaining(key, max_requests=3) == 0
 

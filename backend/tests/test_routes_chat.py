@@ -133,7 +133,8 @@ async def test_get_chat_history_exception_returns_500(client, auth_user, monkeyp
     resp = await client.get("/chat/history/user-1")
 
     assert resp.status_code == 500
-    assert "db exploded" in resp.json()["detail"]
+    # Audit SEC-6: the exception text stays in the logs, not the response.
+    assert resp.json()["detail"] == "Failed to load chat history"
 
 
 # ---------------------------------------------------------------------------
@@ -176,7 +177,7 @@ async def test_clear_chat_history_exception_returns_500(client, auth_user, monke
     resp = await client.delete("/chat/history/user-1")
 
     assert resp.status_code == 500
-    assert "cannot delete" in resp.json()["detail"]
+    assert resp.json()["detail"] == "Failed to clear chat history"
 
 
 # ---------------------------------------------------------------------------

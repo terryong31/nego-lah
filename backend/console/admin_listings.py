@@ -171,4 +171,4 @@ def get_market_valuation(request: MarketValuationRequest):
         return market_data
     except Exception as e:
         logger.error(f"Market valuation failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Market valuation failed") from e

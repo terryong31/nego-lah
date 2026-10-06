@@ -5,6 +5,14 @@ import sys
 import sentry_sdk
 from pythonjsonlogger import jsonlogger
 
+from core.env import (
+    ADMIN_COOKIE_NAME,
+    CSRF_COOKIE_NAME,
+    USER_COOKIE_NAME,
+    USER_CSRF_COOKIE_NAME,
+    USER_PKCE_COOKIE_NAME,
+)
+
 
 def get_logger(name: str = "nego_lah") -> logging.Logger:
     logger = logging.getLogger(name)
@@ -23,6 +31,31 @@ def get_logger(name: str = "nego_lah") -> logging.Logger:
 
 logger = get_logger("nego_lah")
 
+# Cookies that are credentials. `send_default_pii` makes the FastAPI integration
+# attach `request.cookies` to every event, and Sentry's scrubber only redacts
+# exact denylist names — none of ours — so a live `admin_sid` was readable by
+# anyone with access to the Sentry project (audit SEC-1).
+SENSITIVE_COOKIES = (
+    ADMIN_COOKIE_NAME,
+    USER_COOKIE_NAME,
+    USER_PKCE_COOKIE_NAME,
+    USER_CSRF_COOKIE_NAME,
+    CSRF_COOKIE_NAME,
+)
+
+
+def scrub_event(event, _hint=None):
+    """`before_send`: drop cookies outright — no event needs them to be debugged."""
+    request = event.get("request")
+    if isinstance(request, dict):
+        request.pop("cookies", None)
+        headers = request.get("headers")
+        if isinstance(headers, dict):
+            for name in list(headers):
+                if name.lower() in ("cookie", "authorization", "x-csrf-token"):
+                    headers[name] = "[Filtered]"
+    return event
+
 
 def init_sentry(is_prod: bool = False):
     """
@@ -38,11 +71,11 @@ def init_sentry(is_prod: bool = False):
     if not sentry_dsn:
         raise RuntimeError("SENTRY_DSN environment variable is strictly required in production mode.")
 
-    from sentry_sdk.integrations.asyncpg import AsyncPGIntegration
     from sentry_sdk.integrations.fastapi import FastApiIntegration
     from sentry_sdk.integrations.httpx import HttpxIntegration
     from sentry_sdk.integrations.logging import LoggingIntegration
     from sentry_sdk.integrations.redis import RedisIntegration
+    from sentry_sdk.scrubber import DEFAULT_DENYLIST, EventScrubber
 
     sentry_sdk.init(
         dsn=sentry_dsn,
@@ -50,6 +83,9 @@ def init_sentry(is_prod: bool = False):
         release=os.environ.get("SENTRY_RELEASE", "latest"),
         auto_session_tracking=True,
         send_default_pii=True,
+        before_send=scrub_event,
+        before_send_transaction=scrub_event,
+        event_scrubber=EventScrubber(denylist=DEFAULT_DENYLIST + list(SENSITIVE_COOKIES)),
         # 1. Logs (Pipes structured logs to Sentry Logs)
         enable_logs=True,
         # 2. Metrics (Custom & runtime metrics)
@@ -72,7 +108,6 @@ def init_sentry(is_prod: bool = False):
         # 5. Integrations (Deep instrumentation)
         integrations=[
             FastApiIntegration(transaction_style="endpoint"),
-            AsyncPGIntegration(),
             RedisIntegration(),
             HttpxIntegration(),
             LoggingIntegration(

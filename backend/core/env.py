@@ -37,9 +37,21 @@ if not REDIS_URL:
 
 # Upper bound on the shared Redis connection pool, per worker process. Left
 # unbounded, a burst of concurrent requests can open connections without limit;
-# the ceiling here is sized for the ~32-thread pool `asyncio.to_thread` uses
-# plus headroom, so it caps the blast radius without throttling normal traffic.
+# the ceiling here is sized for the 32-thread default executor `main.py`
+# installs (`ASYNCIO_EXECUTOR_THREADS`) plus headroom.
 REDIS_MAX_CONNECTIONS = int(os.getenv("REDIS_MAX_CONNECTIONS", "50"))
+
+# Every request makes synchronous Redis round trips (rate limit, session, ban
+# check). Without a socket timeout a network stall parks the calling thread
+# forever, and with it, eventually, the whole worker (audit REL-1).
+REDIS_SOCKET_TIMEOUT = float(os.getenv("REDIS_SOCKET_TIMEOUT", "2"))
+
+# The loop's default executor is what `asyncio.to_thread` runs on. Python sizes
+# it at min(32, cpu_count + 4) — five or six threads on a Lightsail box — which
+# one slow dependency can exhaust. Sized explicitly in the lifespan.
+ASYNCIO_EXECUTOR_THREADS = int(os.getenv("ASYNCIO_EXECUTOR_THREADS", "32"))
+
+IS_PROD = (os.getenv("ENV") or "development").lower() in ("production", "prod")
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 STRIPE_API_KEY = os.getenv("STRIPE_API_KEY")

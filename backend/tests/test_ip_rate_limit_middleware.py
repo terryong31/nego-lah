@@ -150,3 +150,19 @@ async def test_streaming_response_is_not_buffered():
         content = "".join(chunks)
         assert "data: chunk1" in content
         assert "data: chunk2" in content
+
+
+@pytest.mark.asyncio
+async def test_a_redis_failure_fails_open_rather_than_500ing_every_route(monkeypatch):
+    """Audit REL-1: the limiter had no `try`, so a Redis outage took the storefront down."""
+    import core.rate_limit_middleware as middleware
+
+    def broken(*_a, **_k):
+        raise ConnectionError("redis down")
+
+    monkeypatch.setattr(middleware, "check_ip_rate_limit", broken)
+    app, _ = create_test_app()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.get("/items")
+        assert res.status_code == 200

@@ -19,10 +19,10 @@ import os
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
 
 from core import bus
-from core.cache import check_rate_limit, invalidate_token
+from core.cache import cache_ban_status, check_rate_limit, invalidate_token
 from core.connector import admin_supabase, new_user_client
 from core.csrf import verify_user_csrf_token
 from core.env import API_BASE_URL, STORAGE_BUCKET
@@ -37,6 +37,7 @@ from core.schemas import (
 from core.uploads import MAX_AVATAR_IMAGE_BYTES
 from domains.identity.auth_middleware import get_user_id_from_body_or_token, verify_user_token
 from domains.identity.services import IdentityService
+from domains.identity.user_session import clear_session_cookies
 
 SUPPORTED_LANGUAGES = {"en", "ms", "zh"}
 
@@ -319,9 +320,31 @@ async def update_profile(
     }
 
 
+# Long enough to outlive any access token the deleted user still holds (1 h,
+# plus refresh skew); by then every other device's refresh has failed and its
+# session is revoked.
+_DELETED_ACCOUNT_BLOCK_SECONDS = 2 * 3600
+
+
+def _purge_avatars(user_id: str) -> None:
+    """Best-effort: uploaded avatars sit in a public bucket and are usually a face."""
+    try:
+        bucket = admin_supabase.storage.from_(STORAGE_BUCKET)
+        prefix = f"avatars/{user_id}"
+        names = [f"{prefix}/{obj['name']}" for obj in (bucket.list(prefix) or []) if obj.get("name")]
+        if names:
+            bucket.remove(names)
+    except Exception as e:
+        logger.warning(f"Avatar cleanup failed for deleted user {user_id}: {e}")
+
+
 @router.delete("/{user_id}", dependencies=[Depends(verify_user_csrf_token)])
 def delete_account(
-    user_id: str, payload: AccountDeleteSchema, request: Request, token_user_id: str = Depends(verify_user_token)
+    user_id: str,
+    payload: AccountDeleteSchema,
+    request: Request,
+    response: Response,
+    token_user_id: str = Depends(verify_user_token),
 ):
     """
     Permanently delete the authenticated user's account.
@@ -349,6 +372,14 @@ def delete_account(
     except Exception as e:
         logger.error(f"Error deleting auth user {user_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to delete account") from e
+
+    # Audit PRV-3: end the session that made this request, and block the user
+    # id everywhere else — a session on another device kept resolving until its
+    # next token refresh failed, and could still write rows for a user that no
+    # longer exists.
+    clear_session_cookies(request, response)
+    cache_ban_status(user_id, True, ttl=_DELETED_ACCOUNT_BLOCK_SECONDS)
+    _purge_avatars(user_id)
 
     # Invalidate the cached token so the deleted session can't be reused
     auth_header = request.headers.get("Authorization", "")

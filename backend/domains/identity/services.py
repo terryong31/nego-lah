@@ -62,11 +62,28 @@ class IdentityService:
         except Exception as e:
             logger.warning(f"Could not clean up user_profiles for {user_id}: {e}")
 
+    # GoTrue's admin endpoint returns 50 users per page unless told otherwise,
+    # so an unpaged `list_users()` silently stopped at 50 accounts (audit SCL-2).
+    USERS_PAGE_SIZE = 1000
+
+    @staticmethod
+    def list_all_users(supabase_client: Any = None) -> list:
+        """Every auth user, across as many pages as it takes."""
+        client = supabase_client or admin_supabase
+        users: list = []
+        page = 1
+        while True:
+            batch = list(client.auth.admin.list_users(page=page, per_page=IdentityService.USERS_PAGE_SIZE) or [])
+            users.extend(batch)
+            if len(batch) < IdentityService.USERS_PAGE_SIZE:
+                return users
+            page += 1
+
     @staticmethod
     def count_users() -> int:
         """Registered accounts, for the admin summary."""
         try:
-            return len(admin_supabase.auth.admin.list_users())
+            return len(IdentityService.list_all_users())
         except Exception as e:
             logger.error(f"summary: list_users failed: {e}")
             return 0

@@ -51,6 +51,12 @@ except Exception as e:  # pragma: no cover - only on a broken install
 MAX_ITEM_EDGE = 2048
 MAX_AVATAR_EDGE = 512
 
+# Decoded-pixel ceiling, checked from the header BEFORE anything is decoded. The
+# byte cap alone is no defence: a 12,000 x 12,000 single-colour PNG is ~450 KB
+# on the wire and ~1.2 GB in memory, which OOM-kills the container (audit
+# AVL-1). 50 MP clears a 48 MP phone sensor (8064 x 6048) with room to spare.
+MAX_IMAGE_PIXELS = 50_000_000
+
 JPEG_QUALITY = 82
 WEBP_QUALITY = 82
 
@@ -92,6 +98,12 @@ def normalize_image(
     try:
         with Image.open(io.BytesIO(data)) as src:
             source_format = (src.format or "").upper()
+            if src.width * src.height > MAX_IMAGE_PIXELS:
+                raise HTTPException(status_code=400, detail="That image is too large.")
+            # JPEG can decode straight at a fraction of full size; this is
+            # what keeps a large phone photo from costing its full bitmap.
+            if source_format == "JPEG":
+                src.draft("RGB", (max_edge, max_edge))
             # `exif_transpose` reads the orientation tag and rotates the pixels,
             # which is what makes the result correct in renderers that ignore
             # EXIF — and, since we then drop EXIF, in the ones that don't.

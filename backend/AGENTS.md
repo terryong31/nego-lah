@@ -11,9 +11,9 @@ The backend is organized into explicit bounded domains to preserve clean separat
 ```
 backend/
 ├── core/                                # Shared infrastructure & cross-cutting utilities
-│   ├── config.py                        # Pydantic Settings (Infisical / env loaded)
-│   ├── database.py                      # Supabase client singletons (user & admin)
-│   ├── cache.py                         # Redis connection, token tracking, sliding rate limiter
+│   ├── env.py                           # Environment settings (Infisical / env loaded)
+│   ├── connector.py                     # Supabase client singletons (user & admin)
+│   ├── cache.py                         # Redis connection, token tracking, fixed-window rate limiter
 │   ├── security.py                      # JWT verification, CSRF, Turnstile token validation
 │   └── telemetry.py                     # Sentry initialization & structured logger
 │

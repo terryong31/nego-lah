@@ -1,0 +1,24 @@
+name: Uptime
+
+# A free uptime monitor (audit OBS-1/OBS-2). Every 10 minutes it checks that
+# the storefront serves and that the API is READY — `/ready` pings Redis, which
+# `/health` does not. A failed run is the alert: GitHub emails whoever last
+# edited this schedule. Scheduled runs only fire on the default branch.
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Storefront serves
+        run: curl -fsS --retry 2 --retry-delay 10 --max-time 20 -o /dev/null https://negolah.my/
+
+      - name: API is ready
+        run: curl -fsS --retry 2 --retry-delay 10 --max-time 20 https://api.negolah.my/ready

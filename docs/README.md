@@ -23,8 +23,8 @@ Welcome to the **Nego-Lah** engineering documentation hub. This documentation is
                            │
   • Architecture (SPEC-000)│   • OpenAPI 3.1 Specification
   • Monorepo Structure     │   • Database Models & RLS
-  • ADRs (ADR-0001..0024)  │   • Background Worker Loops
-  • Security Standards     │   • LeanSpecs (SPEC-001..071)
+  • ADRs (ADR-0001..0031)  │   • Background Worker Loops
+  • Security Standards     │   • LeanSpecs (SPEC-001..101)
                            │
                       THEORETICAL
 ```
@@ -35,7 +35,7 @@ Welcome to the **Nego-Lah** engineering documentation hub. This documentation is
 
 ### 📘 [Architecture](./architecture/README.md) *(Explanation)*
 - [System Architecture Specification (SPEC-000)](./architecture/SPEC-000-system-architecture.md) — Hybrid edge/cloud dual-LLM load balancer, LangGraph negotiation engine, and edge SPA design.
-- [Architecture Decision Records (ADRs)](./adr/README.md) — Chronological log of major architectural decisions (ADR-0001 through ADR-0024).
+- [Architecture Decision Records (ADRs)](./adr/README.md) — Chronological log of major architectural decisions (ADR-0001 through ADR-0031).
 
 ### 📄 [API Reference & OpenAPI](./api/README.md) *(Reference)*
 - Complete RESTful and SSE endpoint documentation.
@@ -68,5 +68,8 @@ Welcome to the **Nego-Lah** engineering documentation hub. This documentation is
 - Real vulnerabilities and anti-patterns catalogued during security audits.
 - CSRF protection, fail-closed query scoping, and PII redaction rules.
 
+### 🔍 [Audits](./audits/2026-10-06-non-functional-audit.md) *(Reference)*
+- 2026-10-06 non-functional audit: security, privacy, reliability, performance, scalability, cost, observability, DR, supply chain, accessibility and SEO, with a prioritised remediation roadmap.
+
 ### 📋 [LeanSpecs](./specs/README.md) *(Reference & Specification)*
-- All 71+ Spec-Driven Development (SDD) feature contracts (<2k tokens each) driving test-driven implementation.
+- All 100+ Spec-Driven Development (SDD) feature contracts (<2k tokens each) driving test-driven implementation.

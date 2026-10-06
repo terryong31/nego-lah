@@ -1,7 +1,7 @@
-# ADR 0018: Pre-Launch Security Remediation — Trust Boundaries an Audit Found Open
+# ADR-0018: Pre-Launch Security Remediation — Trust Boundaries an Audit Found Open
 
-## Status
-Accepted
+- Status: Accepted
+- Date: 2026-09-10
 
 ## Context
 

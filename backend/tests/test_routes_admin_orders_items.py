@@ -674,7 +674,7 @@ async def test_market_valuation_exception_returns_500(client, admin_user, monkey
     response = await client.post("/admin/market-valuation", json={"query": "Broken Thing"})
 
     assert response.status_code == 500
-    assert response.json()["detail"] == "scraper down"
+    assert response.json()["detail"] == "Market valuation failed"
 
 
 async def test_market_valuation_missing_query_422(client, admin_user):
@@ -693,31 +693,26 @@ async def test_market_valuation_missing_query_422(client, admin_user):
 async def test_admin_summary_success(client, admin_user, admin_supabase):
     admin_user()
     admin_supabase.auth.admin.list_users.return_value = [SimpleNamespace(id="u1"), SimpleNamespace(id="u2")]
-    admin_supabase.table.return_value.select.return_value.is_.return_value.execute.return_value = make_supabase_result(
+    # Audit SCL-2: every aggregate pages with `.range()` so the 1,000-row cap
+    # cannot truncate it.
+    items = admin_supabase.table.return_value.select.return_value.is_.return_value.order.return_value
+    items.range.return_value.execute.return_value = make_supabase_result(
         [{"status": "available"}, {"status": "sold"}, {"status": "available"}]
     )
-    admin_supabase.table.return_value.select.return_value.execute.side_effect = [
-        make_supabase_result(
-            [
-                {"status": "confirmed", "amount": 100},
-                {"status": "pending_info", "amount": 50},
-                {"status": "shipped", "amount": 25},
-                {"status": "delivered", "amount": 10},
-            ]
-        ),
-        # SPEC-043: history is one row per message, so the conversation count
-        # is distinct authors — five messages from three people is three
-        # conversations, the same number the old one-row-per-user table gave.
-        make_supabase_result(
-            [
-                {"user_id": "c1"},
-                {"user_id": "c2"},
-                {"user_id": "c1"},
-                {"user_id": "c3"},
-                {"user_id": "c2"},
-            ]
-        ),
-    ]
+    orders = admin_supabase.table.return_value.select.return_value.order.return_value
+    orders.range.return_value.execute.return_value = make_supabase_result(
+        [
+            {"status": "confirmed", "amount": 100},
+            {"status": "pending_info", "amount": 50},
+            {"status": "shipped", "amount": 25},
+            {"status": "delivered", "amount": 10},
+        ]
+    )
+    # Conversations come from the inbox function: one row per buyer.
+    inbox = admin_supabase.rpc.return_value.order.return_value
+    inbox.range.return_value.execute.return_value = make_supabase_result(
+        [{"user_id": "c1"}, {"user_id": "c2"}, {"user_id": "c3"}]
+    )
 
     response = await client.get("/admin/summary")
 

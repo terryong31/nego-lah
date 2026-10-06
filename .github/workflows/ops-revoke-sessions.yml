@@ -1,0 +1,54 @@
+name: Ops — revoke all sessions
+
+# Manual only. Signs every buyer and admin out by deleting the server-side
+# session records in production Redis (backend/scripts/revoke_all_sessions.py).
+# Run after any event that may have disclosed session ids — first used for the
+# 2026-10-06 audit (SEC-1), once the cookie-scrubbing fix was live.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "revoke" to sign everyone out'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  revoke:
+    name: Revoke every user and admin session
+    if: github.event.inputs.confirm == 'revoke'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+          enable-cache: true
+          cache-dependency-glob: "backend/uv.lock"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          cd backend
+          uv sync --frozen
+
+      - name: Install Infisical CLI
+        run: |
+          curl -1sLf 'https://artifacts-cli.infisical.com/setup.deb.sh' | sudo -E bash
+          sudo apt-get update && sudo apt-get install -y infisical
+
+      - name: Revoke sessions
+        env:
+          INFISICAL_TOKEN: ${{ secrets.INFISICAL_TOKEN }}
+        run: |
+          cd backend
+          infisical run --env=prod --path=/Backend -- uv run python scripts/revoke_all_sessions.py --yes

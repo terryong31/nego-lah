@@ -2,9 +2,10 @@
 
 Two distinct defects, both on the hot path of every request:
 
-1. **No applied rate limits.** `slowapi` is constructed in `limiter.py` and
+1. **No applied rate limits.** `slowapi` was constructed in `limiter.py` and
    registered on the app in `main.py`, but `@limiter.limit(...)` decorated
-   zero routes — so the whole thing was inert. Nothing shed load before
+   zero routes — so the whole thing was inert. (SPEC-077 replaced it with
+   `IPRateLimitMiddleware`; the dead Limiter was removed by the 2026-10 audit.) Nothing shed load before
    saturation, which turns an overload into rising latency instead of a clean
    429.
 2. **Synchronous Redis on the event loop.** SPEC-023 moved the *Supabase* half
@@ -27,9 +28,6 @@ import time
 from unittest.mock import MagicMock
 
 import pytest
-from fastapi import FastAPI, Request
-from httpx import ASGITransport, AsyncClient
-from slowapi.errors import RateLimitExceeded
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -234,39 +232,6 @@ def test_hot_endpoints_have_a_rate_limit_applied(path, expected_bucket):
     bucket, limit = resolve_route_limit(path)
     assert bucket == expected_bucket
     assert limit is not None
-
-
-@pytest.mark.asyncio
-async def test_the_shared_limiter_actually_rejects_over_its_limit():
-    """Proves enforcement end-to-end against the app's own limiter instance,
-    without firing a production-sized number of requests at a real route."""
-    from slowapi import _rate_limit_exceeded_handler
-
-    from core.limiter import limiter
-
-    probe = FastAPI()
-    probe.state.limiter = limiter
-    probe.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-
-    @probe.get("/probe")
-    @limiter.limit("2/minute")
-    async def _probe(request: Request):  # noqa: ARG001 — slowapi requires the param
-        return {"ok": True}
-
-    was_enabled = limiter.enabled
-    limiter.enabled = True
-    try:
-        async with AsyncClient(transport=ASGITransport(app=probe), base_url="http://test") as ac:
-            first = await ac.get("/probe")
-            second = await ac.get("/probe")
-            third = await ac.get("/probe")
-    finally:
-        limiter.enabled = was_enabled
-        limiter.reset()
-
-    assert first.status_code == 200
-    assert second.status_code == 200
-    assert third.status_code == 429
 
 
 @pytest.mark.asyncio

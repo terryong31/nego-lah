@@ -1,7 +1,7 @@
-# ADR 0019: Seller-Reported Shipment Tracking
+# ADR-0019: Seller-Reported Shipment Tracking
 
-## Status
-Accepted
+- Status: Accepted
+- Date: 2026-09-10
 
 ## Context
 

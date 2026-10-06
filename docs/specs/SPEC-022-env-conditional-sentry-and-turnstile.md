@@ -1,7 +1,7 @@
 ---
 id: SPEC-022
 title: Environment-Conditional Sentry Telemetry and Cloudflare Turnstile Verification
-status: completed
+status: complete
 priority: high
 created: 2026-09-05
 tags: [frontend, backend, sentry, turnstile, security, telemetry, sentry-cli]

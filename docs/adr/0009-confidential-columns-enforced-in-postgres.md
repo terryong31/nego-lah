@@ -1,4 +1,4 @@
-# 9. Seller-Confidential Columns Enforced in Postgres, Not Just in the API
+# ADR-0009: Seller-Confidential Columns Enforced in Postgres, Not Just in the API
 
 - Status: Accepted
 - Date: 2026-09-06

@@ -1,7 +1,7 @@
-# ADR 0021: Agent Turns Outlive the HTTP Response That Requested Them
+# ADR-0021: Agent Turns Outlive the HTTP Response That Requested Them
 
-## Status
-Accepted
+- Status: Accepted
+- Date: 2026-09-10
 
 ## Context
 

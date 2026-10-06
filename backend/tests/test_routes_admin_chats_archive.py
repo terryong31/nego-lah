@@ -18,7 +18,7 @@ from unittest.mock import MagicMock
 import pytest
 
 import domains.negotiation.admin_routes as admin_chats
-from conftest import make_supabase_result
+from conftest import inbox_from, make_supabase_result
 from domains.negotiation.memory import conversation_memory
 
 pytestmark = pytest.mark.asyncio
@@ -176,12 +176,15 @@ async def _list_chats(
     ]
     monkeypatch.setattr(
         conversation_memory,
-        "get_all_histories",
+        "get_inbox",
         MagicMock(
-            return_value={
-                "user-a": [{"role": "human", "content": "hi", "source": "human"}],
-                "user-b": [{"role": "human", "content": "yo", "source": "human"}],
-            }
+            return_value=inbox_from(
+                {
+                    "user-a": [{"role": "human", "content": "hi", "source": "human"}],
+                    "user-b": [{"role": "human", "content": "yo", "source": "human"}],
+                },
+                (),
+            )
         ),
     )
     resp = await client.get(f"/admin/chats{query}")
@@ -241,3 +244,18 @@ async def test_chat_rows_carry_what_the_info_panel_shows(
     assert row["email"] == "alice@example.com"
     assert row["created_at"] == "2025-03-04T05:06:07Z"
     assert row["is_banned"] is True
+
+
+async def test_an_inbox_failure_is_reported_not_shown_as_empty(
+    client, admin_user, fake_supabase, patch_supabase, monkeypatch
+):
+    """An empty inbox reads as "nobody is waiting" — the one wrong answer here."""
+    admin_user()
+    patch_supabase("core.connector", admin=fake_supabase)
+    fake_supabase.table.side_effect = _chats_tables()
+    fake_supabase.auth.admin.list_users.return_value = []
+    monkeypatch.setattr(conversation_memory, "get_inbox", MagicMock(side_effect=RuntimeError("rpc missing")))
+
+    resp = await client.get("/admin/chats")
+
+    assert resp.status_code == 503

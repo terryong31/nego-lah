@@ -1,4 +1,4 @@
-# Nego-Lah! 
+# Nego-Lah
 
 > **Autonomous second-hand marketplace with real-time AI price negotiations. Can nego until happy, settle the deal on the spot!**
 
@@ -20,7 +20,7 @@ Here is how Nego-Lah settles the deal:
 
 1. **Auto-Nego with Floor Price Protection:** Buyers can bargain token-by-token in real-time. The AI agent speaks fluent English, Malay, and Mandarin. It knows how to make reasonable concessions, but will *never* leak or breach your secret floor price.
 2. **Instant Checkout Inside Chat:** Once a price is agreed upon, the AI generates a Stripe payment link directly in the chat bubble. Atomic claim-at-payment with auto-refund protection: zero double-selling, zero joybidders!
-3. **Human Takeover (HITL) Anytime:** If a buyer wants Cash on Delivery (COD) or has special requests, the seller can seamlessly jump into the conversation from the admin console.
+3. **Human Takeover (HITL) Anytime:** If a buyer wants Cash on Delivery (COD) or has special requests, the agent hands the chat to the seller, who replies from the admin console while the AI stays switched off.
 
 No drama, no lowballer fatigue, everything settles automatically!
 
@@ -29,9 +29,9 @@ No drama, no lowballer fatigue, everything settles automatically!
 ## Tech Stack Overview
 
 - **Frontend:** Nuxt 4 Single Page Application (`ssr: false`), Nuxt UI, TailwindCSS v4, deployed to Cloudflare Pages edge.
-- **Backend:** FastAPI Modular Monolith deployed on an AWS Lightsail instance (2 GB RAM) with Redis 7.
+- **Backend:** FastAPI modular monolith on an AWS Lightsail instance (2 GB RAM), with managed Redis (Upstash).
 - **AI Brain:** Hybrid Edge/Cloud LLM: self-hosted `Qwen3.6-35B-A3B` on local Apple Silicon M5 hardware via Cloudflare Tunnel, with automatic overflow to Google Gemini (`gemini-3.8-flash`).
-- **Database & Storage:** Supabase PostgreSQL with strict column-level security and Supabase Storage CDN.
+- **Database & Storage:** Supabase PostgreSQL with column-level security, Supabase Storage for images, Cloudflare R2 for video.
 
 ---
 
@@ -53,25 +53,22 @@ mise run test
 ```
 
 Need to run services one by one? Easy:
+
 - `mise run dev:backend`: Backend only
 - `mise run dev:frontend`: Frontend only
 - `mise run lint`: Ruff + ESLint checks
 
 ---
 
-## Documentation & Deep Dive
+## Documentation
 
-Want to dig deeper? All engineering documentation is neatly organized inside [`docs/`](docs/README.md):
+Engineering docs live in [`docs/`](docs/README.md), which starts with a "which page do I need" table.
 
-- **[System Architecture](docs/architecture/README.md):** Detailed design and agent graphs ([SPEC-000](docs/architecture/SPEC-000-system-architecture.md)).
-- **[Monorepo Structure](docs/repo/README.md):** Directory layout, workspace configs, and domain isolation rules.
-- **[CI/CD & Deployment](docs/ci-cd/README.md):** Path-filtered GitHub Actions pipelines and edge deployment.
-- **[Background Workers](docs/workers/README.md):** In-process lifespan workers and cleanup loops.
-- **[Data & Database Models](docs/data/README.md):** Database schemas, migrations, and column security.
-- **[API Reference](docs/api/README.md):** Endpoints and machine-readable [OpenAPI 3.1 schema](docs/api/openapi.json).
-- **[Security Anti-Patterns](docs/security/ANTI_PATTERNS.md):** Audited vulnerabilities and safe coding standards.
-
-Looking for ADRs or specs? We keep all Architectural Decision Records in [`docs/adr/`](docs/adr/README.md) and all LeanSpecs in [`docs/specs/`](docs/specs/README.md).
+- **[Architecture](docs/architecture/README.md)** and **[Agent architecture](docs/architecture/agent.md)**: components, domain layering, model routing, and the pricing rules the server enforces.
+- **[Data model](docs/data/README.md)**: tables, ownership, confidential columns.
+- **[API reference](docs/api/README.md)**: cookie auth, route groups, and the generated [OpenAPI 3.1 spec](docs/api/openapi.json).
+- **[Getting started](docs/tutorials/getting-started.md)** and **[how-to guides](docs/how-to/README.md)**: run it and haggle once; then migrations, deploys and roll back.
+- **[ADRs](docs/adr/README.md)** and **[specs](docs/specs/README.md)**: why each decision was made, and the contract for each change.
 
 ---
 
@@ -80,4 +77,3 @@ Looking for ADRs or specs? We keep all Architectural Decision Records in [`docs/
 All rights reserved. See [LICENSE](LICENSE).
 
 [Terry Ong](https://github.com/terryong31) © 2026
-

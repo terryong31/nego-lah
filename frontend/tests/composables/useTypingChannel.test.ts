@@ -39,7 +39,11 @@ vi.mock('../../app/composables/useNotifications', () => ({
 
 mockNuxtImport('getCsrfToken', () => () => 'admin-csrf')
 
-const fetchMock = vi.fn()
+// Nuxt 4.5 made `$fetch` an auto-import (from `#build/fetch.mjs`), so it is
+// mocked like any other import; stubbing the global no longer reaches it.
+mockNuxtImport('$fetch', () => fetchMock)
+
+const { fetchMock } = vi.hoisted(() => ({ fetchMock: vi.fn() }))
 const streams: FakeEventSource[] = []
 
 class FakeEventSource {
@@ -87,7 +91,6 @@ describe('composables/useTypingChannel', () => {
     streams.length = 0
     onChatStreamEventMock.mockClear()
     fetchMock.mockReset().mockResolvedValue({})
-    ;(globalThis as unknown as Record<string, unknown>).$fetch = fetchMock
     ;(window as unknown as Record<string, unknown>).EventSource = FakeEventSource
     document.cookie = 'nl_csrf=buyer-csrf'
   })

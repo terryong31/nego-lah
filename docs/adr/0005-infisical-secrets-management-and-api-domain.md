@@ -1,4 +1,4 @@
-# 5. Multi-Folder Infisical Secrets, Dedicated API Domain, and Google Analytics
+# ADR-0005: Multi-Folder Infisical Secrets, Dedicated API Domain, and Google Analytics
 
 - Status: Accepted
 - Date: 2026-09-04

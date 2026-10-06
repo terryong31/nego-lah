@@ -1,7 +1,7 @@
 ---
 id: SPEC-045
 title: Cloudflare R2 Media CDN for the Demo Video
-status: in-progress
+status: complete
 priority: high
 created: 2026-09-08
 tags: [frontend, infra, cdn, storage, performance]
@@ -31,29 +31,35 @@ Objectives:
 
 # Acceptance Criteria
 
-- [ ] `ProductVideoShowcase.vue` resolves its video URL from
+> **Closed 2026-10-07.** The R2 delivery path is live: `https://media.negolah.my/videos/intro.mp4`
+> returns `video/mp4`, `cache-control: public, max-age=31536000, immutable`, and `206` on a range
+> request; `frontend/public/videos/` is git-ignored; the CSP and service-worker bypass hold. The
+> `ProductVideoShowcase` criteria and their scenarios were superseded when SPEC-100 replaced the
+> walkthrough with `IntroVideo.vue`, which resolves `mediaCdnUrl` the same way.
+
+- *(Superseded by SPEC-100.)* `ProductVideoShowcase.vue` resolves its video URL from
       `runtimeConfig.public.mediaCdnUrl` (default `https://media.negolah.my`),
       pattern `${mediaCdnUrl}/videos/negotiation-demo.mp4`. An explicit `src` prop
       still wins.
-- [ ] The `<video>` sets `preload="none"` and attaches **no** `src` / `<source>`
+- *(Superseded by SPEC-100.)* The `<video>` sets `preload="none"` and attaches **no** `src` / `<source>`
       until the container first intersects the viewport (or `IntersectionObserver`
       is unavailable, or an explicit `src` prop is passed).
-- [ ] Re-encoded asset: H.264 High, ≤ 720p, 30 fps, **no audio track**, `moov`
+- *(Superseded by SPEC-100.)* Re-encoded asset: H.264 High, ≤ 720p, 30 fps, **no audio track**, `moov`
       atom relocated ahead of `mdat` (FastStart), target < 3 MB.
-- [ ] R2 bucket `nego-lah-media`; objects uploaded with
+- [x] R2 bucket `nego-lah-media`; objects uploaded with
       `content-type: video/mp4` and `cache-control: public, max-age=31536000, immutable`.
-- [ ] `media.negolah.my` bound to the bucket as a public custom domain on the
+- [x] `media.negolah.my` bound to the bucket as a public custom domain on the
       `negolah.my` Cloudflare zone.
-- [ ] `backend/scripts/sync_cdn_assets.py` no longer references the video (branding
+- [x] `backend/scripts/sync_cdn_assets.py` no longer references the video (branding
       logo + mark stay on Supabase — they are embedded in transactional email).
-- [ ] `frontend/scripts/sync-media-r2.mjs` uploads every file in the media release
+- [x] `frontend/scripts/sync-media-r2.mjs` uploads every file in the media release
       dir (`~/Desktop/nego-lah-media/dist/`, `masters/` ignored) to
       `r2://nego-lah-media/videos/`, run via `mise run media:sync`.
-- [ ] `frontend/public/videos/` is deleted and git-ignored; the master copy lives
+- [x] `frontend/public/videos/` is deleted and git-ignored; the master copy lives
       outside the repo (`~/Desktop/nego-lah-media/masters/`).
-- [ ] The service-worker media bypass (SPEC-030) still holds: no Workbox route
+- [x] The service-worker media bypass (SPEC-030) still holds: no Workbox route
       matches `media.negolah.my/...*.mp4`.
-- [ ] CSP already permits it (`media-src 'self' https: blob:`); no change required.
+- [x] CSP already permits it (`media-src 'self' https: blob:`); no change required.
 
 # Technical Design & Contracts
 
@@ -98,18 +104,18 @@ deploy) — not Infisical `/Frontend`.
 
 # Test-Driven Development (TDD) Scenarios
 
-- [ ] **Scenario 1:** With no `src` prop and the section off-screen, the rendered
+- *(Superseded by SPEC-100.)* **Scenario 1:** With no `src` prop and the section off-screen, the rendered
       `<video>` has `preload="none"` and contains no `<source>` and no `src`.
-- [ ] **Scenario 2:** After the mocked `IntersectionObserver` reports
+- *(Superseded by SPEC-100.)* **Scenario 2:** After the mocked `IntersectionObserver` reports
       `isIntersecting: true`, a `<source>` appears with
       `https://media.negolah.my/videos/negotiation-demo.mp4`.
-- [ ] **Scenario 3:** An explicit `src` prop renders the `<source>` immediately,
+- *(Superseded by SPEC-100.)* **Scenario 3:** An explicit `src` prop renders the `<source>` immediately,
       without any intersection.
-- [ ] **Scenario 4:** `runtimeConfig.public.mediaCdnUrl` override changes the
+- *(Superseded by SPEC-100.)* **Scenario 4:** `runtimeConfig.public.mediaCdnUrl` override changes the
       resolved URL host.
-- [ ] **Scenario 5:** SPEC-030 regressions still pass — no runtime-caching route
+- *(Superseded by SPEC-100.)* **Scenario 5:** SPEC-030 regressions still pass — no runtime-caching route
       matches `https://media.negolah.my/videos/negotiation-demo.mp4` or a `.webm`.
-- [ ] **Scenario 6:** Existing showcase tests (Memphis SVGs, no controls, retry
+- *(Superseded by SPEC-100.)* **Scenario 6:** Existing showcase tests (Memphis SVGs, no controls, retry
       cap, `loadeddata` playback) still pass.
 
 # Implementation Files

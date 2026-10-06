@@ -4,8 +4,17 @@ import time
 
 import redis
 
-from core.env import REDIS_MAX_CONNECTIONS, REDIS_URL
+from core.env import IS_PROD, REDIS_MAX_CONNECTIONS, REDIS_SOCKET_TIMEOUT, REDIS_URL
 from core.logger import logger
+
+# Fixed-window rate-limit counter, atomic server-side. The TTL is armed once per
+# window (and re-armed only if a key somehow lost it), so a steady client under
+# the limit is never throttled by a window that keeps sliding forward.
+FIXED_WINDOW_SCRIPT = """
+local count = redis.call('incr', KEYS[1])
+if redis.call('ttl', KEYS[1]) < 0 then redis.call('expire', KEYS[1], ARGV[1]) end
+return count
+"""
 
 
 class _InMemoryRedis:
@@ -34,6 +43,9 @@ class _InMemoryRedis:
             self._exp[key] = time.time() + ex
         else:
             self._exp.pop(key, None)
+        return True
+
+    def ping(self) -> bool:
         return True
 
     def setex(self, key: str, ttl: int, value: str):
@@ -119,6 +131,17 @@ class _InMemoryRedis:
                 self.delete(key)
                 return 1
             return 0
+
+        # Fixed-window counter (FIXED_WINDOW_SCRIPT): increment, and arm the TTL
+        # only when the key has none, so the window never slides.
+        if normalized == " ".join(FIXED_WINDOW_SCRIPT.split()):
+            key, window = keys[0], int(args[0])
+            self._purge(key)
+            count = int(self._store.get(key, 0)) + 1
+            self._store[key] = str(count)
+            if key not in self._exp:
+                self._exp[key] = time.time() + window
+            return count
 
         raise NotImplementedError(f"_InMemoryRedis.eval does not know this script: {normalized!r}")
 
@@ -226,10 +249,19 @@ def _create_redis_client():
             REDIS_URL,
             decode_responses=True,
             max_connections=REDIS_MAX_CONNECTIONS,
+            socket_timeout=REDIS_SOCKET_TIMEOUT,
+            socket_connect_timeout=REDIS_SOCKET_TIMEOUT,
+            health_check_interval=30,
         )
         client.ping()
         return client
     except Exception as e:
+        # In production the double is not "degraded", it is wrong: sessions,
+        # CSRF tokens and rate limits become per-worker, so buyers are logged
+        # out depending on which worker answers. Crash and let the container
+        # restart policy retry instead (audit REL-1).
+        if IS_PROD:
+            raise RuntimeError(f"Redis unavailable at startup in production: {e}") from e
         # Falling back to the in-memory double means caches, rate limits and
         # leases stop being shared between workers — degraded, not broken, but
         # never something to discover by accident.
@@ -336,17 +368,8 @@ def check_rate_limit(key: str, max_requests: int = 10, window: int = 60) -> bool
     Returns:
         True if OK to proceed, False if limit exceeded
     """
-    rate_key = f"rate:{key}"
-    current = redis_client.get(rate_key)
-
-    if current and int(current) >= max_requests:
-        return False
-
-    pipe = redis_client.pipeline()
-    pipe.incr(rate_key)
-    pipe.expire(rate_key, window)
-    pipe.execute()
-    return True
+    count = redis_client.eval(FIXED_WINDOW_SCRIPT, 1, f"rate:{key}", window)
+    return int(count) <= max_requests
 
 
 def get_rate_limit_remaining(key: str, max_requests: int = 10) -> int:

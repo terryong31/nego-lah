@@ -4,17 +4,16 @@ import contextlib
 # Import configuration
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from slowapi import _rate_limit_exceeded_handler
-from slowapi.errors import RateLimitExceeded
 
 # Domain routers (Modular Monolith, ADR-0002). Each domain exports its own
 # public router; the cross-domain admin console is composed in `admin_api`.
 from console.admin_api import router as admin_router
 from core.defense_middleware import RequestDefenseMiddleware, SecurityHeadersMiddleware
-from core.limiter import limiter
+from core.env import ASYNCIO_EXECUTOR_THREADS
 from core.logger import logger
 from core.rate_limit_middleware import IPRateLimitMiddleware
 from core.telemetry import init_sentry
@@ -35,6 +34,10 @@ IS_PROD = os.environ.get("ENV", "development").lower() in ("production", "prod")
 # Initialize Sentry for error tracking. In development Sentry is disabled;
 # in production it is strictly enforced (raises RuntimeError if SENTRY_DSN is missing).
 init_sentry(is_prod=IS_PROD)
+
+# How long shutdown waits for in-flight agent turns. Must stay under the
+# container's `stop_grace_period` in docker-compose.yml.
+SHUTDOWN_TURN_GRACE_SECONDS = float(os.environ.get("SHUTDOWN_TURN_GRACE_SECONDS", "20"))
 
 # How often the abandoned-payment cleanup runs (seconds). Default hourly.
 CLEANUP_INTERVAL_SECONDS = int(os.environ.get("CLEANUP_INTERVAL_SECONDS", "3600"))
@@ -106,15 +109,20 @@ async def lifespan(_app: FastAPI):
     task = None
     digest_task = None
     from core.notifications import notification_broker
+    from domains.negotiation import drain_running_turns
+
+    # Size the pool `asyncio.to_thread` runs on. Python's default is
+    # min(32, cpu_count + 4) — five or six threads here — and every request
+    # makes several blocking Redis/Supabase calls through it (audit REL-1).
+    asyncio.get_running_loop().set_default_executor(
+        ThreadPoolExecutor(max_workers=ASYNCIO_EXECUTOR_THREADS, thread_name_prefix="to_thread")
+    )
 
     # One Redis pub/sub connection per worker, so a notification published by
     # any worker reaches the SSE streams held by all of them.
     await notification_broker.start()
 
     if not os.environ.get("VERCEL"):
-        from core.database import close_db_pool, init_db_pool
-
-        await init_db_pool()
         if os.environ.get("DISABLE_PAYMENT_CLEANUP") != "1":
             task = asyncio.create_task(_payment_cleanup_loop())
             logger.info("🧹 Payment cleanup worker started")
@@ -124,16 +132,15 @@ async def lifespan(_app: FastAPI):
     try:
         yield
     finally:
+        unfinished = await drain_running_turns(SHUTDOWN_TURN_GRACE_SECONDS)
+        if unfinished:
+            logger.warning(f"Shutdown cut {unfinished} agent turn(s) short")
         await notification_broker.stop()
         for background in (task, digest_task):
             if background:
                 background.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await background
-        if not os.environ.get("VERCEL"):
-            from core.database import close_db_pool
-
-            await close_db_pool()
 
 
 app = FastAPI(
@@ -147,9 +154,6 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Setup rate limiter
-app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # CORS middleware — environment-aware origins.
 # Production: only the real domain. Dev: localhost variants + prod (for testing).
@@ -245,4 +249,33 @@ def root():
 
 @app.get("/health")
 def health_check():
+    """Liveness: the process is up. Deliberately checks nothing else, so a
+    Redis blip does not get a healthy container restarted."""
     return {"status": "healthy"}
+
+
+@app.get("/ready")
+async def readiness_check():
+    """Readiness: can this worker actually serve a signed-in request?
+
+    `/health` answers "healthy" through every Redis failure mode, so it cannot
+    tell an uptime monitor anything useful (audit OBS-1). This pings Redis with
+    a timeout and reports whether cross-worker notifications are flowing.
+    """
+    from fastapi.responses import JSONResponse
+
+    from core.cache import redis_client
+    from core.notifications import notification_broker
+
+    try:
+        await asyncio.wait_for(asyncio.to_thread(redis_client.ping), timeout=2)
+        redis_ok = True
+    except Exception as e:
+        logger.warning(f"Readiness: Redis ping failed: {e}")
+        redis_ok = False
+    body = {
+        "status": "ready" if redis_ok else "unavailable",
+        "redis": redis_ok,
+        "notifications_distributed": notification_broker.distributed,
+    }
+    return JSONResponse(body, status_code=200 if redis_ok else 503)

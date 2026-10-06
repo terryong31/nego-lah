@@ -1,4 +1,4 @@
-# 14. Cloudflare Security Posture Hardening (HSTS, RFC 9116, SPF/DMARC)
+# ADR-0014: Cloudflare Security Posture Hardening (HSTS, RFC 9116, SPF/DMARC)
 
 - Status: Accepted
 - Date: 2026-09-09

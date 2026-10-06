@@ -1,7 +1,7 @@
-# ADR 0024: What a Tool Hands Back, and When the Buyer Sees It
+# ADR-0024: What a Tool Hands Back, and When the Buyer Sees It
 
-## Status
-Accepted
+- Status: Accepted
+- Date: 2026-09-16
 
 ## Context
 

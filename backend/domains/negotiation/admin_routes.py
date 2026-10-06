@@ -107,11 +107,9 @@ def get_all_chats(include_archived: bool = False):
     profiles_map = {}
     users_map = {}
     settings_map = {}
-    last_activity_map = {}
-    last_human_map = {}
     try:
         profiles_map = IdentityService.get_display_profiles()
-        for u in admin_supabase.auth.admin.list_users():
+        for u in IdentityService.list_all_users(admin_supabase):
             users_map[u.id] = u
         # HITL status + read watermark per conversation — same bulk read /users
         # uses (SPEC-046 #39, SPEC-053).
@@ -121,24 +119,6 @@ def get_all_chats(include_archived: bool = False):
             .execute()
         )
         settings_map = {s.get("user_id"): s for s in (settings.data or []) if s.get("user_id")}
-        # Newest message per conversation, and separately the newest CUSTOMER
-        # message: the first drives the "recent activity" sort (SPEC-046 #42),
-        # the second decides `unread`. One descending read answers both, so the
-        # first row seen per user (per role) is that conversation's latest.
-        ts_rows = (
-            admin_supabase.table("messages")
-            .select("user_id, role, created_at")
-            .order("created_at", desc=True)
-            .execute()
-        )
-        for row in ts_rows.data or []:
-            uid = row.get("user_id")
-            if not uid:
-                continue
-            if uid not in last_activity_map:
-                last_activity_map[uid] = row.get("created_at")
-            if row.get("role") == "human" and uid not in last_human_map:
-                last_human_map[uid] = row.get("created_at")
     except Exception as e:
         logger.warning(f"Could not enrich chats with user info: {e}")
 
@@ -160,41 +140,47 @@ def get_all_chats(include_archived: bool = False):
             "is_banned": bool(profile.get("is_banned", False)),
         }
 
-    # Get all user histories
-    all_histories = conversation_memory.get_all_histories()
+    # One summary row per conversation, newest message included (audit SCL-1).
+    # It also carries the two timestamps the console needs: the newest message
+    # drives the "recent activity" sort (SPEC-046 #42), the newest CUSTOMER
+    # message decides `unread` (SPEC-053).
+    try:
+        inbox = conversation_memory.get_inbox()
+    except Exception as e:
+        # An empty inbox would read as "no buyers are waiting" — say it failed.
+        logger.error(f"Could not load the chat inbox: {e}")
+        raise HTTPException(status_code=503, detail="Could not load conversations") from e
 
     chats = []
-    for user_id, history in all_histories.items():
-        if history:
-            setting = settings_map.get(user_id, {})
-            archived_at = setting.get("archived_at")
-            if archived_at and not include_archived:
-                continue
+    for user_id, summary in inbox.items():
+        setting = settings_map.get(user_id, {})
+        archived_at = setting.get("archived_at")
+        if archived_at and not include_archived:
+            continue
 
-            last_message = history[-1] if history else None
-            last_role = last_message.get("role", "") if last_message else ""
-            info = _user_info(user_id)
-            read_at = setting.get("admin_last_read_at")
-            chats.append(
-                {
-                    "user_id": user_id,
-                    "display_name": info["display_name"],
-                    "avatar_url": info["avatar_url"],
-                    "email": info["email"],
-                    "created_at": info["created_at"],
-                    "is_banned": info["is_banned"],
-                    "message_count": len(history),
-                    "last_message": last_message.get("content", "")[:100] if last_message else "",
-                    "last_role": last_role,
-                    "unread": _is_unread(read_at, last_human_map.get(user_id), last_role),
-                    "admin_last_read_at": read_at,
-                    "archived": bool(archived_at),
-                    "archived_at": archived_at,
-                    "ai_enabled": setting.get("ai_enabled", True),
-                    "admin_intervening": setting.get("admin_intervening", False),
-                    "last_activity": last_activity_map.get(user_id),
-                }
-            )
+        last_role = summary.get("last_role") or ""
+        info = _user_info(user_id)
+        read_at = setting.get("admin_last_read_at")
+        chats.append(
+            {
+                "user_id": user_id,
+                "display_name": info["display_name"],
+                "avatar_url": info["avatar_url"],
+                "email": info["email"],
+                "created_at": info["created_at"],
+                "is_banned": info["is_banned"],
+                "message_count": int(summary.get("message_count") or 0),
+                "last_message": (summary.get("last_content") or "")[:100],
+                "last_role": last_role,
+                "unread": _is_unread(read_at, summary.get("last_human_at"), last_role),
+                "admin_last_read_at": read_at,
+                "archived": bool(archived_at),
+                "archived_at": archived_at,
+                "ai_enabled": setting.get("ai_enabled", True),
+                "admin_intervening": setting.get("admin_intervening", False),
+                "last_activity": summary.get("last_activity"),
+            }
+        )
 
     return chats
 

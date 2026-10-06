@@ -111,6 +111,20 @@ async def test_cache_miss_valid_token_validates_and_caches_result(patch_supabase
     assert get_cached_user_by_token(token) == "user-from-supabase"
 
 
+async def test_production_never_sends_a_non_jwt_bearer_to_supabase(patch_supabase, fake_supabase, monkeypatch):
+    """Audit SEC-2: the non-JWT fallback made every anonymous request with a
+    junk bearer a service-role network call to Supabase Auth."""
+    import domains.identity.auth_middleware as middleware
+
+    patch_supabase("domains.identity.auth_middleware", admin=fake_supabase)
+    monkeypatch.setattr(middleware, "IS_PROD", True)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await verify_user_token(make_request({"Authorization": "Bearer not-a-jwt"}))
+    assert exc_info.value.status_code == 401
+    fake_supabase.auth.get_user.assert_not_called()
+
+
 async def test_invalid_token_no_user_on_response_raises_401(patch_supabase, fake_supabase):
     patch_supabase("domains.identity.auth_middleware", admin=fake_supabase)
     fake_supabase.auth.get_user.return_value = SimpleNamespace(user=None)

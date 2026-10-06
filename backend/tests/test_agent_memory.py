@@ -183,28 +183,6 @@ def test_get_history_page_swallows_exception_and_keeps_the_offset(mem_supabase, 
     assert "Error getting history page" in logged["msg"]
 
 
-def test_get_all_histories_returns_empty_dict_when_no_rows(mem_supabase):
-    (
-        mem_supabase.table.return_value.select.return_value.order.return_value.execute
-    ).return_value = make_supabase_result([])
-
-    assert conversation_memory.get_all_histories() == {}
-
-
-def test_get_all_histories_swallows_exception_and_returns_empty_dict(mem_supabase, monkeypatch):
-    mem_supabase.table.side_effect = RuntimeError("boom")
-    logged = {}
-    monkeypatch.setattr(
-        "domains.negotiation.memory.logger.info",
-        lambda msg: logged.setdefault("msg", msg),
-    )
-
-    result = conversation_memory.get_all_histories()
-
-    assert result == {}
-    assert "Error getting all histories" in logged["msg"]
-
-
 # ---------------------------------------------------------------------------
 # clear_history
 # ---------------------------------------------------------------------------

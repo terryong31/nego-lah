@@ -1,4 +1,4 @@
-# 4. Nuxt SPA on Cloudflare Pages with Universal Turnstile Bot Protection
+# ADR-0004: Nuxt SPA on Cloudflare Pages with Universal Turnstile Bot Protection
 
 - Status: Accepted
 - Date: 2026-09-04

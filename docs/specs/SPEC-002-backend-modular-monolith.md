@@ -14,7 +14,7 @@ To keep the backend manageable and clean without incurring the heavy memory foot
 # Acceptance Criteria
 - [x] Backend is organized into `core/` and bounded `domains/` (`catalog`, `negotiation`, `billing`, `identity`, `webhooks`). *Realized by SPEC-092 — the code actually moved; before that, `domains/` held only re-export stubs.*
 - [x] No domain directly queries or accesses another domain's private schemas or state. Cross-domain interactions pass through exported Domain Services (`CatalogService`, `BillingService`, `IdentityService`, `NegotiationService`). *Enforced by `tests/test_domain_boundaries.py`, which AST-scans every table access and cross-domain import.*
-- [ ] Configuration is strongly typed via Pydantic Settings in `core/config.py`. **Not done** — `core/config.py` and `core/env.py` are both plain `os.getenv` modules that duplicate 27 keys between them.
+- ~~Configuration is strongly typed via Pydantic Settings in `core/config.py`.~~ **Dropped (2026-10-07).** `core/config.py` was deleted and `core/env.py` is the single configuration module, so the duplication this criterion targeted is gone. Typed settings were not adopted; that is a separate change if wanted.
 - [x] All existing test suites pass without regression after refactoring (1,765 tests green, 90.10% coverage).
 - [x] Single FastAPI application mounts domain routers cleanly in `main.py`; the cross-domain admin console is composed in `admin_api.py`.
 

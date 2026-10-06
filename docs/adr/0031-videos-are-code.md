@@ -1,6 +1,9 @@
 # ADR-0031: Videos Are Code
 
-**Status:** Accepted · **Date:** 2026-10-07 · **Supersedes the media plan of:** SPEC-069/075 · **Relates to:** [SPEC-100](../specs/SPEC-100-one-intro-video.md), SPEC-045
+- Status: Accepted
+- Date: 2026-10-07
+- Supersedes the media plan of: SPEC-069/075
+- Relates to: [SPEC-100](../specs/SPEC-100-one-intro-video.md), SPEC-045
 
 ## Context
 

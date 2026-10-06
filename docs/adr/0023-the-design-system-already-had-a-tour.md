@@ -1,7 +1,7 @@
-# ADR 0023: The Design System Already Had a Tour, and Its Anchor Does Not Watch the DOM
+# ADR-0023: The Design System Already Had a Tour, and Its Anchor Does Not Watch the DOM
 
-## Status
-Accepted
+- Status: Accepted
+- Date: 2026-09-16
 
 ## Context
 

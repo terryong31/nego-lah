@@ -1,19 +1,10 @@
 import os
 
-from slowapi import Limiter
-from slowapi.util import get_remote_address
+from core.cache import check_rate_limit, get_rate_limit_retry_after
 
-from core.cache import _InMemoryRedis, check_rate_limit, get_rate_limit_retry_after, redis_client
-from core.env import REDIS_URL
-
-# Share rate-limit counters across worker processes via Redis when it's actually
-# available. Falls back to per-process in-memory storage otherwise, mirroring how
-# cache.py degrades when Redis can't be reached.
-_use_redis = not isinstance(redis_client, _InMemoryRedis)
-limiter = Limiter(
-    key_func=get_remote_address,
-    storage_uri=REDIS_URL if _use_redis else None,
-)
+# All rate limiting is the pre-routing `IPRateLimitMiddleware` (SPEC-077) plus
+# per-user `check_rate_limit` calls. The slowapi `Limiter` that used to live
+# here decorated no route after SPEC-077 and was removed (audit PRF-2).
 
 # Per-IP ceilings for endpoints to stop one scripted laptop saturating the box.
 # Sized coarsely for NAT safety (office/conference sharing one IP).

@@ -19,7 +19,9 @@ import json
 import secrets
 import time
 
+import httpx
 from fastapi import Request, Response
+from supabase_auth.errors import AuthApiError, AuthRetryableError
 
 from core.cache import redis_client
 from core.connector import new_user_client
@@ -154,14 +156,27 @@ def _refresh(sid: str, session: dict) -> dict:
         _save_session(sid, session)
         return session
     except Exception as e:
-        # A refresh that fails is a dead session, not a transient blip: the
-        # refresh token is single-use and we have just spent it. Revoke, so the
-        # buyer is asked to sign in once rather than served 401s forever.
+        # A timeout or a 5xx never reached the point of spending the refresh
+        # token, so revoking would sign out every buyer whose hourly token
+        # happened to expire during a Supabase Auth blip (audit REL-3). Keep
+        # the session; the next request tries again.
+        if _is_transient(e):
+            logger.warning(f"Session refresh for {session.get('user_id')} hit a transient error; keeping it: {e}")
+            return session
+        # Anything else is a dead session: the refresh token is single-use and
+        # was rejected. Revoke, so the buyer is asked to sign in once rather
+        # than served 401s forever.
         logger.info(f"Session refresh failed for {session.get('user_id')}; revoking: {e}")
         destroy_session(sid)
         return {}
     finally:
         redis_client.delete(lock)
+
+
+def _is_transient(error: Exception) -> bool:
+    if isinstance(error, (AuthRetryableError, httpx.TransportError)):
+        return True
+    return isinstance(error, AuthApiError) and (error.status or 0) >= 500
 
 
 def resolve_session(sid: str) -> dict | None:

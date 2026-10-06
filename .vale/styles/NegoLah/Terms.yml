@@ -1,0 +1,14 @@
+# One spelling per product and vendor name.
+extends: substitution
+message: "Use '%s' instead of '%s'."
+level: error
+ignorecase: false
+swap:
+  Nego-lah: Nego-Lah
+  NegoLah: Nego-Lah
+  Github: GitHub
+  Javascript: JavaScript
+  Typescript: TypeScript
+  Postgresql: PostgreSQL
+  Fastapi: FastAPI
+  Cloudfare: Cloudflare

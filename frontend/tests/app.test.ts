@@ -44,12 +44,14 @@ describe('app.vue', () => {
     // useSeoMeta's DOM side effects are applied asynchronously (a plain
     // nextTick()/flushPromises() is not enough to observe them here), so
     // poll for the expected <title> instead of asserting immediately.
+    // Wait on the description, not the title: the title is already 'Nego-Lah'
+    // from nuxt.config's static head, so waiting on it proved nothing and the
+    // read below raced useSeoMeta (exposed by Nuxt 4.5's head timing).
     await vi.waitFor(() => {
-      expect(document.title).toBe('Nego-Lah')
+      const description = document.head.querySelector('meta[name="description"]')
+      expect(description?.getAttribute('content')).toBe('AI powered e-commerce site. From image to sales.')
     })
-
-    const description = document.head.querySelector('meta[name="description"]')
-    expect(description?.getAttribute('content')).toBe('AI powered e-commerce site. From image to sales.')
+    expect(document.title).toBe('Nego-Lah')
 
     const ogTitle = document.head.querySelector('meta[property="og:title"]')
     expect(ogTitle?.getAttribute('content')).toBe('Nego-Lah · Autonomous AI Price Negotiation Marketplace')
@@ -76,6 +78,19 @@ describe('app.vue', () => {
     expect(twitterImage?.getAttribute('content')).toBe('https://negolah.my/og-image.png')
 
     expect(document.documentElement.getAttribute('lang')).toBe('en')
+  })
+
+  it('declares the current route as canonical, not the homepage for every page', async () => {
+    // Audit SEO-1: a global canonical told crawlers every listing duplicated `/`.
+    activeWrapper = await mountSuspended(App, { route: '/items/abc-123' })
+
+    await vi.waitFor(() => {
+      const canonical = document.head.querySelectorAll('link[rel="canonical"]')
+      expect(canonical).toHaveLength(1)
+      expect(canonical[0]?.getAttribute('href')).toBe('https://negolah.my/items/abc-123')
+    })
+    const ogUrl = document.head.querySelector('meta[property="og:url"]')
+    expect(ogUrl?.getAttribute('content')).toBe('https://negolah.my/items/abc-123')
   })
 
   it('mounts without throwing and produces a non-empty root element', async () => {

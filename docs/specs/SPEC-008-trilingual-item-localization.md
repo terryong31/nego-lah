@@ -1,7 +1,7 @@
 ---
 id: SPEC-008
 title: Trilingual Item Localization, Determinate Upload Progress, and Modal Polish
-status: in-progress
+status: complete
 priority: high
 created: 2026-09-04
 tags: [frontend, backend, i18n, localization, ai-vision, supabase, admin]
@@ -23,21 +23,27 @@ Nego-lah is a Malaysian marketplace operating across English (`en`), Bahasa Mela
    - Multi-tab language editor (**English**, **Bahasa Melayu**, **中文**) in the item modal.
 
 # Acceptance Criteria
-- [ ] **Database Migration**:
+- [x] **Database Migration**:
   - `public.items` includes `translations jsonb DEFAULT '{}'::jsonb`.
-- [ ] **Determinate Progress Bar**:
+- [x] **Determinate Progress Bar**:
   - `<UProgress :model-value="progress" :max="100" />` shows actual numerical completion without infinite circling.
-- [ ] **Alert Callout Removed**:
+- [x] **Alert Callout Removed**:
   - `<UAlert title="Auto-filled by AI" ... />` is removed from the admin modal.
-- [ ] **Trilingual AI Output**:
+- [x] **Trilingual AI Output**:
   - Vision analyzer returns a structured `translations` map for `en`, `ms`, and `zh`.
-- [ ] **Admin Item Creation & Edit**:
+- [x] **Admin Item Creation & Edit**:
   - Form provides language tabs (`en`, `ms`, `zh`) allowing inspection and modification of each language.
   - Submits `translations` to `POST /admin/items` and `PUT /admin/items/{id}`.
-- [ ] **Storefront Reactive Switching**:
+- [x] **Storefront Reactive Switching**:
   - `ItemCard` and `/items/[id]` display `item.translations?.[locale]?.name || item.name` and corresponding description/condition, updating instantaneously when `locale` changes.
-- [ ] **Full Automated Test Coverage**:
+- [x] **Full Automated Test Coverage**:
   - Vitest tests for `AdminItems.vue`, `ItemCard.vue`, `items/[id].vue`, and backend pytest tests pass with zero regressions.
+
+> **Verified 2026-10-07.** Migration `20260701000000_item_translations.sql`; determinate `UProgress`
+> and translation tabs in `AdminItemFormModal.vue` (the modal was extracted from `AdminItems.vue`);
+> no "Auto-filled by AI" alert remains; `listing_pipeline.py` returns `translations`; `ItemCard.vue`
+> and `items/[id].vue` resolve through `localizedItemField`. Tests: `AdminItemFormModal.test.ts`,
+> `AdminItems.test.ts`, `ItemCard.test.ts`.
 
 # API Contracts & Data Shapes
 ### Translations Schema

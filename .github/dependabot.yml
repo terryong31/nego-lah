@@ -1,0 +1,91 @@
+# SPEC-103 — Dependabot owns dependency updates.
+# Weekly, grouped: minor+patch land as one PR per ecosystem, each major stands
+# alone. Security updates ignore the grouping and the PR cap.
+# No YAML anchors/aliases: Dependabot's parser rejects them.
+version: 2
+
+updates:
+  - package-ecosystem: bun
+    directory: /frontend
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Kuala_Lumpur
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: deps(web)
+    groups:
+      web-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: uv
+    directory: /backend
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Kuala_Lumpur
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: deps(api)
+    groups:
+      api-minor-patch:
+        update-types: [minor, patch]
+
+  # Actions are SHA-pinned; Dependabot bumps the SHA and its `# vX` comment together.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Kuala_Lumpur
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: deps(ci)
+    groups:
+      actions-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: docker
+    directory: /frontend
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Kuala_Lumpur
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: deps(docker)
+    groups:
+      web-image-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: docker
+    directory: /backend
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Kuala_Lumpur
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: deps(docker)
+    groups:
+      api-image-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Kuala_Lumpur
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: deps(docker)
+    groups:
+      compose-minor-patch:
+        update-types: [minor, patch]

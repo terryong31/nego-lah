@@ -51,3 +51,39 @@ def test_frontmatter_id_matches_the_filename():
 def test_every_spec_declares_an_id():
     missing = [p.name for p in SPEC_FILES if _frontmatter_id(p) is None]
     assert not missing, f"specs with no `id:` in frontmatter: {missing}"
+
+
+# SPEC-102 — the status is how the index and a reader tell live work from history.
+# Five spellings ("complete", "completed", "Draft", …) meant neither could.
+STATUSES = {"draft", "in-progress", "complete", "abandoned", "superseded"}
+REQUIRED_KEYS = ("id", "title", "status", "created", "tags")
+
+
+def _frontmatter(path: pathlib.Path) -> dict[str, str]:
+    match = re.match(r"---\n(.*?)\n---\n", path.read_text(), re.S)
+    if not match:
+        return {}
+    return dict(re.findall(r"^(\w+):\s*(.*?)\s*(?:#.*)?$", match.group(1), re.M))
+
+
+def test_every_spec_status_is_from_the_vocabulary():
+    bad = [(p.name, _frontmatter(p).get("status")) for p in SPEC_FILES if _frontmatter(p).get("status") not in STATUSES]
+    assert not bad, f"status must be one of {sorted(STATUSES)}: {bad}"
+
+
+def test_every_spec_has_the_required_frontmatter():
+    missing = [(p.name, [k for k in REQUIRED_KEYS if k not in _frontmatter(p)]) for p in SPEC_FILES]
+    missing = [m for m in missing if m[1]]
+    assert not missing, f"specs missing frontmatter keys: {missing}"
+
+
+def test_a_complete_spec_has_no_open_criteria():
+    """`complete` meant "merged" for a while, so seven specs carried unticked criteria under it.
+    An unmet criterion is either still open (`in-progress`) or said out loud (Dropped / Deferred /
+    Superseded, without a checkbox)."""
+    open_items = [
+        p.name
+        for p in SPEC_FILES
+        if _frontmatter(p).get("status") == "complete" and re.search(r"^\s*- \[ \]", p.read_text(), re.M)
+    ]
+    assert not open_items, f"complete specs with unticked criteria: {open_items}"

@@ -4,21 +4,13 @@ on:
   push:
     branches: [ main ]
     paths-ignore:
-      - 'README.md'
-      - 'docs/**'
-      - 'specs/**'
       - '.claude/**'
       - '.gitignore'
-      - 'TODO.md'
   pull_request:
     branches: [ main ]
     paths-ignore:
-      - 'README.md'
-      - 'docs/**'
-      - 'specs/**'
       - '.claude/**'
       - '.gitignore'
-      - 'TODO.md'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -26,6 +18,10 @@ concurrency:
 
 env:
   BACKEND_IMAGE: ghcr.io/terryong31/nego-lah-backend
+
+# Least privilege by default; jobs that push images widen it themselves.
+permissions:
+  contents: read
 
 jobs:
   changes:
@@ -35,9 +31,10 @@ jobs:
       frontend: ${{ steps.filter.outputs.frontend }}
       backend: ${{ steps.filter.outputs.backend }}
       migrations: ${{ steps.filter.outputs.migrations }}
+      docs: ${{ steps.filter.outputs.docs }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
+      - uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
         id: filter
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -52,9 +49,16 @@ jobs:
               - '.github/workflows/deploy.yml'
             migrations:
               - 'supabase/migrations/**'
+            docs:
+              - 'docs/**'
+              - '*.md'
+              - '.markdownlint-cli2.jsonc'
+              - '.vale.ini'
+              - '.vale/**'
+              - 'backend/scripts/docs_tools.py'
 
   backend-ci:
-    name: Backend CI (ruff, pytest & pip-audit)
+    name: Backend CI (ruff, pytest, bandit & pip-audit)
     needs: [changes]
     if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
@@ -89,10 +93,65 @@ jobs:
           cd backend
           uv run pytest
 
+      - name: Static security analysis (bandit)
+        run: |
+          cd backend
+          uv run bandit -q -r . -x ./tests,./conftest.py,./.venv,./htmlcov,./evals,./scripts
+
       - name: Dependency vulnerability audit (pip-audit)
         run: |
           cd backend
           uv run pip-audit
+
+  # SPEC-102: Markdown structure, prose, links, generated indexes, ADR metadata,
+  # the OpenAPI contract, and an advisory list of living docs older than the
+  # code they describe. Runs for docs changes and for backend changes.
+  docs-check:
+    name: Docs checks
+    needs: [changes]
+    if: needs.changes.outputs.docs == 'true' || needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # docs_tools stale compares commit times
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+          enable-cache: true
+          cache-dependency-glob: "backend/uv.lock"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          cd backend
+          uv sync --frozen
+
+      - name: Markdown lint (living docs; globs in .markdownlint-cli2.jsonc)
+        run: npx --yes markdownlint-cli2@0.23.3
+
+      - name: Prose lint (Vale; version pinned in mise.toml, style in .vale/)
+        run: |
+          VALE=3.24.0
+          curl -fsSL "https://github.com/errata-ai/vale/releases/download/v${VALE}/vale_${VALE}_Linux_64-bit.tar.gz" | tar -xz -C /tmp vale
+          /tmp/vale README.md SECURITY.md CONTRIBUTING.md docs/README.md docs/architecture docs/api/README.md docs/data docs/repo docs/workers docs/flows docs/ci-cd docs/security docs/how-to docs/tutorials docs/adr/README.md docs/adr/TEMPLATE.md docs/specs/README.md docs/specs/TEMPLATE.md
+
+      - name: Docs checks
+        run: |
+          cd backend
+          uv run pytest --no-cov -q tests/test_docs.py tests/test_spec_registry.py
+
+      - name: Stale-docs report (advisory, never fails)
+        run: |
+          cd backend
+          uv run python -m scripts.docs_tools stale
 
   migrations-check:
     name: Validate Supabase migrations
@@ -213,10 +272,10 @@ jobs:
           cd frontend
           bun run typecheck
 
-      - name: Dependency security audit (bun pm untrusted)
-        run: |
-          cd frontend
-          bun pm untrusted
+      # `bun pm untrusted` only lists blocked lifecycle scripts — it is not a
+      # vulnerability scan, so the frontend had no CVE gate at all (audit SUP-1).
+      - name: Dependency vulnerability audit (bun audit)
+        run: frontend/scripts/audit.sh
 
   frontend-test:
     name: Frontend Unit Tests (Vitest)
@@ -291,7 +350,7 @@ jobs:
           infisical run --env=prod --path=/Frontend -- bun run generate
 
       - name: Deploy to Cloudflare Pages
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -366,7 +425,7 @@ jobs:
           echo "SENTRY_RELEASE=${{ github.sha }}" >> backend/.env.production
 
       - name: Copy compose, Caddyfile, and env to server
-        uses: appleboy/scp-action@v0.1.7
+        uses: appleboy/scp-action@917f8b81dfc1ccd331fef9e2d61bdc6c8be94634 # v0.1.7
         with:
           host: ${{ secrets.HOST }}
           username: ${{ secrets.USERNAME }}
@@ -374,26 +433,52 @@ jobs:
           source: "docker-compose.yml,Caddyfile,backend/.env.production"
           target: "~/nego-lah"
 
+      # Deploy by SHA, not `:latest`, so what runs is what this commit built and
+      # a rollback is re-pinning the previous SHA. The job then waits for the
+      # container's own healthcheck and, if the new image never comes up, puts
+      # the previous one back and fails red (audit DEP-1).
       - name: Pull image, update env & restart on server
-        uses: appleboy/ssh-action@v1.0.3
+        uses: appleboy/ssh-action@029f5b4aeeeb58fdfe1410a5d17f967dacf36262 # v1.0.3
         env:
           GHCR_ACTOR: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE_TAG: ${{ github.sha }}
         with:
           host: ${{ secrets.HOST }}
           username: ${{ secrets.USERNAME }}
           key: ${{ secrets.SSH_KEY }}
-          envs: GHCR_ACTOR,GHCR_TOKEN
+          envs: GHCR_ACTOR,GHCR_TOKEN,IMAGE_TAG
+          command_timeout: 10m
           script: |
+            set -eu
             cd ~/nego-lah
             mkdir -p backend
             if [ -f backend/.env.production ]; then
               mv backend/.env.production backend/.env
               chmod 600 backend/.env
             fi
+            PREV_IMAGE=$(sudo docker inspect -f '{{.Image}}' nego-lah-backend 2>/dev/null || true)
             echo "$GHCR_TOKEN" | sudo docker login ghcr.io -u "$GHCR_ACTOR" --password-stdin
-            sudo docker compose pull
-            sudo docker compose up -d --remove-orphans
-            sudo docker compose restart caddy
+            sudo env BACKEND_IMAGE_TAG="$IMAGE_TAG" docker compose pull
+            sudo env BACKEND_IMAGE_TAG="$IMAGE_TAG" docker compose up -d --remove-orphans
             sudo docker logout ghcr.io
+            # `reload` is graceful; a restart drops every open connection, SSE
+            # streams included. Fall back to a restart only if reload fails.
+            sudo docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile \
+              || sudo docker compose restart caddy
+            healthy=""
+            for _ in $(seq 1 40); do
+              status=$(sudo docker inspect -f '{{.State.Health.Status}}' nego-lah-backend 2>/dev/null || echo missing)
+              if [ "$status" = "healthy" ]; then healthy=1; break; fi
+              sleep 5
+            done
+            if [ -z "$healthy" ]; then
+              echo "::error::backend never became healthy; rolling back"
+              sudo docker logs --tail 100 nego-lah-backend || true
+              if [ -n "$PREV_IMAGE" ]; then
+                sudo docker tag "$PREV_IMAGE" ghcr.io/terryong31/nego-lah-backend:rollback
+                sudo env BACKEND_IMAGE_TAG=rollback docker compose up -d backend
+              fi
+              exit 1
+            fi
             sudo docker image prune -f

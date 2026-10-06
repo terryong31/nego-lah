@@ -1,4 +1,4 @@
-# 25. Edge Proxy Lockdown, Pre-Routing ASGI Rate Limiting, and Local Cryptographic JWT Verification
+# ADR-0025: Edge Proxy Lockdown, Pre-Routing ASGI Rate Limiting, and Local Cryptographic JWT Verification
 
 - Status: Accepted
 - Date: 2026-09-14

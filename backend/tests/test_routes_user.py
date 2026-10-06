@@ -534,6 +534,28 @@ async def test_delete_account_success(client, auth_user, patch_supabase, session
     assert cleaned_tables == ["chat_settings", "messages", "user_profiles"]
 
 
+async def test_delete_account_ends_every_session_and_removes_avatars(client, auth_user, patch_supabase, session_client):
+    """Audit PRV-3: the cookie session outlived the account, and the avatar
+    (usually a face) stayed in a public bucket."""
+    from core.cache import get_cached_ban_status
+
+    auth_user("user-1")
+    fake_admin = MagicMock()
+    bucket = fake_admin.storage.from_.return_value
+    bucket.list.return_value = [{"name": "a.jpg"}, {"name": "b.webp"}]
+    patch_supabase("domains.identity.routes", admin=fake_admin, user=MagicMock())
+    session_client()
+
+    resp = await _delete_account(client)
+
+    assert resp.status_code == 200
+    set_cookie = resp.headers.get_list("set-cookie")
+    assert any(c.startswith("nl_sid=") and "Max-Age=0" in c for c in set_cookie)
+    assert get_cached_ban_status("user-1") is True
+    bucket.list.assert_called_once_with("avatars/user-1")
+    bucket.remove.assert_called_once_with(["avatars/user-1/a.jpg", "avatars/user-1/b.webp"])
+
+
 async def test_delete_account_invalidates_token(client, auth_user, patch_supabase, monkeypatch, session_client):
     auth_user("user-1")
     patch_supabase("domains.identity.routes", admin=MagicMock(), user=MagicMock())

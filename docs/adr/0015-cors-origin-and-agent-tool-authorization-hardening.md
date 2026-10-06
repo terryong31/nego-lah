@@ -1,7 +1,7 @@
-# ADR 0015: CORS Origin and Agent Tool Authorization Hardening
+# ADR-0015: CORS Origin and Agent Tool Authorization Hardening
 
-## Status
-Accepted
+- Status: Accepted
+- Date: 2026-09-09
 
 ## Context
 Following an audit of potential customer data exposure vectors inspired by recent Malaysian e-commerce/delivery data breaches, two critical authorization and origin boundaries were identified for hardening:

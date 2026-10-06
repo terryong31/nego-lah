@@ -1,7 +1,7 @@
-# ADR 0006: Sentry Session Replay and Distributed Tracing Architecture
+# ADR-0006: Sentry Session Replay and Distributed Tracing Architecture
 
-## Status
-Accepted
+- Status: Accepted
+- Date: 2026-09-06
 
 ## Context
 Nego-Lah features an interactive e-commerce negotiation interface where users interact with AI agents in real time, upload photos, and make payments. When an error occurs—whether on the client or within the FastAPI backend—engineering needs full context:

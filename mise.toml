@@ -3,6 +3,7 @@ uv = "latest"
 bun = "latest"
 infisical = "latest"
 lefthook = "latest"
+vale = "3.24.0"
 
 [env]
 _.python.venv = { path = "backend/.venv", create = true }
@@ -66,6 +67,14 @@ run = "bun run test"
 [tasks."test"]
 description = "Run complete test suite"
 depends = ["test:backend", "test:frontend"]
+
+# Issue #14: browser end-to-end checks. Anonymous smoke tests are read-only;
+# session tests run only when E2E_EMAIL / E2E_PASSWORD are set. Point
+# E2E_BASE_URL / E2E_API_URL at staging, or run `mise run dev` first.
+[tasks."test:e2e"]
+description = "Run Playwright end-to-end checks (default: local stack)"
+dir = "frontend"
+run = "npx playwright test"
 
 [tasks."lint"]
 description = "Lint backend and frontend"
@@ -133,6 +142,29 @@ run = "infisical run --env=prod --path=/Backend -- uv run python scripts/verify_
 description = "SPEC-096: check migration filenames and version uniqueness (what CI runs on a PR)"
 dir = "backend"
 run = "uv run python scripts/validate_migrations.py"
+
+[tasks."docs:openapi"]
+description = "SPEC-102: re-export docs/api/openapi.json from the FastAPI app"
+dir = "backend"
+run = "uv run python -m scripts.docs_tools openapi"
+
+[tasks."docs:lint"]
+description = "SPEC-102: Markdown lint for the living docs (same version as CI)"
+run = "bunx markdownlint-cli2@0.23.3"
+
+[tasks."docs:prose"]
+description = "SPEC-102: Vale prose lint for the living docs (style in .vale/styles/NegoLah)"
+run = "vale README.md SECURITY.md CONTRIBUTING.md docs/README.md docs/architecture docs/api/README.md docs/data docs/repo docs/workers docs/flows docs/ci-cd docs/security docs/how-to docs/tutorials docs/adr/README.md docs/adr/TEMPLATE.md docs/specs/README.md docs/specs/TEMPLATE.md"
+
+[tasks."docs:stale"]
+description = "SPEC-102: list living docs older than the code they describe (advisory)"
+dir = "backend"
+run = "uv run python -m scripts.docs_tools stale"
+
+[tasks."docs:index"]
+description = "SPEC-102: regenerate the spec and ADR index tables"
+dir = "backend"
+run = "uv run python -m scripts.docs_tools index"
 
 # SPEC-074 Phase 2: the dev variant of this task was retired — dev no longer
 # carries RESEND_API_KEY (mail goes to Mailpit), so there is nothing for the

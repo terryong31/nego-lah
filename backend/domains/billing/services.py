@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 from core.connector import admin_supabase
+from core.pagination import fetch_all
 
 
 class BillingService:
@@ -120,7 +121,7 @@ class BillingService:
         """({status: count}, raw rows) over all orders, for the admin summary."""
         client = supabase_client or admin_supabase
         try:
-            rows = client.table("orders").select("status, amount").execute().data or []
+            rows = fetch_all(lambda: client.table("orders").select("status, amount").order("id"))
         except Exception:
             return {}, []
         counts: dict[str, int] = {}

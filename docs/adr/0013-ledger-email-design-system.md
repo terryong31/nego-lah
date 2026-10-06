@@ -1,4 +1,4 @@
-# 13. One "Ledger" Design System for All Transactional and Auth Emails
+# ADR-0013: One "Ledger" Design System for All Transactional and Auth Emails
 
 - Status: Accepted
 - Date: 2026-09-09

@@ -1,7 +1,7 @@
-# ADR 0017: Server-Side Image Normalization (HEIF Ingest and Auto-Compression)
+# ADR-0017: Server-Side Image Normalization (HEIF Ingest and Auto-Compression)
 
-## Status
-Accepted
+- Status: Accepted
+- Date: 2026-09-09
 
 ## Context
 

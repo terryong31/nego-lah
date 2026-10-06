@@ -1,12 +1,16 @@
 ---
 id: SPEC-043
 title: Capacity Hardening Under Concurrent Negotiation Load
-status: in-progress
+status: complete
 priority: high
 created: 2026-09-07
 tags: [backend, frontend, performance, capacity, concurrency, database, llm, ux, accessibility]
 assigned: agent
 ---
+
+> **Closed 2026-10-07.** Every code criterion is met. The two measurements on the production host
+> (worker-count latency, Redis under CPU load) are deferred, not done: the settings they would
+> confirm are reasoned defaults.
 
 # Context & Objectives
 
@@ -83,8 +87,12 @@ fourth is about how Redis is called, not where it runs.
       (re-running inserts nothing). Single cutover rather than dual-write —
       see Deviation 1. The jsonb column is left in place as the rollback
       snapshot and is **not** dropped.
-- [ ] Migration applied to production (`scripts/run_migrations.py` is run by
+- [x] Migration applied to production (`scripts/run_migrations.py` is run by
       hand, not by CI — this is the one step that still needs a human).
+      *(2026-10-07: CI has applied pending migrations since SPEC-096, and the later
+      `20260920000000_retire_conversations_to_archive.sql` — which moves the old table
+      away after `verify_conversations_retirement.py` confirmed every history is in
+      `messages` — ran in production. `messages` cannot be absent.)*
 - [x] A concurrent-write regression test (two `add_message` calls for the same
       `user_id` racing) proves no message is lost — the specific bug the
       current design has.
@@ -97,7 +105,7 @@ fourth is about how Redis is called, not where it runs.
 - [x] `WEB_CONCURRENCY` is pinned explicitly in `docker-compose.yml` (2,
       matching the documented core count) rather than inherited from the
       Dockerfile's `:-4` fallback.
-- [ ] That number confirmed by a before/after latency comparison on the real
+- **Deferred:** that number confirmed by a before/after latency comparison on the real
       box. 2 is the reasoned default, not a measured one — the comparison
       needs the production host and hasn't been run.
 
@@ -192,7 +200,7 @@ them.
       persist — neither overwrites the other.
 - [x] **B3:** Backfill migration run twice against the same data produces no
       duplicate rows.
-- [ ] **C1:** Under a synthetic CPU load in the backend container, Redis
+- **Deferred — C1:** Under a synthetic CPU load in the backend container, Redis
       response times stay within its configured budget (measured, not
       assumed).
 - [x] **D1:** `/chat/notifications/stream` rejects a client's Nth concurrent

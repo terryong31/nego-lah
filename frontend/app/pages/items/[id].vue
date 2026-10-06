@@ -69,6 +69,18 @@ const imagesList = computed<string[]>(() => {
   return [item.value.images]
 })
 
+// SEO-1: a shared or crawled listing describes the listing, not the homepage.
+// Canonical and og:url come from app.vue, per route.
+useSeoMeta({
+  title: () => localizedTitle.value || undefined,
+  ogTitle: () => localizedTitle.value || undefined,
+  description: () => localizedDescription.value?.slice(0, 160) || undefined,
+  ogDescription: () => localizedDescription.value?.slice(0, 160) || undefined,
+  ogImage: () => imagesList.value[0] || undefined,
+  twitterTitle: () => localizedTitle.value || undefined,
+  twitterImage: () => imagesList.value[0] || undefined
+})
+
 const buyLoading = ref(false)
 const { user } = useAuth()
 
@@ -172,6 +184,7 @@ async function handleBuyNow() {
             <div class="w-full flex items-center justify-center">
               <img
                 :src="img"
+                :alt="localizedTitle"
                 class="max-w-full max-h-[70vh] w-auto h-auto object-contain rounded-xl"
                 draggable="false"
               >

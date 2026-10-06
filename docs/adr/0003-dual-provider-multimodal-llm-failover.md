@@ -1,4 +1,4 @@
-# 3. Dual-Provider Multimodal LLM Factory with Dynamic Failover
+# ADR-0003: Dual-Provider Multimodal LLM Factory with Dynamic Failover
 
 - Status: Accepted
 - Date: 2026-09-04

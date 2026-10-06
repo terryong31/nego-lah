@@ -1,7 +1,7 @@
 ---
 id: SPEC-035
 title: Distinct Brand Identity, Vector Overhaul, and Google OAuth Compliance
-status: in-progress
+status: complete
 priority: high
 created: 2026-09-06
 tags: [frontend, branding, oauth, assets, ui, design]
@@ -25,11 +25,11 @@ This specification establishes:
    - Standard PWA & favicon suite (`icon-512.png`, `icon-192.png`, `apple-touch-icon.png`, `favicon.svg`, `favicon.ico`, `og-image.png`).
 
 # Acceptance Criteria
-- [ ] `frontend/app/components/AppLogo.vue` renders the new interlocking negotiation monogram SVG with `size` and `hideText` props.
-- [ ] `frontend/app/assets/icons/mark.svg` complies with `brandMarkIcon.test.ts` (only `currentColor`, `viewBox` attribute, no hex colors or inline widths/heights).
-- [ ] `frontend/app/spa-loading-template.html` renders the new monogram inline with zero external network requests and preserves the 3D flip animation.
-- [ ] High-resolution public assets (`google-oauth-logo.png`, `icon-512.png`, `icon-192.png`, `apple-touch-icon.png`, `favicon.svg`, `favicon.ico`, `og-image.png`) generated and placed in `frontend/public/`.
-- [ ] All frontend unit tests pass (100%), typecheck passes, and lint passes with 0 errors.
+- [x] `frontend/app/components/AppLogo.vue` renders the new interlocking negotiation monogram SVG with `size` and `hideText` props.
+- [x] `frontend/app/assets/icons/mark.svg` complies with `brandMarkIcon.test.ts` (only `currentColor`, `viewBox` attribute, no hex colors or inline widths/heights).
+- [x] `frontend/app/spa-loading-template.html` renders the new monogram inline with zero external network requests and preserves the 3D flip animation.
+- [x] High-resolution public assets (`google-oauth-logo.png`, `icon-512.png`, `icon-192.png`, `apple-touch-icon.png`, `favicon.svg`, `favicon.ico`, `og-image.png`) generated and placed in `frontend/public/`.
+- [x] All frontend unit tests pass (100%), typecheck passes, and lint passes with 0 errors.
 
 # Technical Design & Contracts
 - **Vector Geometry (`AppLogo.vue` / `favicon.svg`)**:
@@ -44,8 +44,16 @@ This specification establishes:
   - Background: Gradient emerald rounded squircle (`#064e3b` to `#022c22`).
   - Foreground: High-contrast interlocking negotiation monogram and high-legibility "NEGO-LAH" typography.
 
+> **Verified 2026-10-07.** `AppLogo.vue` (`size`, `hideText`), `assets/icons/mark.svg`, the loader
+> template and every public icon exist, and `AppLogo.test.ts`, `brandMarkIcon.test.ts`,
+> `spaLoadingTemplate.test.ts` and `pwa.test.ts` pass. The shipped mark is a speech bubble holding an
+> "N" with a deal spark, not the two interlocking bubbles described above. `google-oauth-logo.png`
+> was the one missing asset; it was generated on 2026-10-07 from `icon-512.png` on the emerald
+> gradient squircle with the "NEGO-LAH" wordmark. Uploading it to the Google OAuth consent screen
+> is a manual console step.
+
 # Test-Driven Development (TDD) Scenarios
-- [ ] **Scenario 1 (`AppLogo.test.ts`):** Assert SVG brand mark renders the new path geometry, verifies `size` variants (`sm`, `md`, `lg`), and respects `hideText`.
-- [ ] **Scenario 2 (`brandMarkIcon.test.ts`):** Assert `mark.svg` exists, uses only `currentColor`, has no hex values or gradient tags, and is sized exclusively by `viewBox`.
-- [ ] **Scenario 3 (`spaLoadingTemplate.test.ts`):** Assert `spa-loading-template.html` retains `id="__nuxt-loader"`, inline CSS, no external resources, and renders the updated SVG mark.
-- [ ] **Scenario 4 (`pwa.test.ts`):** Assert manifest and public icon paths remain fully functional.
+- [x] **Scenario 1 (`AppLogo.test.ts`):** Assert SVG brand mark renders the new path geometry, verifies `size` variants (`sm`, `md`, `lg`), and respects `hideText`.
+- [x] **Scenario 2 (`brandMarkIcon.test.ts`):** Assert `mark.svg` exists, uses only `currentColor`, has no hex values or gradient tags, and is sized exclusively by `viewBox`.
+- [x] **Scenario 3 (`spaLoadingTemplate.test.ts`):** Assert `spa-loading-template.html` retains `id="__nuxt-loader"`, inline CSS, no external resources, and renders the updated SVG mark.
+- [x] **Scenario 4 (`pwa.test.ts`):** Assert manifest and public icon paths remain fully functional.

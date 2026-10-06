@@ -27,13 +27,17 @@ const routeMock = reactive({ path: '/' })
 
 // SPEC-093: the stream is authorised by the session cookie, which the browser
 // attaches to a `withCredentials` EventSource. The URL carries nothing.
-const fetchMock = vi.fn()
+const { fetchMock } = vi.hoisted(() => ({ fetchMock: vi.fn() }))
 
 const authStub = makeAuthStub(userRef)
 
 mockNuxtImport('useAuth', () => () => authStub)
 mockNuxtImport('useRoute', () => () => routeMock)
 mockNuxtImport('useToast', () => () => ({ add: toastAddMock }))
+
+// Nuxt 4.5 made `$fetch` an auto-import (from `#build/fetch.mjs`), so it is
+// mocked like any other import; stubbing the global no longer reaches it.
+mockNuxtImport('$fetch', () => fetchMock)
 
 // Every constructed EventSource, so a test can count how many streams the
 // composable actually opened and push events through them.
@@ -78,8 +82,6 @@ function installFakeEventSource() {
 // knows about messages which arrived while no tab was open.
 const unreadResponse = { count: 0, has_unread: false }
 
-// $fetch is a genuine global (ofetch/Nitro), not a Nuxt auto-import, so stub the
-// global directly — same approach as tests/composables/useApi.test.ts.
 function installFetchStub() {
   fetchMock.mockReset().mockImplementation((url: string) => {
     if (String(url).includes('/chat/unread')) {
@@ -90,7 +92,6 @@ function installFetchStub() {
     }
     return Promise.resolve({})
   })
-  ;(globalThis as unknown as Record<string, unknown>).$fetch = fetchMock
 }
 
 /** Drive `document.hidden`, which happy-dom leaves as a plain false. */

@@ -6,6 +6,456 @@
     "version": "1.0.0"
   },
   "paths": {
+    "/auth/login": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Login",
+        "description": "Exchange credentials for a session cookie.\n\nTurnstile-gated for the same reason admin login is: this is an\nunauthenticated credential endpoint, and the per-IP limiter alone does not\nmake one cheap to grind.",
+        "operationId": "login_auth_login_post",
+        "parameters": [
+          {
+            "name": "X-Turnstile-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Turnstile-Token"
+            }
+          },
+          {
+            "name": "cf-turnstile-response",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cf-Turnstile-Response"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuthCredentialsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/register": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Register",
+        "description": "Create an account. Confirmation happens through the emailed link.\n\nNo session is opened here even when Supabase returns one (it does when email\nconfirmation is disabled): sign-in is `/auth/login`'s job, and keeping the\ntwo apart means there is exactly one place that mints a cookie.",
+        "operationId": "register_auth_register_post",
+        "parameters": [
+          {
+            "name": "X-Turnstile-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Turnstile-Token"
+            }
+          },
+          {
+            "name": "cf-turnstile-response",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cf-Turnstile-Response"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuthCredentialsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/logout": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Logout",
+        "description": "End the session. Safe to call without one.",
+        "operationId": "logout_auth_logout_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/session": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Session",
+        "description": "Who the cookie belongs to. The SPA's boot call and its route guard.\n\nAlso re-issues the CSRF cookie, which has a shorter life in practice than the\nsession: a browser that dropped it (private-mode eviction, a clear-on-exit\nsetting) would otherwise be authenticated but unable to POST anything.",
+        "operationId": "session_auth_session_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/oauth/start": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Oauth Start",
+        "description": "Begin an OAuth sign-in.\n\nWe build the authorize URL and own the PKCE verifier ourselves rather than\ncalling `sign_in_with_oauth`, because the SDK stores the verifier in the\nclient's own storage — and this client is a throwaway that will not exist by\nthe time the callback arrives.",
+        "operationId": "oauth_start_auth_oauth_start_get",
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "google",
+              "title": "Provider"
+            }
+          },
+          {
+            "name": "next",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "/",
+              "title": "Next"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/callback": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Callback",
+        "description": "Where every Supabase redirect lands: OAuth, signup confirm, recovery, email change.\n\nTwo shapes arrive here. `?code=` is the PKCE authorization code from an OAuth\nround trip, redeemable only with the verifier in the cookie we set at\n`/oauth/start`. `?token_hash=&type=` is what the email templates carry. Both\nend the same way — a session on the server, a cookie on the browser, and a\n302 into the SPA with nothing sensitive in the URL.",
+        "operationId": "callback_auth_callback_get",
+        "parameters": [
+          {
+            "name": "code",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Code"
+            }
+          },
+          {
+            "name": "token_hash",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token Hash"
+            }
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Type"
+            }
+          },
+          {
+            "name": "error_description",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Error Description"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/password/forgot": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Password Forgot",
+        "description": "Send a recovery link. Always reports success.\n\nWhether the address has an account is not this endpoint's to disclose, so the\nresponse and its timing do not vary.",
+        "operationId": "password_forgot_auth_password_forgot_post",
+        "parameters": [
+          {
+            "name": "X-Turnstile-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Turnstile-Token"
+            }
+          },
+          {
+            "name": "cf-turnstile-response",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cf-Turnstile-Response"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuthEmailRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/password/reset": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Password Reset",
+        "description": "Set a new password, using the recovery session the callback established.\n\nThis is the one password change that does not ask for the current one — the\nemailed link is the factor. `PUT /user/{id}/password` remains the path for a\nsigned-in change and still costs the old password (SPEC-056 #3).",
+        "operationId": "password_reset_auth_password_reset_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuthPasswordResetRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/user/{user_id}/account": {
       "get": {
         "tags": [
@@ -104,7 +554,7 @@
           "User"
         ],
         "summary": "Change Email",
-        "description": "Request a change of the authenticated user's email address.\n\nSPEC-056 #3. This used to hand `{\"email\": ..., \"email_confirm\": True}` to the\nadmin API with no password check: the new address was marked verified on the\nspot, and neither the old nor the new inbox heard about it. A stolen access\ntoken was therefore a permanent account takeover \u2014 the attacker owns the\naddress that password resets go to, and the real owner has no notification\nand no way back.\n\nNow it costs the password, and the update runs on the user's OWN session, so\nSupabase treats it as a change request and mails the confirmation link. The\naddress does not move until someone clicks it.",
+        "description": "Request a change of the authenticated user's email address.\n\nSPEC-056 #3. This used to hand `{\"email\": ..., \"email_confirm\": True}` to the\nadmin API with no password check: the new address was marked verified on the\nspot, and neither the old nor the new inbox heard about it. A stolen access\ntoken was therefore a permanent account takeover — the attacker owns the\naddress that password resets go to, and the real owner has no notification\nand no way back.\n\nNow it costs the password, and the update runs on the user's OWN session, so\nSupabase treats it as a change request and mails the confirmation link. The\naddress does not move until someone clicks it.",
         "operationId": "change_email_user__user_id__email_put",
         "parameters": [
           {
@@ -456,7 +906,7 @@
           "Chat"
         ],
         "summary": "Get Chat History",
-        "description": "Get a page of chat history for a user from Supabase.\n`offset` counts back from the newest message; `limit` is the page size.\nReturns { messages, has_more, next_offset } for lazy \"load older\" paging.\nRequires valid JWT token matching the user_id.",
+        "description": "Get a page of chat history for a user from Supabase.\n`offset` counts back from the newest message; `limit` is the page size.\nReturns { messages, has_more, next_offset } for lazy \"load older\" paging.\nRequires the buyer's session, and it must match the user_id.",
         "operationId": "get_chat_history_chat_history__user_id__get",
         "parameters": [
           {
@@ -515,7 +965,7 @@
           "Chat"
         ],
         "summary": "Clear Chat History",
-        "description": "Clear chat history for a user. Requires valid JWT token.",
+        "description": "Clear chat history for a user. Requires the buyer's session.",
         "operationId": "clear_chat_history_chat_history__user_id__delete",
         "parameters": [
           {
@@ -556,7 +1006,7 @@
           "Chat"
         ],
         "summary": "Get Chat Settings",
-        "description": "Get chat settings (AI enabled status) for a user. Requires valid JWT token.",
+        "description": "Get chat settings (AI enabled status) for a user. Requires the buyer's session.",
         "operationId": "get_chat_settings_chat_settings__user_id__get",
         "parameters": [
           {
@@ -597,7 +1047,7 @@
           "Chat"
         ],
         "summary": "Chat Stream",
-        "description": "Stream chat response using Server-Sent Events.\nRequires valid JWT token in Authorization header.\nAccepts both JSON body and multipart form data with optional file attachments.\n\nDeliberately NOT Turnstile-gated: a siteverify token is single-use and\nexpires in ~300s, so it can only guard one-shot submissions (the auth entry\npoints in SPEC-003), not an endpoint the client calls on every message.\nAbuse protection here is JWT auth + the per-user rate limit below + the AI\ntoken budget.",
+        "description": "Stream chat response using Server-Sent Events.\nAuthenticated by the `nl_sid` session cookie plus `X-CSRF-Token` (SPEC-093);\na bearer token is still accepted for the eval harness and tests.\nAccepts both JSON body and multipart form data with optional file attachments.\n\nDeliberately NOT Turnstile-gated: a siteverify token is single-use and\nexpires in ~300s, so it can only guard one-shot submissions (the auth entry\npoints in SPEC-003), not an endpoint the client calls on every message.\nAbuse protection here is session auth + the per-user rate limit below + the AI\ntoken budget.",
         "operationId": "chat_stream_chat_stream_post",
         "responses": {
           "200": {
@@ -617,7 +1067,7 @@
           "Chat"
         ],
         "summary": "Get Unread",
-        "description": "How many seller/agent messages this buyer hasn't read (SPEC-061).\n\nThe count is the header chip's only source of truth across a reload. Both\nthe user and the scope come from the JWT \u2014 there is no `user_id` in the\npath and therefore nothing to scope optionally\n(`docs/SECURITY_ANTI_PATTERNS.md`).\n\nCutoff is the later of the watermark and the buyer's own newest message:\ntyping is proof of presence, and it is what a conversation with no\nwatermark yet counts from, so shipping this does not mark an existing\nuser's whole history unread.\n\n`role='ai'` is both the agent and the seller \u2014 the console writes seller\nreplies as `role='ai', source='admin'`. `system` separators are not\nmessages anyone is waiting on.",
+        "description": "How many seller/agent messages this buyer hasn't read (SPEC-061).\n\nThe count is the header chip's only source of truth across a reload. Both\nthe user and the scope come from the session — there is no `user_id` in the\npath and therefore nothing to scope optionally\n(`docs/SECURITY_ANTI_PATTERNS.md`).\n\nCutoff is the later of the watermark and the buyer's own newest message:\ntyping is proof of presence, and it is what a conversation with no\nwatermark yet counts from, so shipping this does not mark an existing\nuser's whole history unread.\n\n`role='ai'` is both the agent and the seller — the console writes seller\nreplies as `role='ai', source='admin'`. `system` separators are not\nmessages anyone is waiting on.",
         "operationId": "get_unread_chat_unread_get",
         "responses": {
           "200": {
@@ -651,22 +1101,17 @@
         }
       }
     },
-    "/chat/notifications/ticket": {
+    "/chat/typing": {
       "post": {
         "tags": [
           "Chat"
         ],
-        "summary": "Notifications Ticket",
-        "description": "Mint a short-lived, single-use ticket for opening the notification stream.\n\nSPEC-056 #6. `EventSource` cannot set headers, which is why the stream used\nto accept `?token=<supabase access token>`. That put an hour-long credential\nfor the whole API into every access log, proxy log, APM breadcrumb and\nbrowser history entry that touches the URL. This endpoint is a normal\nheader-authenticated POST; what goes in the URL afterwards is a 30-second\nticket good for exactly one stream and nothing else.",
-        "operationId": "notifications_ticket_chat_notifications_ticket_post",
+        "summary": "Typing",
+        "description": "Tell the other side of this conversation that someone is typing.\n\nA buyer may only ping their own conversation; the admin console pings through\nits own gated route. Fire-and-forget — nothing is stored, and an event with\nno listener is simply dropped (SPEC-094).",
+        "operationId": "typing_chat_typing_post",
         "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
+          "204": {
+            "description": "Successful Response"
           }
         }
       }
@@ -677,7 +1122,7 @@
           "Chat"
         ],
         "summary": "Notifications Stream",
-        "description": "Real-time Server-Sent Events (SSE) notification stream.\nEmits instant notifications when the seller sends a message.\n\nAuthorised by a `?ticket=` minted at POST /chat/notifications/ticket. Access\ntokens are deliberately NOT accepted here any more (SPEC-056 #6) \u2014 a URL is\na public place, and the ticket is designed to be worthless in one.",
+        "description": "Real-time Server-Sent Events (SSE) stream: new messages and typing pings.\n\nAuthorised by the session cookie, which the browser attaches to an\n`EventSource(url, {withCredentials: true})` by itself. That is what retired\nthe single-use `?ticket=` this route used to require (SPEC-056 #6): the\nticket existed only because `EventSource` cannot set an `Authorization`\nheader, and a cookie does not need one. Nothing identifying goes in the URL\neither way.",
         "operationId": "notifications_stream_chat_notifications_stream_get",
         "responses": {
           "200": {
@@ -697,7 +1142,7 @@
           "Payment"
         ],
         "summary": "Checkout",
-        "description": "Create a Stripe checkout session for an item.\n\n`request` is the raw Starlette request, which slowapi requires by that\nexact name to key the limit; the JSON body moved to `payload`. FastAPI\nderives the body from the Pydantic type, not the parameter name, so the\nHTTP contract is unchanged.",
+        "description": "Create a Stripe checkout session for an item.\n\nThe JSON body is `payload` (a slowapi decorator once required `request` by\nthat name). FastAPI derives the body from the Pydantic type, not the\nparameter name, so the HTTP contract is unchanged.",
         "operationId": "checkout_payment_checkout_post",
         "requestBody": {
           "content": {
@@ -880,7 +1325,7 @@
           "Payment"
         ],
         "summary": "Confirm Payment",
-        "description": "Frontend fallback after the success redirect, in case the Stripe webhook is\ndelayed. This NEVER marks an item sold on trust \u2014 it requires a Stripe\nCheckout Session id that Stripe itself confirms as 'paid'. The actual\nfulfilment is delegated to the same idempotent, race-safe path the webhook\nuses, so calling this is always safe (duplicate calls are no-ops).",
+        "description": "Frontend fallback after the success redirect, in case the Stripe webhook is\ndelayed. This NEVER marks an item sold on trust — it requires a Stripe\nCheckout Session id that Stripe itself confirms as 'paid'. The actual\nfulfilment is delegated to the same idempotent, race-safe path the webhook\nuses, so calling this is always safe (duplicate calls are no-ops).",
         "operationId": "confirm_payment_payment_confirm_payment_post",
         "parameters": [
           {
@@ -939,7 +1384,7 @@
           "System"
         ],
         "summary": "Admin Login",
-        "description": "Factor 1. Verify password + admin role, then email a 6-digit OTP.\n\nReturns an opaque pre-auth handle to use with /auth/verify-2fa. The response\nis intentionally identical whether or not the email is a real admin.\n\nTurnstile-gated (SPEC-044 D): the only unauthenticated credential endpoint\nin the system, and the one whose per-IP throttle was bypassable by rotating\n`X-Forwarded-For` until `client_ip` stopped reading that header. Unlike\n/chat/stream this is a one-shot submission, so a single-use siteverify\ntoken is the right shape for it. Bypassed in development, and open rather\nthan closed when Cloudflare itself is unreachable \u2014 see verify_turnstile.",
+        "description": "Factor 1. Verify password + admin role, then email a 6-digit OTP.\n\nReturns an opaque pre-auth handle to use with /auth/verify-2fa. The response\nis intentionally identical whether or not the email is a real admin.\n\nTurnstile-gated (SPEC-044 D): the only unauthenticated credential endpoint\nin the system, and the one whose per-IP throttle was bypassable by rotating\n`X-Forwarded-For` until `client_ip` stopped reading that header. Unlike\n/chat/stream this is a one-shot submission, so a single-use siteverify\ntoken is the right shape for it. Bypassed in development, and open rather\nthan closed when Cloudflare itself is unreachable — see verify_turnstile.",
         "operationId": "admin_login_admin_auth_login_post",
         "parameters": [
           {
@@ -1280,96 +1725,6 @@
         }
       }
     },
-    "/admin/users/{user_id}/ai": {
-      "get": {
-        "tags": [
-          "System"
-        ],
-        "summary": "Get User Ai Status",
-        "description": "Get the current AI status for a user.",
-        "operationId": "get_user_ai_status_admin_users__user_id__ai_get",
-        "parameters": [
-          {
-            "name": "user_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "User Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "put": {
-        "tags": [
-          "System"
-        ],
-        "summary": "Toggle User Ai",
-        "description": "Enable or disable AI for a specific user.",
-        "operationId": "toggle_user_ai_admin_users__user_id__ai_put",
-        "parameters": [
-          {
-            "name": "user_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "User Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AIToggleRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/admin/users/{user_id}": {
       "delete": {
         "tags": [
@@ -1417,7 +1772,7 @@
           "System"
         ],
         "summary": "Get All Chats",
-        "description": "Get list of all active conversations, enriched with the user's display\nname / avatar and an `unread` flag.\n\n`unread` is the seller's read watermark (SPEC-053): true when the newest\nCUSTOMER message is newer than `chat_settings.admin_last_read_at`. A\nconversation that has never been marked falls back to the original rule \u2014\nthe customer sent the last message and is still waiting for a reply.\n\nArchived conversations (SPEC-063) are omitted unless `include_archived`.\nEvery row also carries the identity fields the console's customer panel\nshows \u2014 this handler already holds every auth user and profile, so asking\nfor them again from a second endpoint would be a round trip for data that\nis already in hand.",
+        "description": "Get list of all active conversations, enriched with the user's display\nname / avatar and an `unread` flag.\n\n`unread` is the seller's read watermark (SPEC-053): true when the newest\nCUSTOMER message is newer than `chat_settings.admin_last_read_at`. A\nconversation that has never been marked falls back to the original rule —\nthe customer sent the last message and is still waiting for a reply.\n\nArchived conversations (SPEC-063) are omitted unless `include_archived`.\nEvery row also carries the identity fields the console's customer panel\nshows — this handler already holds every auth user and profile, so asking\nfor them again from a second endpoint would be a round trip for data that\nis already in hand.",
         "operationId": "get_all_chats_admin_chats_get",
         "parameters": [
           {
@@ -1520,7 +1875,7 @@
           "System"
         ],
         "summary": "Set Chat Read State",
-        "description": "Mark a conversation read (or back to unread) \u2014 SPEC-053.\n\n`read: true` stamps the watermark over every customer message already in\nthe thread, which clears the dot until they say something new. `read:\nfalse` clears it, putting the thread back in the Unread filter so it can be\ntriaged later.\n\nThe mark covers the transcript rather than reading the clock (SPEC-066):\nrows written before that fix carry the API host's local time in a UTC\ncolumn, and a `now` stamp never gets past them.",
+        "description": "Mark a conversation read (or back to unread) — SPEC-053.\n\n`read: true` stamps the watermark over every customer message already in\nthe thread, which clears the dot until they say something new. `read:\nfalse` clears it, putting the thread back in the Unread filter so it can be\ntriaged later.\n\nThe mark covers the transcript rather than reading the clock (SPEC-066):\nrows written before that fix carry the API host's local time in a UTC\ncolumn, and a `now` stamp never gets past them.",
         "operationId": "set_chat_read_state_admin_chats__user_id__read_post",
         "parameters": [
           {
@@ -1573,7 +1928,7 @@
           "System"
         ],
         "summary": "Set Chat Archived",
-        "description": "Archive a conversation out of the console list, or restore it \u2014 SPEC-063.\n\nReversible by construction: this writes one timestamp and never touches\n`messages`. Mounted on the `protected` router, so the admin session and the\nCSRF header are already required by the time this runs.",
+        "description": "Archive a conversation out of the console list, or restore it — SPEC-063.\n\nReversible by construction: this writes one timestamp and never touches\n`messages`. Mounted on the `protected` router, so the admin session and the\nCSRF header are already required by the time this runs.",
         "operationId": "set_chat_archived_admin_chats__user_id__archive_post",
         "parameters": [
           {
@@ -1657,6 +2012,83 @@
                 "schema": {}
               }
             }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/chats/{user_id}/stream": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Admin Chat Stream",
+        "description": "Watch one buyer's conversation live.\n\nThe same per-user broker channel the buyer's own stream reads, opened here\nagainst the admin session. It replaces the console's subscription to the\npublic Supabase Realtime topic, which needed no session at all — the anon key\nin the bundle and a user id were enough (SPEC-094).",
+        "operationId": "admin_chat_stream_admin_chats__user_id__stream_get",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/chats/{user_id}/typing": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Admin Typing",
+        "description": "Show the buyer that the seller is typing.",
+        "operationId": "admin_typing_admin_chats__user_id__typing_post",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
           },
           "422": {
             "description": "Validation Error",
@@ -1897,7 +2329,7 @@
           "System"
         ],
         "summary": "Record Shipment",
-        "description": "Record postage for a paid order and tell the buyer about it.\n\nSPEC-057. Before this the lifecycle simply stopped: `status` could be set to\n'shipped' but there was nowhere to put what it shipped WITH, so the seller\npasted tracking numbers into the chat by hand and the agent could only\nrepeat the word \"shipped\" when asked.\n\nOne call does all four things \u2014 record, stamp, email, post to the chat \u2014\nbecause a seller who has to remember the other three will eventually not.",
+        "description": "Record postage for a paid order and tell the buyer about it.\n\nSPEC-057. Before this the lifecycle simply stopped: `status` could be set to\n'shipped' but there was nowhere to put what it shipped WITH, so the seller\npasted tracking numbers into the chat by hand and the agent could only\nrepeat the word \"shipped\" when asked.\n\nOne call does all four things — record, stamp, email, post to the chat —\nbecause a seller who has to remember the other three will eventually not.",
         "operationId": "record_shipment_admin_orders__order_id__shipment_put",
         "parameters": [
           {
@@ -1948,7 +2380,7 @@
           "System"
         ],
         "summary": "Refund Item",
-        "description": "Refund a paid item, releasing it back to the catalogue.\n\nSPEC-056 #1. This used to be `POST /payment/refund/{item_id}` on the public\npayment router with `Depends(verify_admin)` and nothing more. Admin auth is\na cookie the browser attaches by itself, which is exactly the shape CSRF\nexploits \u2014 every other mutating admin action is gated by `verify_csrf_token`\nvia the `protected` router in `routes/admin/__init__.py`, and the one that\nmoves money was the exception. Living here, it inherits that gate.",
+        "description": "Refund a paid item, releasing it back to the catalogue.\n\nSPEC-056 #1. This used to be `POST /payment/refund/{item_id}` on the public\npayment router with `Depends(verify_admin)` and nothing more. Admin auth is\na cookie the browser attaches by itself, which is exactly the shape CSRF\nexploits — every other mutating admin action is gated by `verify_csrf_token`\nvia the `protected` router in `routes/admin/__init__.py`, and the one that\nmoves money was the exception. Living here, it inherits that gate.",
         "operationId": "refund_item_admin_orders_refund__item_id__post",
         "parameters": [
           {
@@ -2279,13 +2711,103 @@
         }
       }
     },
+    "/admin/users/{user_id}/ai": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Get User Ai Status",
+        "description": "Get the current AI status for a user.",
+        "operationId": "get_user_ai_status_admin_users__user_id__ai_get",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Toggle User Ai",
+        "description": "Enable or disable AI for a specific user.",
+        "operationId": "toggle_user_ai_admin_users__user_id__ai_put",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AIToggleRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/webhooks/resend": {
       "post": {
         "tags": [
           "Webhooks"
         ],
         "summary": "Resend Webhook",
-        "description": "Handle Resend inbound-email webhooks (event: email.received).\n\nnegolah.my has no real mailbox yet, so every received email \u2014 including\ninline images and real file attachments \u2014 is forwarded to RESEND_FORWARD_TO\nvia Resend's send API.",
+        "description": "Handle Resend inbound-email webhooks (event: email.received).\n\nnegolah.my has no real mailbox yet, so every received email — including\ninline images and real file attachments — is forwarded to RESEND_FORWARD_TO\nvia Resend's send API.",
         "operationId": "resend_webhook_webhooks_resend_post",
         "responses": {
           "200": {
@@ -2318,7 +2840,25 @@
     "/health": {
       "get": {
         "summary": "Health Check",
+        "description": "Liveness: the process is up. Deliberately checks nothing else, so a\nRedis blip does not get a healthy container restarted.",
         "operationId": "health_check_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ready": {
+      "get": {
+        "summary": "Readiness Check",
+        "description": "Readiness: can this worker actually serve a signed-in request?\n\n`/health` answers \"healthy\" through every Redis failure mode, so it cannot\ntell an uptime monitor anything useful (audit OBS-1). This pings Redis with\na timeout and reports whether cross-worker notifications are flowing.",
+        "operationId": "readiness_check_ready_get",
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -2388,7 +2928,7 @@
         },
         "type": "object",
         "title": "AdminArchiveRequest",
-        "description": "SPEC-063 \u2014 move a conversation out of the console list, or back into it.\n\nSoft state only: nothing in `messages` is touched, so this is reversible and\na transcript can never be lost to a triage gesture."
+        "description": "SPEC-063 — move a conversation out of the console list, or back into it.\n\nSoft state only: nothing in `messages` is touched, so this is reversible and\na transcript can never be lost to a triage gesture."
       },
       "AdminLoginRequest": {
         "properties": {
@@ -2431,7 +2971,51 @@
         },
         "type": "object",
         "title": "AdminReadStateRequest",
-        "description": "SPEC-053 \u2014 set or clear a conversation's read watermark.\n\nDefaults to True so the common call (the console opening a thread) can post\nan empty body."
+        "description": "SPEC-053 — set or clear a conversation's read watermark.\n\nDefaults to True so the common call (the console opening a thread) can post\nan empty body."
+      },
+      "AuthCredentialsRequest": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "title": "Email"
+          },
+          "password": {
+            "type": "string",
+            "title": "Password"
+          }
+        },
+        "type": "object",
+        "required": [
+          "email",
+          "password"
+        ],
+        "title": "AuthCredentialsRequest"
+      },
+      "AuthEmailRequest": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "title": "Email"
+          }
+        },
+        "type": "object",
+        "required": [
+          "email"
+        ],
+        "title": "AuthEmailRequest"
+      },
+      "AuthPasswordResetRequest": {
+        "properties": {
+          "new_password": {
+            "type": "string",
+            "title": "New Password"
+          }
+        },
+        "type": "object",
+        "required": [
+          "new_password"
+        ],
+        "title": "AuthPasswordResetRequest"
       },
       "BanRequest": {
         "properties": {

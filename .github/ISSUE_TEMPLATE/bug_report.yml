@@ -1,0 +1,26 @@
+name: Bug report
+description: Something on negolah.my or in this code does not work as it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: "**Security issue?** Do not file it here. Follow [SECURITY.md](https://github.com/terryong31/nego-lah/blob/main/SECURITY.md)."
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: "1. Open …\n2. Click …"
+    validations:
+      required: true
+  - type: input
+    id: where
+    attributes:
+      label: Where
+      description: Page URL or file path, and browser if relevant.

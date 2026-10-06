@@ -13,8 +13,8 @@ exactly one worker, guarded by an atomic Redis lease:
 
 The provider is resolved ONCE per request by `hybrid_llm_session()` and pinned
 in a ContextVar for the duration. Every model consumer in that turn — the
-supervisor and both sub-agents — then reads the pinned choice instead of
-re-probing, so one conversation never gets split across two models mid-turn,
+ReAct agent, or the decider and speaker on the local path (SPEC-091) — then
+reads the pinned choice instead of re-probing, so one conversation never gets split across two models mid-turn,
 and one turn never holds two leases.
 """
 

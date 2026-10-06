@@ -37,9 +37,21 @@ if not REDIS_URL:
 
 # Upper bound on the shared Redis connection pool, per worker process. Left
 # unbounded, a burst of concurrent requests can open connections without limit;
-# the ceiling here is sized for the ~32-thread pool `asyncio.to_thread` uses
-# plus headroom, so it caps the blast radius without throttling normal traffic.
+# the ceiling here is sized for the 32-thread default executor `main.py`
+# installs (`ASYNCIO_EXECUTOR_THREADS`) plus headroom.
 REDIS_MAX_CONNECTIONS = int(os.getenv("REDIS_MAX_CONNECTIONS", "50"))
+
+# Every request makes synchronous Redis round trips (rate limit, session, ban
+# check). Without a socket timeout a network stall parks the calling thread
+# forever, and with it, eventually, the whole worker (audit REL-1).
+REDIS_SOCKET_TIMEOUT = float(os.getenv("REDIS_SOCKET_TIMEOUT", "2"))
+
+# The loop's default executor is what `asyncio.to_thread` runs on. Python sizes
+# it at min(32, cpu_count + 4) — five or six threads on a Lightsail box — which
+# one slow dependency can exhaust. Sized explicitly in the lifespan.
+ASYNCIO_EXECUTOR_THREADS = int(os.getenv("ASYNCIO_EXECUTOR_THREADS", "32"))
+
+IS_PROD = (os.getenv("ENV") or "development").lower() in ("production", "prod")
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 STRIPE_API_KEY = os.getenv("STRIPE_API_KEY")
@@ -117,12 +129,10 @@ USER_COOKIE_SECURE = os.getenv("USER_COOKIE_SECURE", "true" if _is_https else "f
 USER_COOKIE_SAMESITE = os.getenv("USER_COOKIE_SAMESITE", "lax").lower()
 USER_COOKIE_PATH = os.getenv("USER_COOKIE_PATH", "/")
 USER_COOKIE_DOMAIN = os.getenv("USER_COOKIE_DOMAIN", _default_cookie_domain)
-# 30 days, sliding. Long on purpose, though for different reasons per environment:
-# the local sidecar runs `maxmemory-policy volatile-ttl` and evicts the SHORTEST
-# remaining TTL first, so a long-lived session key is the last thing dropped
-# rather than the first. Prod's managed Redis runs `noeviction` and rejects
-# writes at the cap instead, so nothing is evicted there at all — what a long TTL
-# buys is simply not asking people to sign in again every week. See ADR-0028.
+# 30 days, sliding. Long on purpose: prod's managed Redis (Upstash) runs
+# `noeviction` and rejects writes at the cap instead of dropping keys, so a long
+# TTL costs nothing in eviction — what it buys is not asking people to sign in
+# again every week. See ADR-0028.
 USER_SESSION_TTL = int(os.getenv("USER_SESSION_TTL", str(30 * 24 * 3600)))
 # The buyer's readable CSRF cookie, and the short-lived PKCE holder that carries
 # the OAuth code verifier across the Google -> Supabase -> API redirect chain.

@@ -22,6 +22,21 @@ body {
   --color-green-950: #052E16;
 }
 
+/*
+ * Light mode takes primary from 700, not Nuxt UI's default 500. White on
+ * #00C16A is 2.4:1 — every primary button, the wordmark and the "Forgot
+ * password" link failed WCAG AA (4.5:1). #007F45 is 5.1:1 (audit A11Y-1).
+ * `.dark` is restated because an unlayered `:root` would otherwise also win
+ * over Nuxt UI's layered dark-mode value; dark keeps its default, which passes.
+ */
+:root {
+  --ui-primary: var(--ui-color-primary-700);
+}
+
+.dark {
+  --ui-primary: var(--ui-color-primary-400);
+}
+
 /* Corporate Memphis & 2D Motion Keyframes */
 @keyframes memphis-float {
   0%, 100% { transform: translateY(0) rotate(0deg); }

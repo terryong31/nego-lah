@@ -1,4 +1,4 @@
-# 7. Hybrid Edge-Cloud LLM Load Balancer with Atomic Concurrency Leases
+# ADR-0007: Hybrid Edge-Cloud LLM Load Balancer with Atomic Concurrency Leases
 
 - Status: Accepted
 - Date: 2026-09-05

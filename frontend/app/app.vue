@@ -22,6 +22,12 @@ watch(user, () => {
 })
 
 const socialTitle = 'Nego-Lah · Autonomous AI Price Negotiation Marketplace'
+
+// Every route is its own canonical (audit SEO-1). A single global
+// `canonical: https://negolah.my` told crawlers every listing duplicated the
+// homepage. Path only: query strings are filters and redirects, not pages.
+const route = useRoute()
+const canonicalUrl = computed(() => `https://negolah.my${route.path === '/' ? '' : route.path}`)
 const description = computed(() => t('common.tagline'))
 
 useHead({
@@ -30,7 +36,8 @@ useHead({
   },
   // Pages set a bare title ('Chats'); the brand is appended here. The home page
   // sets none and falls back to the app default, which is already the brand.
-  titleTemplate: title => (!title || title === 'Nego-Lah' ? 'Nego-Lah' : `${title} · Nego-Lah`)
+  titleTemplate: title => (!title || title === 'Nego-Lah' ? 'Nego-Lah' : `${title} · Nego-Lah`),
+  link: [{ rel: 'canonical', href: canonicalUrl }]
 })
 
 useSeoMeta({
@@ -38,6 +45,7 @@ useSeoMeta({
   ogTitle: socialTitle,
   ogDescription: description,
   ogSiteName: 'Nego-Lah',
+  ogUrl: canonicalUrl,
   ogImage: 'https://negolah.my/og-image.png',
   ogImageWidth: 1200,
   ogImageHeight: 675,

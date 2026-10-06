@@ -1,16 +1,15 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { mockNuxtImport } from '@nuxt/test-utils/runtime'
 import { useAdminApi } from '../../app/composables/useAdminApi'
 
-// `$fetch` is a runtime global (provided by ofetch/nitro), not a named entry
-// in the Nuxt auto-import registry, so `mockNuxtImport('$fetch', ...)` fails
-// with "Cannot find import '$fetch' to mock". Stub the global directly instead.
-const fetchMock = vi.fn()
+// Nuxt 4.5 made `$fetch` an auto-import (from `#build/fetch.mjs`), so it is
+// mocked like any other import; stubbing the global no longer reaches it.
+const { fetchMock } = vi.hoisted(() => ({ fetchMock: vi.fn() }))
+mockNuxtImport('$fetch', () => fetchMock)
 
+// Reset BEFORE each test: the mock is installed at import time, so the app's
+// own boot requests (the session probe) land in it before the first test runs.
 beforeEach(() => {
-  vi.stubGlobal('$fetch', fetchMock)
-})
-
-afterEach(() => {
   fetchMock.mockReset()
 })
 

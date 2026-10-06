@@ -22,8 +22,10 @@ import time
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import httpx
 import pytest
 from fastapi import Response
+from supabase_auth.errors import AuthApiError, AuthRetryableError
 
 import domains.identity.user_session as user_session
 from core.cache import redis_client
@@ -229,6 +231,37 @@ def test_a_failed_refresh_revokes_rather_than_401ing_forever(monkeypatch):
 
     assert resolve_session(sid) is None
     assert read_session(sid) is None
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        httpx.ConnectTimeout("timed out"),
+        AuthRetryableError("upstream unavailable", 503),
+        AuthApiError("bad gateway", 502, None),
+    ],
+)
+def test_a_transient_refresh_failure_keeps_the_session(monkeypatch, error):
+    """Audit REL-3: a timeout or 5xx never spent the refresh token, so revoking
+    signed buyers out for Supabase's outage rather than their own."""
+    client = MagicMock()
+    client.auth.refresh_session.side_effect = error
+    monkeypatch.setattr(user_session, "new_user_client", lambda: client)
+
+    sid = create_session("user-1", "access-1", "refresh-1", int(time.time()) + 10)
+
+    assert resolve_session(sid)["user_id"] == "user-1"
+    assert read_session(sid)["refresh_token"] == "refresh-1"
+
+
+def test_a_rejected_refresh_token_still_revokes(monkeypatch):
+    client = MagicMock()
+    client.auth.refresh_session.side_effect = AuthApiError("Invalid Refresh Token", 400, None)
+    monkeypatch.setattr(user_session, "new_user_client", lambda: client)
+
+    sid = create_session("user-1", "access-1", "refresh-1", int(time.time()) + 10)
+
+    assert resolve_session(sid) is None
 
 
 def test_the_refresh_lock_is_released_even_when_the_refresh_fails(monkeypatch):

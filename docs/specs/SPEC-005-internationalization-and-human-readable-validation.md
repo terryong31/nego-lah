@@ -1,7 +1,7 @@
 ---
 id: SPEC-005
 title: Full-Stack Trilingual i18n, Server Metadata Sync, and End-to-End Zod Validation
-status: in-progress
+status: complete
 priority: high
 created: 2026-09-04
 tags: [frontend, backend, i18n, localization, validation, zod, ai-agent]
@@ -23,27 +23,34 @@ Nego-lah is a Malaysian second-hand marketplace with AI-powered negotiation. Mal
    - Gemini Vision AI pipeline generates titles, conditions, and markdown descriptions in the selected language.
 
 # Acceptance Criteria
-- [ ] **Language Preference Lifecycle**:
+- [x] **Language Preference Lifecycle**:
   - Unauthenticated first visit detects browser/country language and defaults to `en`, `ms`, or `zh` with `localStorage` caching.
   - Login checks user metadata `preferred_language`. If present, applies it. If absent, writes current client locale to user metadata.
   - Changing language while logged in immediately persists `preferred_language` to backend.
-- [ ] **Footer Language Switcher**:
+- [x] **Footer Language Switcher**:
   - Placed directly to the left of `<UColorModeSelect />` in all layouts (`default.vue`, `dashboard.vue`, `chat.vue`).
-- [ ] **Zod For Everything (Entire Client)**:
+- [x] **Zod For Everything (Entire Client)**:
   - Auth: `loginSchema`, `registerSchema`, `forgotPasswordSchema`, `resetPasswordSchema`.
   - Profile: `profileInfoSchema`, `emailChangeSchema`, `passwordChangeSchema`.
   - Admin: `adminLoginSchema`, `adminItemSchema`, `adminUserBanSchema`.
   - Checkout & Shipping: `shippingSchema` (recipient, Malaysian phone number, address).
   - Chat: `chatInputSchema`.
   - Global `z.setErrorMap` renders friendly human-readable localized text for all error types.
-- [ ] **Multilingual Admin Item Creation & AI Generation**:
+- [x] **Multilingual Admin Item Creation & AI Generation**:
   - `_console/items` creation modal includes target language selector (`en`, `ms`, `zh`).
   - `/analyze-image/stream` and `/analyze-image` accept `language` parameter.
   - Vision AI agent prompts produce listings in the specified target language.
-- [ ] **Backend Server Endpoint**:
+- [x] **Backend Server Endpoint**:
   - `PUT /user/{user_id}/language` updates `user_metadata.preferred_language` using service role.
-- [ ] **Automated Tests**:
+- [x] **Automated Tests**:
   - Unit tests verifying language detection, server metadata synchronization, multilingual AI prompt generation, and Zod error formatting in `en`, `ms`, `zh`.
+
+> **Verified 2026-10-07.** `useLanguage.ts` (detection, `localStorage`, `preferred_language` sync),
+> `LanguageSelect.vue` beside `UColorModeSelect` (only `default.vue` has a footer; `chat.vue` and
+> `dashboard.vue` have none), `utils/schemas.ts` + `plugins/zod-i18n.ts`, `PUT /user/{user_id}/language`,
+> `image_analyzer._build_prompt(language=…)`. Tests: `frontend/tests/useLanguage.test.ts`,
+> `frontend/tests/zod-i18n.test.ts`, `backend/tests/test_user_language.py`. Two schemas shipped under
+> other names: `profileInfoSchema` → `profileDetailsSchema`, `shippingSchema` → `shippingAddressSchema`.
 
 # Technical Design & Contracts
 ### Backend API
@@ -62,10 +69,10 @@ Nego-lah is a Malaysian second-hand marketplace with AI-powered negotiation. Mal
 - Schemas: `frontend/app/utils/schemas.ts` and plugin `frontend/app/plugins/zod-i18n.ts`.
 
 # Test-Driven Development (TDD) Scenarios
-- [ ] **Scenario 1 (Backend Language Update):** Test `PUT /user/{user_id}/language` persists language to user metadata and rejects invalid codes.
-- [ ] **Scenario 2 (AI Prompt Language Tuning):** Test `image_analyzer` includes language directives for `ms`, `zh`, and `en`.
-- [ ] **Scenario 3 (Zod Human-Readable Error Map):** Test Zod validation output across email, min-length, password match, and required fields in all 3 languages.
-- [ ] **Scenario 4 (All Unit Tests Passing):** Full monorepo test suite passes without regressions.
+- [x] **Scenario 1 (Backend Language Update):** Test `PUT /user/{user_id}/language` persists language to user metadata and rejects invalid codes.
+- [x] **Scenario 2 (AI Prompt Language Tuning):** Test `image_analyzer` includes language directives for `ms`, `zh`, and `en`.
+- [x] **Scenario 3 (Zod Human-Readable Error Map):** Test Zod validation output across email, min-length, password match, and required fields in all 3 languages.
+- [x] **Scenario 4 (All Unit Tests Passing):** Full monorepo test suite passes without regressions.
 
 # Implementation Files
 - `backend/routes/user.py` - Add `PUT /{user_id}/language`

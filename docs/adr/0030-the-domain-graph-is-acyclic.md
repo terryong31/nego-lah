@@ -1,6 +1,9 @@
 # ADR-0030: The domain graph is acyclic
 
-**Status:** Accepted · **Date:** 2026-09-20 · **Extends:** [ADR-0027](0027-code-relocation-into-domain-packages.md) · **Relates to:** [SPEC-097](../specs/SPEC-097-the-domain-graph-is-acyclic.md)
+- Status: Accepted
+- Date: 2026-09-20
+- Extends: [ADR-0027](0027-code-relocation-into-domain-packages.md)
+- Relates to: [SPEC-097](../specs/SPEC-097-the-domain-graph-is-acyclic.md)
 
 ## Context
 

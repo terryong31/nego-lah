@@ -1,4 +1,4 @@
-# 10. Cloudflare R2 for Large Static Media, Not Supabase Storage
+# ADR-0010: Cloudflare R2 for Large Static Media, Not Supabase Storage
 
 - Status: Accepted
 - Date: 2026-09-08

@@ -17,6 +17,7 @@ from typing import Any
 
 from core.connector import admin_supabase
 from core.logger import logger
+from core.pagination import fetch_all
 
 
 def _delete_by_user(query: Any, table: str, user_id: str) -> None:
@@ -116,7 +117,9 @@ class NegotiationService:
         """
         client = supabase_client or admin_supabase
         try:
-            rows = client.table("messages").select("user_id").execute().data or []
+            # The inbox function is already one row per conversation; reading
+            # `messages` here was capped at its first 1,000 rows (audit SCL-2).
+            rows = fetch_all(lambda: client.rpc("admin_chat_inbox", {}).order("user_id"))
         except Exception:
             return 0
         return len({row.get("user_id") for row in rows if row.get("user_id")})

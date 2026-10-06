@@ -28,6 +28,15 @@ product, and with it the last reason for supabase-js to be in the bundle (SPEC-0
 
 # Acceptance Criteria
 
+> **Status check 2026-10-07.** Deployed: production answers `GET /auth/session` with
+> `401 {"detail":"No session"}`, `GET /auth/oauth/start` redirects to Supabase with
+> `redirect_to=https://api.negolah.my/auth/callback`, and the retired
+> `POST /chat/notifications/ticket` returns 404. The one open criterion is the manual pass in real
+> browsers, which needs a human with test accounts, or the end-to-end suite in
+> [#14](https://github.com/terryong31/nego-lah/issues/14). `frontend/e2e/` now covers the anonymous contract (no-session 401,
+> OAuth `redirect_to` the API callback, retired ticket route, refused anonymous stream) and, given
+> `E2E_EMAIL`/`E2E_PASSWORD`, an httpOnly `nl_sid` that the page cannot read and a logout that ends it.
+
 - [x] **Nothing is published to Supabase Realtime.** `broadcast_to_chat` fans out to the broker
       only; the `POST {SUPABASE_URL}/realtime/v1/api/broadcast` calls are deleted here and in
       `domains/identity/admin_users.py`.

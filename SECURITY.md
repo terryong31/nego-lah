@@ -19,6 +19,7 @@ We take the security of Nego-Lah and our users very seriously. If you have found
 - **Security.txt:** [https://negolah.my/.well-known/security.txt](https://negolah.my/.well-known/security.txt)
 
 Please include the following information in your report:
+
 1. Type of vulnerability (e.g., XSS, CSRF, authentication bypass, SQL injection, information disclosure).
 2. Step-by-step instructions or proof-of-concept (PoC) to reproduce the issue.
 3. Potential impact and affected endpoints or components.

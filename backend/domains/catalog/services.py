@@ -12,6 +12,7 @@ from typing import Any
 
 from core.connector import admin_supabase, user_supabase
 from core.logger import logger
+from core.pagination import fetch_all
 from domains.catalog.items import (
     CONFIDENTIAL_ITEM_COLUMNS,
     PUBLIC_ITEM_COLUMNS,
@@ -199,7 +200,7 @@ class CatalogService:
         """{status: count} over live items, for the cross-domain admin summary."""
         client = supabase_client or admin_supabase
         try:
-            rows = client.table("items").select("status").is_("deleted_at", "null").execute().data or []
+            rows = fetch_all(lambda: client.table("items").select("status").is_("deleted_at", "null").order("id"))
         except Exception:
             return {}
         counts: dict[str, int] = {}

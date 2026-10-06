@@ -34,7 +34,7 @@ RUN --mount=type=secret,id=sentry_auth_token,env=SENTRY_AUTH_TOKEN \
     bun run build
 
 # ---- Runtime stage: just Node + the built server output ----
-FROM node:24-slim AS runtime
+FROM node:25-slim AS runtime
 WORKDIR /app
 
 ENV NODE_ENV=production \

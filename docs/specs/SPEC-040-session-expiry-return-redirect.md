@@ -1,7 +1,7 @@
 ---
 id: SPEC-040
 title: Session-Expiry Return Redirect — Land Back on the Page You Were Kicked Off
-status: completed
+status: complete
 priority: high
 created: 2026-09-05
 tags: [frontend, nuxt, auth, routing, chat]

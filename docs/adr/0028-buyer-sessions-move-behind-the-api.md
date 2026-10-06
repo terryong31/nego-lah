@@ -1,4 +1,4 @@
-# 28. Buyer Sessions Move Behind the API, Not Into an SSR Server
+# ADR-0028: Buyer Sessions Move Behind the API, Not Into an SSR Server
 
 - Status: Accepted
 - Date: 2026-09-18

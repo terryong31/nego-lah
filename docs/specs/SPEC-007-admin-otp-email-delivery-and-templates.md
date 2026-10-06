@@ -20,11 +20,11 @@ This spec establishes:
 4. Resilient backend OTP delivery fallback in `backend/admin_session.py` via `admin_supabase.auth.admin.generate_link()` and direct Resend API dispatch.
 
 # Acceptance Criteria
-- [ ] Branded, responsive HTML template created at `supabase/templates/magic_link.html` displaying the OTP code `{{ .Token }}` prominently with fallback magic link `{{ .ConfirmationURL }}`.
-- [ ] Branded HTML templates created for `supabase/templates/recovery.html` and `supabase/templates/confirmation.html`.
-- [ ] `supabase/config.toml` updated with `[auth.email.template.*]` pointing to local HTML files.
-- [ ] `backend/admin_session.py` enhanced with resilient OTP dispatch: if Supabase's internal SMTP fails or in resilient mode, generates link via service-role `generate_link()` and dispatches via Resend API (with `onboarding@resend.dev` development fallback if custom domain is unverified).
-- [ ] All automated tests pass: `test_admin_session.py` coverage for OTP dispatch fallback, and full pytest suite remains 100% green.
+- [x] Branded, responsive HTML template created at `supabase/templates/magic_link.html` displaying the OTP code `{{ .Token }}` prominently with fallback magic link `{{ .ConfirmationURL }}`.
+- [x] Branded HTML templates created for `supabase/templates/recovery.html` and `supabase/templates/confirmation.html`.
+- [x] `supabase/config.toml` updated with `[auth.email.template.*]` pointing to local HTML files.
+- [x] `backend/admin_session.py` enhanced with resilient OTP dispatch: if Supabase's internal SMTP fails or in resilient mode, generates link via service-role `generate_link()` and dispatches via Resend API (with `onboarding@resend.dev` development fallback if custom domain is unverified).
+- [x] All automated tests pass: `test_admin_session.py` coverage for OTP dispatch fallback, and full pytest suite remains 100% green.
 
 # Technical Design & Contracts
 - **Supabase Template Variables**:
@@ -36,9 +36,11 @@ This spec establishes:
   - Payload: `{ "from": from_addr, "to": email, "subject": "...", "html": html_content }`
   - Fallback sender: If sending via `relay@negolah.my` fails with 403/550 unverified domain or during dev, fallback to `onboarding@resend.dev` for account owner delivery.
 
+> **Verified 2026-10-07.** Templates exist in `supabase/templates/` and are wired in `supabase/config.toml`; the fallback now lives in `backend/domains/identity/admin_session.py` (moved by SPEC-092) and is covered by `tests/test_admin_session.py`.
+
 # Test-Driven Development (TDD) Scenarios
-- [ ] **Scenario 1:** `password_then_send_otp` succeeds normally when `sign_in_with_otp` succeeds.
-- [ ] **Scenario 2:** When `sign_in_with_otp` fails (e.g. Supabase SMTP failure), `password_then_send_otp` falls back to `generate_link` + Resend dispatch, logging an info/warning rather than completely dropping the OTP.
+- [x] **Scenario 1:** `password_then_send_otp` succeeds normally when `sign_in_with_otp` succeeds.
+- [x] **Scenario 2:** When `sign_in_with_otp` fails (e.g. Supabase SMTP failure), `password_then_send_otp` falls back to `generate_link` + Resend dispatch, logging an info/warning rather than completely dropping the OTP.
 
 # Implementation Files
 - `supabase/templates/magic_link.html` - Branded HTML template for Admin 2FA OTP / Magic Link.

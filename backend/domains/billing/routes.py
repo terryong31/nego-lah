@@ -28,7 +28,7 @@ def checkout(
     parameter name, so the HTTP contract is unchanged.
     """
     try:
-        # Require a valid (and non-banned) JWT. The buyer is always the
+        # Require a valid (and non-banned) session. The buyer is always the
         # authenticated user — never trust the user_id from the body.
         user_id = get_user_id_from_body_or_token(payload.user_id, token_user_id)
 

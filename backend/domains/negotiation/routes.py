@@ -99,7 +99,7 @@ async def get_chat_history(
     Get a page of chat history for a user from Supabase.
     `offset` counts back from the newest message; `limit` is the page size.
     Returns { messages, has_more, next_offset } for lazy "load older" paging.
-    Requires valid JWT token matching the user_id.
+    Requires the buyer's session, and it must match the user_id.
     """
     # Validate token matches requested user_id
     get_user_id_from_body_or_token(user_id, token_user_id)
@@ -128,7 +128,7 @@ async def get_chat_history(
 
 @router.delete("/chat/history/{user_id}", dependencies=[Depends(verify_user_csrf_token)])
 async def clear_chat_history(user_id: str, token_user_id: str = Depends(verify_user_token)):
-    """Clear chat history for a user. Requires valid JWT token."""
+    """Clear chat history for a user. Requires the buyer's session."""
     # Validate token matches requested user_id
     get_user_id_from_body_or_token(user_id, token_user_id)
 
@@ -144,7 +144,7 @@ async def clear_chat_history(user_id: str, token_user_id: str = Depends(verify_u
 
 @router.get("/chat/settings/{user_id}")
 async def get_chat_settings(user_id: str, token_user_id: str = Depends(verify_user_token)):
-    """Get chat settings (AI enabled status) for a user. Requires valid JWT token."""
+    """Get chat settings (AI enabled status) for a user. Requires the buyer's session."""
     # Validate token matches requested user_id
     get_user_id_from_body_or_token(user_id, token_user_id)
 
@@ -562,16 +562,17 @@ async def _run_turn(
 async def chat_stream(request: Request):
     """
     Stream chat response using Server-Sent Events.
-    Requires valid JWT token in Authorization header.
+    Authenticated by the `nl_sid` session cookie plus `X-CSRF-Token` (SPEC-093);
+    a bearer token is still accepted for the eval harness and tests.
     Accepts both JSON body and multipart form data with optional file attachments.
 
     Deliberately NOT Turnstile-gated: a siteverify token is single-use and
     expires in ~300s, so it can only guard one-shot submissions (the auth entry
     points in SPEC-003), not an endpoint the client calls on every message.
-    Abuse protection here is JWT auth + the per-user rate limit below + the AI
+    Abuse protection here is session auth + the per-user rate limit below + the AI
     token budget.
     """
-    # Validate JWT token FIRST
+    # Authenticate FIRST (session cookie, or bearer for evals/tests)
     token_user_id = await verify_user_token(request)
 
     content_type = request.headers.get("content-type", "")
@@ -707,7 +708,7 @@ async def get_unread(user_id: str = Depends(verify_user_token)):
     """How many seller/agent messages this buyer hasn't read (SPEC-061).
 
     The count is the header chip's only source of truth across a reload. Both
-    the user and the scope come from the JWT — there is no `user_id` in the
+    the user and the scope come from the session — there is no `user_id` in the
     path and therefore nothing to scope optionally
     (`docs/SECURITY_ANTI_PATTERNS.md`).
 

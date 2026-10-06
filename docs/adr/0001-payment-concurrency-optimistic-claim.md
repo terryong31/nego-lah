@@ -1,4 +1,4 @@
-# 1. Optimistic claim-at-payment over pessimistic inventory locking
+# ADR-0001: Optimistic claim-at-payment over pessimistic inventory locking
 
 - Status: Accepted
 - Date: 2026-06-30

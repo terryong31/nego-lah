@@ -20,13 +20,13 @@ Serve static branding assets (logo for transactional emails) and the product dem
 > transactional email embeds them by absolute URL.
 
 # Acceptance Criteria
-- [ ] MP4 video has the `moov` index atom relocated before the `mdat` payload (FastStart), enabling instant progressive HTTP streaming without full download.
-- [ ] `branding/logo.png`, `branding/mark.svg`, and `videos/negotiation-demo.mp4` are uploaded to the public `images` bucket in both Supabase staging (`dev`) and production (`prod`).
-- [ ] Objects are uploaded with `cache-control: public, max-age=31536000, immutable`.
-- [ ] Email templates (`base.html`, `magic_link.html`) render the high-DPI brand logo from the CDN with graceful fallbacks.
-- [ ] `backend/services/email_service.py` automatically injects `brand_logo_url` into template context.
-- [ ] `ProductVideoShowcase.vue` defaults its video source to the Supabase CDN URL when runtime configuration is present, falling back to local `/videos/negotiation-demo.mp4`.
-- [ ] Idempotent CLI script `backend/scripts/sync_cdn_assets.py` managed via `mise run cdn:sync`.
+- ~~MP4 video has the `moov` index atom relocated before the `mdat` payload (FastStart), enabling instant progressive HTTP streaming without full download.~~ *Superseded by SPEC-045 (video moved to R2).*
+- [x] `branding/logo.png` and `branding/mark.svg` are uploaded to the public `images` bucket. ~~`videos/negotiation-demo.mp4`~~ moved to R2 (SPEC-045). *(Verified 2026-10-07 in production: both return 200. Staging not checked.)*
+- [x] Objects are uploaded with `cache-control: public, max-age=31536000, immutable`. *(2026-10-07: re-synced with `mise run cdn:sync:prod`; the stored object metadata reads `cacheControl: max-age=31536000` for both files. The response header is still `no-cache`, and so is every other public object in the project, item photos included, with Cloudflare answering `cf-cache-status: REVALIDATED`. That header is Supabase's serving policy, not the upload's, so no upload setting can change it. Staging was paused and not synced.)*
+- [x] Email templates (`base.html`, `magic_link.html`) render the high-DPI brand logo from the CDN with graceful fallbacks. *(Verified: `templates/emails/base.html`, `supabase/templates/magic_link.html`.)*
+- [x] `backend/services/email_service.py` automatically injects `brand_logo_url` into template context. *(Verified: now `core/email_service.get_brand_logo_url`.)*
+- ~~`ProductVideoShowcase.vue` defaults its video source to the Supabase CDN URL when runtime configuration is present, falling back to local `/videos/negotiation-demo.mp4`.~~ *Superseded: the component was replaced by `IntroVideo.vue` (SPEC-100, ADR-0031).*
+- [x] Idempotent CLI script `backend/scripts/sync_cdn_assets.py` managed via `mise run cdn:sync`. *(Verified: `cdn:sync`, `cdn:sync:staging`, `cdn:sync:prod`.)*
 
 # Technical Design & Contracts
 ### Storage Paths (`images` bucket)
@@ -40,9 +40,9 @@ Serve static branding assets (logo for transactional emails) and the product dem
 - Production Host: `https://umtsegjkgpfefjvhyysh.supabase.co`
 
 # Test-Driven Development (TDD) Scenarios
-- [ ] **Scenario 1:** `backend/tests/test_email_service.py` verifies that `render_email_template` injects `brand_logo_url` and renders `<img ...>` in `base.html`.
-- [ ] **Scenario 2:** `frontend/tests/components/home/ProductVideoShowcase.test.ts` verifies that `ProductVideoShowcase` constructs the Supabase CDN video URL when `supabase.url` is configured.
-- [ ] **Scenario 3:** Verify HTTP 206 Partial Content range requests against the uploaded video on both CDNs.
+- [x] **Scenario 1:** `backend/tests/test_email_service.py` verifies that `render_email_template` injects `brand_logo_url` and renders `<img ...>` in `base.html`. *(Verified: `test_email_template_renders_cdn_brand_logo`.)*
+- ~~**Scenario 2:** `frontend/tests/components/home/ProductVideoShowcase.test.ts` verifies that `ProductVideoShowcase` constructs the Supabase CDN video URL when `supabase.url` is configured.~~ *Superseded with the component.*
+- ~~**Scenario 3:** Verify HTTP 206 Partial Content range requests against the uploaded video on both CDNs.~~ *Superseded by SPEC-045.*
 
 # Implementation Files
 - `backend/scripts/sync_cdn_assets.py` - FastStart optimization & Supabase storage sync

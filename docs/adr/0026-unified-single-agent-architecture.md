@@ -1,7 +1,7 @@
-# ADR 0026: Unified Single-Agent Architecture with Direct Tool Calling
+# ADR-0026: Unified Single-Agent Architecture with Direct Tool Calling
 
-## Status
-Accepted
+- Status: Accepted
+- Date: 2026-09-16
 
 ## Context
 In SPEC-000, the conversational agent was designed as a multi-agent supervisor graph where `Customer Agent` coordinated two specialized sub-agents: `ItemAgent` (catalog inspection) and `StripeAgent` (payment pipeline).

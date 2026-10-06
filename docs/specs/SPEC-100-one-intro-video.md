@@ -1,7 +1,7 @@
 ---
 id: SPEC-100
 title: One Motion-Graphics Intro Video Replaces the Three-Step Walkthrough
-status: in-progress
+status: complete
 priority: medium
 created: 2026-10-07
 tags: [frontend, media, motion, home]
@@ -27,7 +27,7 @@ components, so the video stays sharp and never shows stale UI.
 - [x] Under `prefers-reduced-motion` it does not autoplay; the poster shows with a play button.
 - [x] The video never shows or implies a floor price; prices fall in whole-number, small steps.
 - [x] Rendered MP4 is H.264 + AAC, FastStart, ≤ 4 MB, with a poster frame; neither is in git.
-- [ ] Music and SFX are free for commercial use; raw audio is not committed (public repo) and
+- [x] Music and SFX are free for commercial use; raw audio is not committed (public repo) and
       `video/audio/CREDITS.md` records the source and licence of each file.
 
 # Technical Design & Contracts

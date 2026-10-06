@@ -1,7 +1,7 @@
-# ADR 0022: A Message From the Future Is History, Not News
+# ADR-0022: A Message From the Future Is History, Not News
 
-## Status
-Accepted
+- Status: Accepted
+- Date: 2026-09-10
 
 ## Context
 

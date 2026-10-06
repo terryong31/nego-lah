@@ -1,9 +1,8 @@
-# SPEC-043 workstream C: all three services share one 2 GB / 1–2 vCPU Lightsail
-# box. Without limits Docker lets them compete first-come, so an API spike
-# starves the Redis the API itself depends on for auth and rate limiting — and
-# every request slows, not just the busy ones. The two sidecars get hard
-# ceilings (they're cheap and must stay cheap); the API gets the remaining
-# memory and is left CPU-uncapped so it can use whatever is genuinely spare.
+# SPEC-043 workstream C: both services share one 2 GB / 1–2 vCPU Lightsail box.
+# Without limits Docker lets them compete first-come. Caddy gets a hard ceiling
+# (it is cheap and must stay cheap); the API gets the remaining memory and is
+# left CPU-uncapped so it can use whatever is genuinely spare. Redis is managed
+# (Upstash, via the REDIS_URL secret); the local sidecar was retired 2026-10-07.
 # Docker's json-file driver grows without bound by default; on a small
 # Lightsail disk that is an outage on a timer.
 x-logging: &default-logging
@@ -46,27 +45,23 @@ services:
       - PYTHONUNBUFFERED=1
       - ENV=production
       # REDIS_URL deliberately NOT set here. Compose's `environment:` overrides
-      # `env_file:`, so pinning it here silently outranked whatever Infisical
-      # exported into backend/.env — prod would keep talking to the sidecar
-      # below no matter what the secret said. It now comes from the env file, so
-      # the managed endpoint (Upstash, `rediss://`) is a secret change and a
-      # redeploy, not a code change. redis-py reads the TLS scheme itself.
+      # `env_file:`, so pinning it here would silently outrank whatever Infisical
+      # exported into backend/.env. It comes from the env file: the managed
+      # endpoint (Upstash, `rediss://`) is a secret change and a redeploy, not a
+      # code change. redis-py reads the TLS scheme itself.
       # Pinned rather than inherited: the Dockerfile's fallback is 4, which put
       # four worker processes on a box with one or two cores. Matching the
       # worker count to the cores means less context-switching between workers
-      # and more CPU left for the Redis and Caddy sitting beside them.
+      # and more CPU left for Caddy sitting beside them.
       - WEB_CONCURRENCY=2
     # The API is the one process that legitimately needs room, so it takes the
-    # memory the sidecars don't and stays CPU-uncapped — a ceiling here would
+    # memory Caddy doesn't and stays CPU-uncapped — a ceiling here would
     # idle capacity that nothing else is asking for.
     mem_limit: 1200m
     # Shutdown waits up to SHUTDOWN_TURN_GRACE_SECONDS (20 s) for in-flight
     # agent turns; Docker's default 10 s would SIGKILL them first.
     stop_grace_period: 30s
     logging: *default-logging
-    depends_on:
-      redis:
-        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
       interval: 30s
@@ -74,34 +69,6 @@ services:
       retries: 3
       start_period: 20s
 
-  # Kept as the fallback for a rollback (point REDIS_URL back at
-  # `redis://redis:6379/0` and redeploy) and because `depends_on` below still
-  # gates backend startup on it. It is NOT what prod talks to any more — see the
-  # note on REDIS_URL above and ADR-0028.
-  redis:
-    image: redis:alpine
-    container_name: nego-lah-redis
-    restart: always
-    expose:
-      - "6379"
-    volumes:
-      - redis_data:/data
-    # `maxmemory` sits below `mem_limit` on purpose: Redis has to start evicting
-    # before the kernel starts killing, or the cap just relocates the crash.
-    # `volatile-ttl` suits this keyspace — sessions, rate counters, leases and
-    # cached items nearly all carry a TTL already, so eviction drops whatever
-    # was closest to expiring anyway rather than guessing.
-    command: ["redis-server", "--maxmemory", "192mb", "--maxmemory-policy", "volatile-ttl"]
-    mem_limit: 256m
-    cpus: 0.4
-    logging: *default-logging
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-
 volumes:
   caddy_data:
   caddy_config:
-  redis_data:

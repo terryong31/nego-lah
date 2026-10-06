@@ -1,6 +1,8 @@
 # ADR-0027: Move the code into the domain packages
 
-**Status:** Accepted · **Date:** 2026-09-17 · **Supersedes part of:** [ADR-0002](0002-modular-monolith-over-grpc-microservices.md)
+- Status: Accepted
+- Date: 2026-09-17
+- Supersedes part of: [ADR-0002](0002-modular-monolith-over-grpc-microservices.md)
 
 ## Context
 

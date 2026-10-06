@@ -1,6 +1,8 @@
 # ADR-0029: CI owns production migrations
 
-**Status:** Accepted · **Date:** 2026-09-18 · **Relates to:** [SPEC-096](../specs/SPEC-096-migrations-run-in-cicd.md)
+- Status: Accepted
+- Date: 2026-09-18
+- Relates to: [SPEC-096](../specs/SPEC-096-migrations-run-in-cicd.md)
 
 ## Context
 

@@ -1,7 +1,7 @@
-# ADR 0016: Buffered Notification Digests over Per-Message Email
+# ADR-0016: Buffered Notification Digests over Per-Message Email
 
-## Status
-Accepted
+- Status: Accepted
+- Date: 2026-09-09
 
 ## Context
 

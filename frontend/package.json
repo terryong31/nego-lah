@@ -35,6 +35,7 @@
   "devDependencies": {
     "@nuxt/eslint": "^1.16.0",
     "@nuxt/test-utils": "^4.3.3",
+    "@playwright/test": "1.62.1",
     "@types/node": "^26.0.1",
     "@vitest/coverage-v8": "^4.1.10",
     "@vue/test-utils": "^2.4.11",

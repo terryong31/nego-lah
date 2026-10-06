@@ -4,21 +4,13 @@ on:
   push:
     branches: [ main ]
     paths-ignore:
-      - 'README.md'
-      - 'docs/**'
-      - 'specs/**'
       - '.claude/**'
       - '.gitignore'
-      - 'TODO.md'
   pull_request:
     branches: [ main ]
     paths-ignore:
-      - 'README.md'
-      - 'docs/**'
-      - 'specs/**'
       - '.claude/**'
       - '.gitignore'
-      - 'TODO.md'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -39,6 +31,7 @@ jobs:
       frontend: ${{ steps.filter.outputs.frontend }}
       backend: ${{ steps.filter.outputs.backend }}
       migrations: ${{ steps.filter.outputs.migrations }}
+      docs: ${{ steps.filter.outputs.docs }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
@@ -56,6 +49,13 @@ jobs:
               - '.github/workflows/deploy.yml'
             migrations:
               - 'supabase/migrations/**'
+            docs:
+              - 'docs/**'
+              - '*.md'
+              - '.markdownlint-cli2.jsonc'
+              - '.vale.ini'
+              - '.vale/**'
+              - 'backend/scripts/docs_tools.py'
 
   backend-ci:
     name: Backend CI (ruff, pytest, bandit & pip-audit)
@@ -102,6 +102,56 @@ jobs:
         run: |
           cd backend
           uv run pip-audit
+
+  # SPEC-102: Markdown structure, prose, links, generated indexes, ADR metadata,
+  # the OpenAPI contract, and an advisory list of living docs older than the
+  # code they describe. Runs for docs changes and for backend changes.
+  docs-check:
+    name: Docs checks
+    needs: [changes]
+    if: needs.changes.outputs.docs == 'true' || needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # docs_tools stale compares commit times
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+          enable-cache: true
+          cache-dependency-glob: "backend/uv.lock"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          cd backend
+          uv sync --frozen
+
+      - name: Markdown lint (living docs; globs in .markdownlint-cli2.jsonc)
+        run: npx --yes markdownlint-cli2@0.23.3
+
+      - name: Prose lint (Vale; version pinned in mise.toml, style in .vale/)
+        run: |
+          VALE=3.24.0
+          curl -fsSL "https://github.com/errata-ai/vale/releases/download/v${VALE}/vale_${VALE}_Linux_64-bit.tar.gz" | tar -xz -C /tmp vale
+          /tmp/vale README.md SECURITY.md CONTRIBUTING.md docs/README.md docs/architecture docs/api/README.md docs/data docs/repo docs/workers docs/flows docs/ci-cd docs/security docs/how-to docs/tutorials docs/adr/README.md docs/adr/TEMPLATE.md docs/specs/README.md docs/specs/TEMPLATE.md
+
+      - name: Docs checks
+        run: |
+          cd backend
+          uv run pytest --no-cov -q tests/test_docs.py tests/test_spec_registry.py
+
+      - name: Stale-docs report (advisory, never fails)
+        run: |
+          cd backend
+          uv run python -m scripts.docs_tools stale
 
   migrations-check:
     name: Validate Supabase migrations

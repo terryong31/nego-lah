@@ -1,6 +1,8 @@
 """SPEC-043 Workstream C — the host is divided, not shared first-come.
 
-Caddy, the API and Redis all run on one 2 GB / 1–2 vCPU Lightsail box. With no
+Caddy and the API run on one 2 GB / 1–2 vCPU Lightsail box. (Redis did too
+until production moved to managed Upstash; the sidecar was retired on
+2026-10-07 once the live backend was confirmed writing there.) With no
 limits declared, Docker lets them compete for the whole host: a CPU spike in
 the API slows the Redis it depends on for auth, rate limiting and leases —
 which slows every request, including the ones that weren't busy. Redis with no
@@ -42,7 +44,7 @@ def _mem_bytes(value: str) -> int:
     return int(text)
 
 
-@pytest.mark.parametrize("service", ["caddy", "backend", "redis"])
+@pytest.mark.parametrize("service", ["caddy", "backend"])
 def test_every_service_declares_a_memory_limit(services, service):
     """One unbounded container can OOM the box and take the other two down."""
     assert "mem_limit" in services[service], f"{service} has no mem_limit — it can consume the whole host"
@@ -50,34 +52,36 @@ def test_every_service_declares_a_memory_limit(services, service):
 
 
 def test_memory_limits_leave_headroom_for_the_host(services):
-    """The three containers must not be allowed to claim the entire 2 GB;
-    the kernel, sshd and the Docker daemon still need somewhere to live."""
-    total = sum(_mem_bytes(services[s]["mem_limit"]) for s in ("caddy", "backend", "redis"))
+    """The containers must not be allowed to claim the entire 2 GB; the
+    kernel, sshd and the Docker daemon still need somewhere to live."""
+    total = sum(_mem_bytes(services[s]["mem_limit"]) for s in services)
     box = 2 * 1024**3
     assert total < box * 0.85, f"limits total {total / 1024**3:.2f} GB of a 2 GB box — too little headroom"
 
 
-@pytest.mark.parametrize("service", ["caddy", "redis"])
+@pytest.mark.parametrize("service", ["caddy"])
 def test_supporting_services_cannot_monopolise_the_cpu(services, service):
-    """Caddy and Redis are cheap and must stay cheap. A hard ceiling on the two
-    of them is what guarantees the API can't be starved by its own sidecars."""
+    """Caddy is cheap and must stay cheap. A hard ceiling on it is what
+    guarantees the API can't be starved by its own proxy."""
     assert "cpus" in services[service], f"{service} has no cpus ceiling"
     assert float(services[service]["cpus"]) <= 0.5
 
 
-def test_redis_is_memory_capped_and_evicts_rather_than_dying(services):
-    """`mem_limit` alone just moves the failure: Redis grows into its cap and
-    gets OOM-killed. `maxmemory` plus a policy makes it evict instead — and
-    `volatile-ttl` is the right policy here because nearly every key this app
-    writes already carries one."""
-    command = " ".join(services["redis"].get("command", []) or [])
-    assert "--maxmemory" in command, "redis has no maxmemory — it can grow until killed"
-    assert "--maxmemory-policy" in command
+def test_production_redis_is_managed_not_a_sidecar(compose, services):
+    """Production talks to Upstash through the `REDIS_URL` secret. A local
+    `redis` service would only be a second, silently divergent Redis — and
+    `depends_on` it gated backend startup on a container nothing used."""
+    assert "redis" not in services
+    assert "redis" not in (services["backend"].get("depends_on") or {})
+    assert "redis_data" not in (compose.get("volumes") or {})
 
-    # The eviction ceiling must sit below the container's own hard limit, or
-    # the kernel kills the process before Redis ever starts evicting.
-    maxmemory = command.split("--maxmemory ")[1].split()[0]
-    assert _mem_bytes(maxmemory) < _mem_bytes(services["redis"]["mem_limit"])
+
+def test_redis_url_is_not_pinned_in_the_manifest(services):
+    """Compose `environment:` outranks `env_file:`; pinning REDIS_URL here is
+    exactly how prod once kept talking to the sidecar whatever the secret said."""
+    env = services["backend"].get("environment", [])
+    entries = env if isinstance(env, list) else [f"{k}={v}" for k, v in env.items()]
+    assert not [e for e in entries if str(e).startswith("REDIS_URL")]
 
 
 def test_worker_count_is_pinned_explicitly(services):

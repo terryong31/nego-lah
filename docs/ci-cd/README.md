@@ -26,7 +26,8 @@ graph TD
 ## 2. Path-Filtered Change Detection
 
 To optimize build speed and compute usage, `.github/workflows/deploy.yml` utilizes path filtering:
-- Changes affecting only documentation (`docs/**`) or specifications bypass application compute.
+
+- Changes affecting only documentation (`docs/**`, top-level `*.md`) run only the `docs-check` job (links, generated indexes, OpenAPI drift) and deploy nothing (SPEC-102).
 - Changes under `supabase/migrations/**` are validated on every PR and **applied to production by CI** on merge to `main`, before the backend that depends on them deploys (SPEC-096).
 - Frontend and backend pipelines run concurrently and independently:
   - Modifying `frontend/**` triggers frontend linting, typechecking, Vitest testing, and Cloudflare Pages deployment.
@@ -65,8 +66,9 @@ To optimize build speed and compute usage, `.github/workflows/deploy.yml` utiliz
 ## 5. Quality & Security Gates
 
 Every deployment must pass the following automated gates:
+
 1. **Backend Test Suite & Coverage Gate:**
-   - ~1,950 Pytest tests executed.
+   - The full Pytest suite runs.
    - Code coverage strictly enforced at **≥88%** (`FAIL Required test coverage of 88.0% not reached`).
 2. **Frontend Quality:**
    - Vitest component and unit test suite.
@@ -77,3 +79,4 @@ Every deployment must pass the following automated gates:
    - `bandit` for static Python security issues (production code; `tests/`, `scripts/`, `evals/` excluded).
    - `frontend/scripts/audit.sh` — `bun audit --audit-level=high`, with each unfixable, non-shipping advisory listed and justified in the script.
 4. **Workflow hardening:** the default `GITHUB_TOKEN` is read-only, and third-party actions are pinned to commit SHAs.
+5. **Dependency updates (SPEC-103):** Dependabot ([`.github/dependabot.yml`](../../.github/dependabot.yml)) opens weekly grouped PRs for bun, uv, GitHub Actions, both Dockerfiles and `docker-compose.yml`, plus ungrouped security-fix PRs as soon as an advisory lands. `mise.toml` tool versions are bumped by hand.

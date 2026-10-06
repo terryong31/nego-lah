@@ -43,7 +43,7 @@ an answer instead of a guess.
       drop a photo the buyer sent.
 - [x] **History window is bounded and tunable.** `AGENT_HISTORY_TURNS` (default 20,
       was a hard-coded 50) caps the replayed transcript.
-- [ ] **~~Item lookups are cached.~~** *Dropped deliberately.* The per-turn lookup is
+- **~~Item lookups are cached.~~** *Dropped deliberately.* The per-turn lookup is
       one indexed read — latency, not tokens, and tokens are what this spec is
       about. A second cache would need a second invalidation path alongside
       `invalidate_item_cache`'s six call sites, and the failure mode of missing
@@ -56,7 +56,7 @@ an answer instead of a guess.
       token usage, latency and cost per scenario, and prints pass rate per
       category beside cost. `mise run eval:agent`. Deliberately outside pytest —
       it calls a real model.
-- [ ] **~~Ragas.~~** *Attempted, then rejected — see the comment above
+- **~~Ragas.~~** *Attempted, then rejected — see the comment above
       `evals.runner._judge_relevancy`.* Every release through 0.4.3 hard-imports
       `langchain_community.chat_models.vertexai`, removed in langchain-community
       0.4.x, so `import ragas` raises before any metric is reachable. Adding it

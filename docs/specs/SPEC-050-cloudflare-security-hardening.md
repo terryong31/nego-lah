@@ -1,7 +1,7 @@
 ---
 id: SPEC-050
 title: Cloudflare Security Posture Hardening (HSTS, RFC 9116 Security.txt, SPF & DMARC Posture)
-status: completed
+status: complete
 priority: high
 created: 2026-09-09
 tags: [security, cloudflare, headers, dns, email, hsts]

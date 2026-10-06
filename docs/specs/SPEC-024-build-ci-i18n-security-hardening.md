@@ -1,7 +1,7 @@
 ---
 id: SPEC-024
 title: Build Cache Optimization, Gold-Standard CI/CD, Full i18n Coverage, and Security Defense
-status: completed
+status: complete
 priority: high
 created: 2026-09-05
 tags: [devops, docker, ci-cd, i18n, security, middleware, fastapi, nuxt]

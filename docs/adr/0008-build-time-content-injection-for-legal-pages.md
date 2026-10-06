@@ -1,4 +1,4 @@
-# 8. Build-Time Content Injection for Crawler-Readable Legal Pages
+# ADR-0008: Build-Time Content Injection for Crawler-Readable Legal Pages
 
 - Status: Accepted
 - Date: 2026-09-06

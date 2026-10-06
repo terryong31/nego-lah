@@ -1,4 +1,4 @@
-# 12. Transactional Email — Sender Mailbox and Failure Alerting
+# ADR-0012: Transactional Email — Sender Mailbox and Failure Alerting
 
 - Status: Accepted
 - Date: 2026-09-09

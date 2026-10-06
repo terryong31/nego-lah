@@ -1,8 +1,9 @@
-# 2. Modular Monolith over Distributed gRPC Microservices
+# ADR-0002: Modular Monolith over Distributed gRPC Microservices
 
 - Status: Accepted
 - Date: 2026-09-04
 - Deciders: Terry (owner), AI Agent
+- Superseded in part by: [ADR-0027](0027-code-relocation-into-domain-packages.md), [ADR-0030](0030-the-domain-graph-is-acyclic.md)
 
 ## Context
 

@@ -1,7 +1,7 @@
 ---
 id: SPEC-077
 title: Edge Proxy Lockdown, Pre-Routing ASGI Rate Limiting, and Local Cryptographic JWT Verification
-status: completed
+status: complete
 priority: high
 created: 2026-09-14
 tags: [security, cloudflare, rate-limiting, asgi, jwt, supabase, auth]
@@ -87,15 +87,15 @@ This spec settles all three items with edge lockdown, pure ASGI pre-routing rate
   ```
 
 # Test-Driven Development (TDD) Scenarios
-- [ ] **Rate Limiting Before Auth (Red -> Green):** Send requests with invalid Bearer token to `/payment/checkout` past rate limit. Assert response is 429, NOT 401, and `verify_user_token` / Supabase auth is never called.
-- [ ] **Streaming Non-Buffering (Red -> Green):** Open `/chat/stream` and `/chat/notifications/stream`. Assert chunks yield immediately through `IPRateLimitMiddleware` without being buffered in memory.
-- [ ] **Local JWT Validation (Red -> Green):**
+- [x] **Rate Limiting Before Auth (Red -> Green):** *(Verified 2026-10-07: `test_pre_routing_rate_limiting_runs_before_auth`.)* Send requests with invalid Bearer token to `/payment/checkout` past rate limit. Assert response is 429, NOT 401, and `verify_user_token` / Supabase auth is never called.
+- [x] **Streaming Non-Buffering (Red -> Green):** *(Verified 2026-10-07: `test_streaming_response_is_not_buffered`.)* Open `/chat/stream` and `/chat/notifications/stream`. Assert chunks yield immediately through `IPRateLimitMiddleware` without being buffered in memory.
+- [x] **Local JWT Validation (Red -> Green):** *(Verified 2026-10-07: `tests/test_jwt_auth.py`, HS256 and ES256.)*
   - Valid signed JWT (ES256/HS256) succeeds and yields `user_id = sub` with 0 network calls to `GET /auth/v1/user`.
   - Expired JWT raises 401 `"Token expired"` in <1ms without calling Supabase.
   - Tampered/forged JWT signature raises 401 `"Invalid token"` in <1ms without calling Supabase.
   - Wrong audience (e.g. `aud="anon"`) raises 401 without calling Supabase.
-- [ ] **Client IP Extraction (Red -> Green):** Request with `CF-Connecting-IP: 203.0.113.195` resolves to `203.0.113.195` across rate limiter and admin audit logs.
-- [ ] **Coverage & Regression:** Verify backend coverage remains $\ge 88\%$.
+- [x] **Client IP Extraction (Red -> Green):** Request with `CF-Connecting-IP: 203.0.113.195` resolves to `203.0.113.195` across rate limiter and admin audit logs. *(Verified 2026-10-07 for the rate limiter: `test_cf_connecting_ip_keys_the_rate_limit`. The admin audit log does not use this header: `admin_session.client_ip` takes uvicorn's resolved peer instead (`tests/test_client_ip_trust.py`). See audit SEC-3.)*
+- [x] **Coverage & Regression:** Verify backend coverage remains $\ge 88\%$. *(90.04% on 2026-10-07.)*
 
 # Implementation Files
 - `backend/core/ip.py` - Centralized trusted client IP resolver (`CF-Connecting-IP` priority)

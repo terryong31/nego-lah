@@ -1,8 +1,8 @@
 ---
 id: SPEC-009
-title: "SPEC-009: Real-Time SSE Notifications, Purchase Email Receipts & Post-Purchase UX"
-status: "Draft"
-created_at: "2026-09-04"
+title: "Real-Time SSE Notifications, Purchase Email Receipts & Post-Purchase UX"
+status: complete
+created: "2026-09-04"
 tags: ["notifications", "email", "sse", "payment", "ux", "ci-cd"]
 ---
 
@@ -22,28 +22,28 @@ Following successful payment negotiations and seller communications, users requi
 ## 2. Acceptance Criteria
 
 ### A. Purchase Emails (Buyer Receipt + Seller Alert)
-- [ ] `fulfill_purchase` invokes `send_purchase_receipt_email(buyer_email, order)` delivering an HTML receipt via Resend.
-- [ ] `fulfill_purchase` invokes `send_seller_sale_alert_email(seller_email, order)` alerting the seller with buyer email, item name, and price.
+- [x] `fulfill_purchase` invokes `send_purchase_receipt_email(buyer_email, order)` *(now `core.email_service.send_purchase_receipt`)* delivering an HTML receipt via Resend.
+- [x] `fulfill_purchase` invokes `send_seller_sale_alert_email(seller_email, order)` *(now `send_seller_sale_alert`)* alerting the seller with buyer email, item name, and price.
 
 ### B. Real-Time SSE Notifications & Nav Badging
-- [ ] Backend provides an authenticated SSE endpoint `GET /chat/notifications/stream` streaming `event: message` when the seller posts a message to `user_id`.
-- [ ] `AppHeader.vue` listens to notifications:
+- [x] Backend provides an authenticated SSE endpoint `GET /chat/notifications/stream` streaming `event: message` when the seller posts a message to `user_id`.
+- [x] `AppHeader.vue` listens to notifications:
   - If current route is NOT `/chat`: triggers a toast alert and renders `<UChip>` on the chat icon and user avatar.
   - When user navigates to `/chat`, unread status clears and chips disappear.
 
 ### C. Unread Message Email
-- [ ] When a seller sends a message, if the buyer is not connected to the live notification stream, an email notification is scheduled/sent to the buyer.
+- [x] *(Buffered into a five-minute digest by SPEC-052.)* When a seller sends a message, if the buyer is not connected to the live notification stream, an email notification is scheduled/sent to the buyer.
 
 ### D. Listing Price Cut Display
-- [ ] When an agreed lower price exists for an item in `payment_state`, `/items/:id` returns `discounted_price`.
-- [ ] `pages/items/[id].vue` and `ItemCard.vue` display the original price with a strikethrough and the new discounted price with a badge.
+- [x] When an agreed lower price exists for an item in `payment_state`, `/items/:id` returns `discounted_price`.
+- [x] `pages/items/[id].vue` and `ItemCard.vue` display the original price with a strikethrough and the new discounted price with a badge.
 
 ### E. Post-Payment UX & Plain-Text Chat
-- [ ] `checkout/success.vue` displays the success card and redirects the user to `/chat?item_id={itemId}` after a brief countdown (with an instant "Go to Chat" button).
-- [ ] Post-purchase thank-you prompt in `fulfillment.py` uses clean plain text without markdown `**` bolding.
+- ~~`checkout/success.vue` displays the success card and redirects the user to `/chat?item_id={itemId}` after a brief countdown (with an instant "Go to Chat" button).~~ *Revised by SPEC-016: the page is now outcome-aware (success, refunded race loser, pending) and offers a "Go to chat" button with no automatic redirect, so a refunded buyer is never bounced away from the explanation.*
+- [x] Post-purchase thank-you prompt in `fulfillment.py` uses clean plain text without markdown `**` bolding.
 
 ### F. CI/CD Cloudflare Pages Deployment
-- [ ] `.github/workflows/deploy.yml` sets necessary environment variables during `bun run generate` before running `pages deploy`.
+- [x] `.github/workflows/deploy.yml` sets necessary environment variables during `bun run generate` before running `pages deploy`.
 
 ---
 

@@ -1,0 +1,33 @@
+// SPEC-102: structural lint for the living docs. Records (ADRs, specs, audits) are
+// point-in-time and are not rewritten to satisfy a linter, so they are not globbed.
+{
+  "config": {
+    "default": true,
+    // Prose is wrapped by hand at ~100 columns; tables and URLs cannot be.
+    "MD013": false,
+    // Compact and aligned tables are both fine.
+    "MD060": false,
+    // Specs use several top-level sections by design (see docs/specs/TEMPLATE.md).
+    "MD025": false
+  },
+  "globs": [
+    "README.md",
+    "SECURITY.md",
+    "CONTRIBUTING.md",
+    "docs/README.md",
+    "docs/architecture/*.md",
+    "docs/api/README.md",
+    "docs/data/README.md",
+    "docs/repo/README.md",
+    "docs/workers/README.md",
+    "docs/flows/README.md",
+    "docs/ci-cd/README.md",
+    "docs/security/*.md",
+    "docs/how-to/*.md",
+    "docs/tutorials/*.md",
+    "docs/adr/README.md",
+    "docs/adr/TEMPLATE.md",
+    "docs/specs/README.md",
+    "docs/specs/TEMPLATE.md"
+  ]
+}

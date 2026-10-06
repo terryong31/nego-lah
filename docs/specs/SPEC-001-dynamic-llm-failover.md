@@ -30,10 +30,10 @@ Nego-Lah supports a self-hosted vision-language model (`Qwen3.6-35B-A3B`) expose
   ```
 
 # Test-Driven Development (TDD) Scenarios
-- [ ] **Scenario 1:** When `LOCAL_LLM_BASE_URL` returns HTTP 200 within 1.5s, `get_chat_model()` returns `ChatOpenAI` and caches status `1` for 30s.
-- [ ] **Scenario 2:** When `LOCAL_LLM_BASE_URL` times out or errors, `get_chat_model()` logs a warning and returns `ChatGoogleGenerativeAI`.
-- [ ] **Scenario 3:** Subsequent requests within 30s reuse cached health status without making HTTP probe calls.
-- [ ] **Scenario 4:** Image analyzer delivers multimodal inputs to the model without format conversion errors.
+- [x] **Scenario 1:** When `LOCAL_LLM_BASE_URL` returns HTTP 200 within 1.5s, `get_chat_model()` returns `ChatOpenAI` and caches status `1` for 30s.
+- [x] **Scenario 2:** When `LOCAL_LLM_BASE_URL` times out or errors, `get_chat_model()` logs a warning and returns `ChatGoogleGenerativeAI`.
+- [x] **Scenario 3:** Subsequent requests within 30s reuse cached health status without making HTTP probe calls.
+- [x] **Scenario 4:** Image analyzer delivers multimodal inputs to the model without format conversion errors. *(Verified 2026-10-07: `tests/test_dynamic_llm_factory.py, tests/test_agent_tools_image_analyzer.py`.)*
 
 # Implementation Files
 - `backend/domains/negotiation/llm_factory.py` - Core factory & probe logic

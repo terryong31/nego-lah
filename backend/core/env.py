@@ -129,12 +129,10 @@ USER_COOKIE_SECURE = os.getenv("USER_COOKIE_SECURE", "true" if _is_https else "f
 USER_COOKIE_SAMESITE = os.getenv("USER_COOKIE_SAMESITE", "lax").lower()
 USER_COOKIE_PATH = os.getenv("USER_COOKIE_PATH", "/")
 USER_COOKIE_DOMAIN = os.getenv("USER_COOKIE_DOMAIN", _default_cookie_domain)
-# 30 days, sliding. Long on purpose, though for different reasons per environment:
-# the local sidecar runs `maxmemory-policy volatile-ttl` and evicts the SHORTEST
-# remaining TTL first, so a long-lived session key is the last thing dropped
-# rather than the first. Prod's managed Redis runs `noeviction` and rejects
-# writes at the cap instead, so nothing is evicted there at all — what a long TTL
-# buys is simply not asking people to sign in again every week. See ADR-0028.
+# 30 days, sliding. Long on purpose: prod's managed Redis (Upstash) runs
+# `noeviction` and rejects writes at the cap instead of dropping keys, so a long
+# TTL costs nothing in eviction — what it buys is not asking people to sign in
+# again every week. See ADR-0028.
 USER_SESSION_TTL = int(os.getenv("USER_SESSION_TTL", str(30 * 24 * 3600)))
 # The buyer's readable CSRF cookie, and the short-lived PKCE holder that carries
 # the OAuth code verifier across the Google -> Supabase -> API redirect chain.

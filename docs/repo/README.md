@@ -1,85 +1,68 @@
-# Monorepo Structure & Tooling Guide
+# Repository Guide
 
-This document explains the organization of the **Nego-Lah** monorepo, its workspace conventions, and its development toolchain.
+Where things live and which tools run them. Living document. Rules for changing code are in
+[`AGENTS.md`](../../AGENTS.md); this page is the map.
 
----
-
-## 1. Directory Layout
+## Layout
 
 ```text
 nego-lah/
-├── frontend/             # Nuxt 4 Single Page Application (Cloudflare Pages)
-│   ├── app/              # Vue 3 components, pages, layouts, composables, stores
-│   ├── i18n/             # Trilingual message catalogues (en, ms, zh)
-│   ├── tests/            # Vitest unit & component test suites
-│   ├── nuxt.config.ts    # SPA configuration, runtime configs, Nuxt UI & Tailwind v4
-│   └── wrangler.toml     # Cloudflare Pages deployment configuration
+├── frontend/                 Nuxt 4 SPA (ssr: false) → Cloudflare Pages
+│   ├── app/                  pages, components, composables, stores, middleware, plugins
+│   ├── i18n/                 en / ms / zh message catalogues
+│   ├── build/                build-time helpers (CSP source, legal-page injection)
+│   ├── tests/                Vitest
+│   └── wrangler.toml         Pages config
 │
-├── backend/              # FastAPI Modular Monolith (AWS Lightsail)
-│   ├── agent/            # LangGraph supervisor, sub-agents, tools, memory
-│   ├── domains/          # Bounded business domains (catalog, negotiation, billing, identity, webhooks)
-│   ├── routes/           # HTTP controllers, including admin console API
-│   ├── core/             # Cross-cutting infrastructure (config, database pool, security, uploads)
-│   ├── services/         # Transactional email & buffered notification digests
-│   ├── payment/          # Stripe checkout, webhooks, fulfillment state machine
-│   ├── templates/        # Jinja "Ledger" transactional email templates
-│   ├── tests/            # Pytest test suites with async fixtures (88% coverage gate)
-│   └── Dockerfile        # Production multi-stage container image
+├── backend/                  FastAPI modular monolith → AWS Lightsail (Docker)
+│   ├── main.py               app, middleware, routers, lifespan loops, bus wiring
+│   ├── core/                 infrastructure: env, Redis, Supabase connector, CSRF, bus, email…
+│   ├── domains/              identity · catalog · billing · negotiation (+ webhooks)
+│   ├── console/              admin screens that compose several domains
+│   ├── templates/emails/     Jinja "Ledger" email templates
+│   ├── evals/                agent evaluation harness (mise run eval:agent)
+│   ├── scripts/              operational scripts (admin, migrations, diagnostics, docs)
+│   └── tests/                pytest, 88% coverage gate
 │
-├── supabase/             # Database schemas, RLS policies, migrations, auth templates
-│   ├── migrations/       # Sequential SQL migrations (baseline through current)
-│   ├── templates/        # Supabase Auth email templates
-│   └── config.toml       # Supabase CLI and local environment configuration
+├── supabase/
+│   ├── migrations/           append-only SQL; applied to production by CI
+│   └── templates/            Supabase Auth email templates
 │
-├── docs/                 # Engineering Documentation Hub (Diátaxis framework)
-│   ├── adr/              # Architecture Decision Records (ADR-0001 … ADR-0024)
-│   ├── api/              # OpenAPI 3.1 specification (openapi.json) and API guide
-│   ├── architecture/     # LeanSpec system architecture & agent graphs
-│   ├── ci-cd/            # CI/CD deployment pipelines & GitHub Actions
-│   ├── data/             # Database models, schema diagrams, RLS & storage docs
-│   ├── repo/             # Monorepo structure and conventions (this document)
-│   ├── security/         # Security anti-patterns & penetration testing standards
-│   ├── specs/            # LeanSpec specifications (SPEC-001 … SPEC-071)
-│   └── workers/          # Lifespan background worker loops
-│
-├── api/                  # Root mirror for OpenAPI specification
-│   └── openapi.json      # OpenAPI 3.1 schema
-│
-├── .github/              # Automation & GitHub Actions workflows
-│   └── workflows/        # Path-filtered CI/CD pipeline (deploy.yml)
-│
-├── docker-compose.yml    # Production container orchestration (FastAPI + Caddy + Redis)
-├── Caddyfile             # TLS termination, reverse proxy, and security headers
-├── lefthook.yml          # Git pre-commit and pre-push hooks
-├── mise.toml             # Universal environment and task orchestrator
-└── AGENTS.md             # AI Agent rules of engagement (LeanSpec enforced)
+├── video/                    Remotion source for the homepage intro (ADR-0031)
+├── docs/                     this documentation
+├── scripts/                  host-level scripts (Lightsail firewall)
+├── .github/workflows/        deploy.yml (CI/CD), uptime.yml, ops-revoke-sessions.yml
+├── docker-compose.yml        production stack: Caddy + backend (Redis is managed Upstash)
+├── Caddyfile                 TLS and reverse proxy
+├── mise.toml                 tool versions and every task
+└── lefthook.yml              git hooks
 ```
 
----
+The backend's internal rules — layers, domain ranking, table ownership, the event bus — are
+described in [Architecture](../architecture/README.md#backend-structure) and enforced by
+`backend/tests/test_domain_boundaries.py`.
 
-## 2. Toolchain & Runtime Management
+## Toolchain
 
-The repository uses [**mise**](https://mise.jdx.dev/) as the single source of truth for runtime versions and tasks:
+[mise](https://mise.jdx.dev/) pins every tool and defines every task. `mise tasks` lists them.
 
-| Tool | Managed By | Purpose |
-| :--- | :--- | :--- |
-| **`uv`** | mise | Ultra-fast Python package resolver and virtualenv manager (`backend/.venv`). |
-| **`bun`** | mise | Fast JavaScript package manager and runtime for the frontend. |
-| **`infisical`** | mise | Centralized secrets manager injecting credentials across `dev` and `prod`. |
-| **`lefthook`** | mise | Fast Git pre-commit (lint) and pre-push (test) runner. |
+| Tool | Used for |
+|------|----------|
+| `uv` | Python dependencies and the `backend/.venv` virtualenv |
+| `bun` | Frontend and video dependencies and scripts |
+| `infisical` | Injecting secrets into dev, CI and production processes |
+| `lefthook` | Git hooks: lint on commit; backend tests and frontend typecheck on push |
 
----
+## Everyday tasks
 
-## 3. Domain Isolation Discipline (Backend)
+| Task | Command |
+|------|---------|
+| Run everything locally | `mise run dev` |
+| Tests (backend + frontend) | `mise run test` |
+| Lint / typecheck | `mise run lint`, `mise run typecheck` |
+| Dependency audit | `mise run audit` |
+| Validate migration files | `mise run db:validate` |
+| Regenerate API spec / doc indexes | `mise run docs:openapi`, `mise run docs:index` |
+| Evaluate the agent | `mise run eval:agent` |
 
-In `backend/domains/`, business logic is strictly partitioned into domain packages:
-- **`catalog`**: Inventory listings, search, image normalization, categories.
-- **`negotiation`**: Multi-turn bargaining, LangGraph supervisor, LLM factory, dynamic failover.
-- **`billing`**: Stripe checkout session generation, optimistic inventory claim locks, refunds.
-- **`identity`**: User profiles, custom avatars, admin 2FA OTP verification, CSRF tokens.
-- **`webhooks`**: Ingesting Stripe and Resend external webhook events.
-
-### Domain Rules:
-1. **Never reach into another domain's database queries:** Domains must not import or query private tables of another domain. Cross-domain queries are conducted solely through exported Domain Services (`CatalogService`, `BillingService`).
-2. **Encapsulated State:** All payment lock handling stays strictly within `billing`. All conversation state stays in `negotiation`.
-3. **2 GB RAM Envelope:** No heavyweight background processes (Celery/RabbitMQ). Tasks run inside the FastAPI event loop lifespan.
+Step-by-step guides are in [How-to](../how-to/README.md).

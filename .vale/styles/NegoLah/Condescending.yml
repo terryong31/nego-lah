@@ -1,0 +1,11 @@
+# Words that tell a stuck reader the problem is them.
+extends: existence
+message: "Drop '%s'; it does not help a reader who is stuck."
+level: warning
+ignorecase: true
+tokens:
+  - simply
+  - easily
+  - obviously
+  - of course
+  - trivially

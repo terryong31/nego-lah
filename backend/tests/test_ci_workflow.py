@@ -158,3 +158,46 @@ class TestHardening:
         assert "Health.Status" in script
         assert "rollback" in script
         assert "docker compose restart caddy\n" not in script.replace("|| sudo docker compose restart caddy", "")
+
+
+class TestDocsGate:
+    """SPEC-102: a docs-only change used to skip CI entirely, so a broken link or a stale
+    index merged unless the author's pre-push hook happened to run."""
+
+    def test_docs_changes_are_not_ignored(self, workflow):
+        for event in ("push", "pull_request"):
+            ignored = workflow["on"][event].get("paths-ignore", [])
+            assert not any(p.startswith(("docs", "README", "specs")) for p in ignored), ignored
+
+    def test_a_docs_output_exists(self, jobs):
+        assert "docs" in jobs["changes"]["outputs"]
+        filters = next(s for s in jobs["changes"]["steps"] if s.get("id") == "filter")
+        assert "docs/**" in filters["with"]["filters"]
+
+    def test_the_docs_job_runs_the_docs_checks(self, jobs):
+        job = jobs["docs-check"]
+        assert "needs.changes.outputs.docs == 'true'" in job["if"]
+        runs = " ".join(step.get("run", "") for step in job["steps"])
+        assert "tests/test_docs.py" in runs and "tests/test_spec_registry.py" in runs
+
+    def test_a_docs_only_change_deploys_nothing(self, jobs):
+        for name in ("deploy-backend", "build-backend"):
+            if name in jobs:
+                assert "docs" not in str(jobs[name].get("if", "")), name
+
+    def test_the_docs_job_lints_markdown_structure(self, jobs):
+        runs = " ".join(step.get("run", "") for step in jobs["docs-check"]["steps"])
+        assert "markdownlint-cli2" in runs
+
+    def test_the_docs_job_lints_prose_with_the_pinned_vale(self, jobs):
+        runs = " ".join(step.get("run", "") for step in jobs["docs-check"]["steps"])
+        mise = (WORKFLOW.parents[2] / "mise.toml").read_text()
+        pinned = next(line.split('"')[1] for line in mise.splitlines() if line.startswith("vale ="))
+        assert "vale" in runs and pinned in runs, "CI must run the Vale version mise.toml pins"
+
+    def test_the_docs_job_reports_stale_docs_when_code_changes(self, jobs):
+        job = jobs["docs-check"]
+        assert "needs.changes.outputs.backend == 'true'" in job["if"], "code changes are what make docs stale"
+        checkout = next(s for s in job["steps"] if str(s.get("uses", "")).startswith("actions/checkout"))
+        assert checkout.get("with", {}).get("fetch-depth") == 0, "staleness reads git history"
+        assert any("docs_tools stale" in s.get("run", "") for s in job["steps"])

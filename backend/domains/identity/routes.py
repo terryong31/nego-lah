@@ -10,7 +10,7 @@ the service role key and therefore cannot be done safely from the browser:
   - change password
   - change email
 
-Every endpoint requires a valid JWT and enforces that the caller can only act
+Every endpoint requires a valid session and enforces that the caller can only act
 on their own account (token user id must match the path user id).
 """
 

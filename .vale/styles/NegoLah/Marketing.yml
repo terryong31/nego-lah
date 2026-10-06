@@ -1,0 +1,17 @@
+# Engineering docs make claims the code backs up. Adjectives are not evidence.
+extends: existence
+message: "'%s' is a claim, not a fact. Say what it does, or cite a measurement."
+level: warning
+ignorecase: true
+tokens:
+  - seamless(?:ly)?
+  - blazing(?:ly)?
+  - world-class
+  - cutting-edge
+  - state-of-the-art
+  - best-in-class
+  - gold[- ]standard
+  - industry[- ]standard
+  - effortless(?:ly)?
+  - revolutionary
+  - robust

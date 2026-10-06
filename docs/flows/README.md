@@ -1,33 +1,39 @@
-# Core System Flows & State Machines
+# Core Flows
 
-This directory documents the key end-to-end user journeys and state machine workflows across Nego-Lah.
+Sequence diagrams for the journeys that cross the most components. Living document; the
+component overview is in [Architecture](../architecture/README.md).
 
 ---
 
-## 1. Real-Time AI Bargaining & Streaming Flow
+## 1. A negotiation turn
 
 ```mermaid
 sequenceDiagram
     autonumber
     actor Buyer
-    participant SPA as Nuxt 4 SPA (Cloudflare Pages)
-    participant API as FastAPI (:8000)
-    participant Redis as Redis 7
-    participant Agent as LangGraph Supervisor
-    participant LLM as Hybrid LLM (Qwen / Gemini)
+    participant SPA as Nuxt SPA
+    participant API as FastAPI
+    participant Redis
+    participant Agent as Agent (bot.py)
+    participant LLM as Qwen (M5) or Gemini
 
-    Buyer->>SPA: Types offer ("RM280 can bro?")
-    SPA->>API: POST /chat/{item_id}
-    API->>Redis: Acquire token-owned lease (10s TTL)
-    Redis-->>API: Lease granted
-    API->>Agent: Invoke LangGraph state graph
-    Agent->>API: Call evaluate_offer(item_id, 280)
-    API-->>Agent: Floor check pass (min_price protected)
-    Agent->>LLM: Stream counter-offer / acceptance
-    LLM-->>API: Token chunks
-    API-->>SPA: SSE Event: text_chunk
-    SPA-->>Buyer: Live typing animation & bubble update
+    Buyer->>SPA: "RM280 can bro?"
+    SPA->>API: POST /chat/stream (cookie + X-CSRF-Token)
+    API->>API: Persist the buyer message, start a detached turn
+    API->>Redis: Probe local model, take lease llm:qwen:busy (NX, 45 s)
+    Redis-->>API: Granted → Qwen, held → Gemini
+    API->>Agent: Run the turn on the pinned provider
+    Agent->>API: evaluate_offer(280)
+    API-->>Agent: COUNTER RM300 (floor never returned)
+    Agent->>LLM: Phrase the reply
+    LLM-->>API: Tokens
+    API-->>SPA: SSE chunks
+    API->>Redis: Release lease; publish to the buyer's channel
+    SPA-->>Buyer: Reply bubble
 ```
+
+On the local model the agent step is split into a decider and a speaker; see
+[agent architecture](../architecture/agent.md#2-running-the-turn-botpy).
 
 ---
 
@@ -39,8 +45,8 @@ Nego-Lah deliberately avoids pessimistic inventory locking to prevent denial-of-
 sequenceDiagram
     autonumber
     actor Buyer
-    participant SPA as Nuxt 4 SPA
-    participant API as FastAPI (:8000)
+    participant SPA as Nuxt SPA
+    participant API as FastAPI
     participant Stripe as Stripe API
     participant DB as Supabase PostgreSQL
     actor Seller as Seller / Resend
@@ -60,7 +66,7 @@ sequenceDiagram
 
     Note over Buyer,DB: Phase 2: Payment & Atomic Claim (Fulfillment)
     Buyer->>Stripe: Completes payment on Stripe
-    Stripe->>API: Webhook: checkout.session.completed
+    Stripe->>API: POST /payment/webhook/stripe (checkout.session.completed or payment_link.completed)
     API->>DB: INSERT INTO orders (stripe_payment_id) [UNIQUE idempotency anchor]
     
     API->>DB: UPDATE items SET status='sold', buyer_id=user_id WHERE id=item_id AND status='available'
@@ -88,10 +94,10 @@ sequenceDiagram
     actor Seller as Human Seller (Admin Console)
 
     Buyer->>API: "Can we COD at Mid Valley?"
-    API->>API: Tool handoff_to_human triggered (COD policy)
+    API->>API: Agent calls transfer_to_human (COD policy)
     API->>DB: UPDATE chat_settings SET ai_enabled=false, admin_intervening=true
     API-->>Buyer: "I'll pass you to Terry to arrange COD!"
     Seller->>API: POST /admin/chats/{user_id}/message
     API->>DB: INSERT INTO messages (source='admin', content='...')
-    API-->>Buyer: SSE notification: seller active in chat
+    API-->>Buyer: SSE on /chat/notifications/stream
 ```

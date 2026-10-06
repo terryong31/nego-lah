@@ -1,7 +1,7 @@
-# ADR 0020: An Item Knowledge Card Instead of Re-Sending the Photos Every Turn
+# ADR-0020: An Item Knowledge Card Instead of Re-Sending the Photos Every Turn
 
-## Status
-Accepted
+- Status: Accepted
+- Date: 2026-09-10
 
 ## Context
 

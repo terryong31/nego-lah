@@ -39,9 +39,9 @@ Migrate the Nuxt frontend to a pure Single Page Application (`ssr: false`) that 
   ```
 
 # Test-Driven Development (TDD) Scenarios
-- [ ] **Scenario 1:** `useTurnstileToken` initializes with null and updates reactively when token is generated.
-- [ ] **Scenario 2:** Auth forms fail submission or display warning if Turnstile token is empty or failed.
-- [ ] **Scenario 3:** `bun run generate` generates static HTML/JS/CSS bundle successfully.
+- [x] **Scenario 1:** `useTurnstileToken` initializes with null and updates reactively when token is generated. *(Verified 2026-10-07: `frontend/tests/composables/useTurnstileToken.test.ts`; the initial value is `undefined`, not `null`.)*
+- [x] **Scenario 2:** Auth forms fail submission or display warning if Turnstile token is empty or failed. *(Verified 2026-10-07: `frontend/tests/pages/_console/login-turnstile.test.ts`; buyer `login.vue` applies the same guard.)*
+- [x] **Scenario 3:** `bun run generate` generates static HTML/JS/CSS bundle successfully. *(Verified 2026-10-07: the frontend deploy job in `deploy.yml` runs it on every release.)*
 - [x] **Scenario 4:** `POST /chat/stream` returns 200 without an `X-Turnstile-Token` header while a non-testing `TURNSTILE_SECRET_KEY` is set (`test_chat_stream_is_not_turnstile_gated`).
 
 # Implementation Files

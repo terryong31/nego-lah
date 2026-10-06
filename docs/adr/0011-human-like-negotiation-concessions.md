@@ -1,4 +1,4 @@
-# 11. Human-Like Negotiation Concessions
+# ADR-0011: Human-Like Negotiation Concessions
 
 - Status: Accepted
 - Date: 2026-09-09

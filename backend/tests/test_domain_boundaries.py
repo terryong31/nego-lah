@@ -57,7 +57,7 @@ REPO_ROOT = BACKEND.parent
 MIGRATIONS_DIR = REPO_ROOT / "supabase" / "migrations"
 
 # Not source we own, or not Python we wrote.
-_INFRA = {".venv", "htmlcov", "__pycache__", "migrations", "alembic"}
+_INFRA = {".venv", "htmlcov", "__pycache__", "migrations"}
 
 # Developer tooling, exempt from both rules BY DESIGN. An eval harness scores the
 # agent's internals and ops scripts exist to reach past the application — holding
@@ -428,7 +428,7 @@ def test_there_is_no_fourth_layer():
     imported it. Everything now belongs to exactly one of three layers, so a new
     top-level package is a decision, not a drift.
     """
-    allowed = {"core", "domains", COMPOSITION_ROOT, "tests", "scripts", "evals", "alembic", "templates"}
+    allowed = {"core", "domains", COMPOSITION_ROOT, "tests", "scripts", "evals", "templates"}
     strays = sorted(
         d.name
         for d in BACKEND.iterdir()

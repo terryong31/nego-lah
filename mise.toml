@@ -79,7 +79,7 @@ run = "bun run typecheck"
 [tasks."audit:backend"]
 description = "Run backend security audits (pip-audit and bandit)"
 dir = "backend"
-run = "uv run pip-audit && uv run bandit -r . -x ./tests,./conftest.py,./.venv,./alembic,./htmlcov"
+run = "uv run pip-audit && uv run bandit -r . -x ./tests,./conftest.py,./.venv,./htmlcov"
 
 [tasks."audit:frontend"]
 description = "Audit untrusted lifecycle scripts in frontend dependencies"

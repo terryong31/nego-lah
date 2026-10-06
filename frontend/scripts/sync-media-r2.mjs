@@ -36,7 +36,10 @@ const CONTENT_TYPES = {
   '.webm': 'video/webm',
   '.mov': 'video/quicktime',
   '.m4v': 'video/x-m4v',
-  '.ogv': 'video/ogg'
+  '.ogv': 'video/ogg',
+  // SPEC-100: a video's poster ships beside it (`intro.mp4` + `intro.jpg`).
+  '.jpg': 'image/jpeg',
+  '.webp': 'image/webp'
 }
 const CACHE_CONTROL = 'public, max-age=31536000, immutable'
 

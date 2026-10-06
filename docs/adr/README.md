@@ -37,3 +37,4 @@ changes an earlier one, add a new ADR and mark the old one's status.
 | [0028](0028-buyer-sessions-move-behind-the-api.md) | Buyer Sessions Move Behind the API, Not Into an SSR Server | Accepted |
 | [0029](0029-ci-owns-production-migrations.md) | CI Owns Production Migrations | Accepted |
 | [0030](0030-the-domain-graph-is-acyclic.md) | The Domain Graph Is Acyclic (Layering, Bus, Composition Root) | Accepted |
+| [0031](0031-videos-are-code.md) | Videos Are Code (Remotion, Rendered Out of Git) | Accepted |

@@ -56,6 +56,9 @@ backend/data/
 frontend/public/videos/
 *.mp4
 *.webm
+# ADR-0031: stock audio is licensed for use in the video, not redistribution.
+video/public/audio/
+video/out/
 
 # ===== Redis =====
 dump.rdb

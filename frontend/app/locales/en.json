@@ -101,13 +101,12 @@
     },
     "browseStuffAuthed": "Enter the store",
     "pipeline": {
-      "title": "How it works",
-      "soon": "Recording coming soon",
-      "items": {
-        "listing": "Upload",
-        "haggle": "Nego",
-        "delivery": "Delivery"
-      }
+      "title": "How it works"
+    },
+    "intro": {
+      "play": "Play the intro video",
+      "unmute": "Turn sound on",
+      "mute": "Turn sound off"
     }
   },
   "auth": {

@@ -77,8 +77,8 @@ const enterStore = computed(() =>
       </div>
     </UHero>
 
-    <!-- How it works: the walkthrough, scrubbed by scroll -->
-    <HomeAgentPipeline />
+    <!-- How it works: one motion-graphics intro (SPEC-100) -->
+    <HomeIntroVideo />
 
     <!-- B2B: this system ports to your company -->
     <HomeDeployPitch />

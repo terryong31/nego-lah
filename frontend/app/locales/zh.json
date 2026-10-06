@@ -101,13 +101,12 @@
     },
     "browseStuffAuthed": "进入商店",
     "pipeline": {
-      "title": "怎么运作",
-      "soon": "录像即将上线",
-      "items": {
-        "listing": "上传",
-        "haggle": "讲价",
-        "delivery": "送货"
-      }
+      "title": "怎么运作"
+    },
+    "intro": {
+      "play": "播放介绍视频",
+      "unmute": "打开声音",
+      "mute": "关闭声音"
     }
   },
   "auth": {

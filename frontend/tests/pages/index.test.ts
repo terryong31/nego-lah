@@ -59,19 +59,14 @@ describe('pages/index.vue', () => {
   })
 
   describe('how it works and feature sections', () => {
-    it('walks through how it works, upload to doorstep', async () => {
+    it('shows how it works as one intro video, not a stepper', async () => {
       const wrapper = await mountSuspended(IndexPage)
 
       expect(wrapper.text()).toContain('How it works')
-      // Three steps, one word each; the recording explains them (SPEC-075).
-      for (const step of ['Upload', 'Nego', 'Delivery']) {
-        expect(wrapper.text()).toContain(step)
-      }
-      // The middle ceremony is gone from the story.
-      expect(wrapper.text()).not.toContain('Memory')
-      expect(wrapper.text()).not.toContain('Deal')
-      expect(wrapper.text()).not.toContain('Paid')
-      expect(wrapper.findComponent({ name: 'UStepper' }).exists()).toBe(true)
+      // SPEC-100: one motion-graphics film replaced the three-step walkthrough.
+      expect(wrapper.find('#how-it-works').findAll('video')).toHaveLength(1)
+      expect(wrapper.findComponent({ name: 'UStepper' }).exists()).toBe(false)
+      expect(wrapper.text()).not.toContain('coming soon')
     })
 
     it('keeps exactly one #how-it-works anchor for deep links to land on', async () => {

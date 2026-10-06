@@ -165,6 +165,23 @@ description = "Upload the optimized demo media to Cloudflare R2 (needs `wrangler
 dir = "frontend"
 run = "node scripts/sync-media-r2.mjs"
 
+# ADR-0031: the homepage intro is a Remotion project in video/. Renders land in
+# the media folder outside the repo; publish them with `mise run media:sync`.
+[tasks."video:studio"]
+description = "Open Remotion Studio to preview and edit the intro video"
+dir = "video"
+run = "bun install --frozen-lockfile && bunx remotion studio"
+
+[tasks."video:still"]
+description = "Render one storyboard still per scene into video/out/stills"
+dir = "video"
+run = "bun run stills"
+
+[tasks."video:render"]
+description = "Render intro.mp4 + intro.jpg into ~/Desktop/nego-lah-media/dist"
+dir = "video"
+run = "bun run render"
+
 [tasks."sentry:info"]
 description = "Verify Sentry CLI configuration and authentication"
 dir = "frontend"

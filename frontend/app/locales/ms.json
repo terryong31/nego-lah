@@ -101,13 +101,12 @@
     },
     "browseStuffAuthed": "Masuk kedai",
     "pipeline": {
-      "title": "Macam mana ia berfungsi",
-      "soon": "Rakaman akan menyusul",
-      "items": {
-        "listing": "Muat naik",
-        "haggle": "Nego",
-        "delivery": "Hantar"
-      }
+      "title": "Macam mana ia berfungsi"
+    },
+    "intro": {
+      "play": "Main video pengenalan",
+      "unmute": "Hidupkan bunyi",
+      "mute": "Matikan bunyi"
     }
   },
   "auth": {

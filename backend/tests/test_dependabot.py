@@ -32,6 +32,13 @@ def updates() -> list[dict]:
     return data["updates"]
 
 
+def test_config_uses_no_yaml_aliases():
+    """Dependabot's parser rejects anchors/aliases ("YAML aliases are not supported")."""
+    events = yaml.parse(CONFIG.read_text())
+    aliased = [e for e in events if isinstance(e, yaml.AliasEvent) or getattr(e, "anchor", None)]
+    assert not aliased, "inline every repeated block; Dependabot cannot resolve YAML aliases"
+
+
 def test_no_renovate_config_remains():
     skip = {"node_modules", ".git", ".venv", ".nuxt", ".output"}
     found = [

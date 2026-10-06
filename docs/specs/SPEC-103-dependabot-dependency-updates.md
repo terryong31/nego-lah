@@ -35,6 +35,7 @@ ecosystem the repo ships.
 - [x] No `renovate.json` / `.renovaterc*` exists anywhere in the repo (`test_dependabot.py`).
 - [x] Every expected `(ecosystem, directory)` pair is configured exactly once.
 - [x] Every update entry has a weekly schedule, an open-PR limit and a minor/patch group.
+- [x] The file has no YAML anchors or aliases — Dependabot's parser rejects them.
 
 # Implementation Files
 - `.github/dependabot.yml`, `frontend/renovate.json` (deleted)

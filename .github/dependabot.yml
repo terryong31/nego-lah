@@ -1,12 +1,13 @@
 # SPEC-103 — Dependabot owns dependency updates.
 # Weekly, grouped: minor+patch land as one PR per ecosystem, each major stands
 # alone. Security updates ignore the grouping and the PR cap.
+# No YAML anchors/aliases: Dependabot's parser rejects them.
 version: 2
 
 updates:
   - package-ecosystem: bun
     directory: /frontend
-    schedule: &weekly
+    schedule:
       interval: weekly
       day: monday
       time: "09:00"
@@ -20,7 +21,11 @@ updates:
 
   - package-ecosystem: uv
     directory: /backend
-    schedule: *weekly
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Kuala_Lumpur
     open-pull-requests-limit: 5
     commit-message:
       prefix: deps(api)
@@ -31,7 +36,11 @@ updates:
   # Actions are SHA-pinned; Dependabot bumps the SHA and its `# vX` comment together.
   - package-ecosystem: github-actions
     directory: /
-    schedule: *weekly
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Kuala_Lumpur
     open-pull-requests-limit: 3
     commit-message:
       prefix: deps(ci)
@@ -41,7 +50,11 @@ updates:
 
   - package-ecosystem: docker
     directory: /frontend
-    schedule: *weekly
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Kuala_Lumpur
     open-pull-requests-limit: 2
     commit-message:
       prefix: deps(docker)
@@ -51,7 +64,11 @@ updates:
 
   - package-ecosystem: docker
     directory: /backend
-    schedule: *weekly
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Kuala_Lumpur
     open-pull-requests-limit: 2
     commit-message:
       prefix: deps(docker)
@@ -61,7 +78,11 @@ updates:
 
   - package-ecosystem: docker-compose
     directory: /
-    schedule: *weekly
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Kuala_Lumpur
     open-pull-requests-limit: 2
     commit-message:
       prefix: deps(docker)

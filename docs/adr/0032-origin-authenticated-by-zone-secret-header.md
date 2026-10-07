@@ -39,7 +39,7 @@ the peer is a Cloudflare range, and overwrites the upstream header with that val
 The check is inert while the secret is empty, so the code can merge before the rule exists.
 `scripts/enable_origin_auth.sh` creates the rule and the secret together. If a deploy's request
 through the edge is refused by Caddy anyway, it switches the check off and fails red rather than
-leave the API down. Caddy marks that refusal (`X-Origin-Check: refused`) because Cloudflare
+leave the API down. Caddy marks that refusal (`X-Origin-Check: refused; …`) because Cloudflare
 answers some requests with its own 403, such as a Bot Fight Mode challenge to the server's
 datacenter IP. Those never reach the origin and must not switch the check off.
 

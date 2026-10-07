@@ -486,15 +486,27 @@ jobs:
               exit 1
             fi
             # ADR-0032 ordering guard: a secret set before the zone's Transform
-            # Rule exists would refuse every request. Ask through the edge; on a
-            # 403, disarm the origin check and fail red so it gets noticed.
+            # Rule exists would refuse every request. Ask through the edge; if
+            # Caddy refused it, disarm the origin check and fail red so it gets
+            # noticed. Only Caddy's 403 carries X-Origin-Check: Cloudflare also
+            # answers 403 itself (Bot Fight Mode challenging this datacenter IP,
+            # a WAF rule), and that says nothing about the Transform Rule.
             if [ -s caddy.env ]; then
-              edge=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 https://api.negolah.my/health || true)
-              if [ "$edge" = "403" ]; then
-                echo "::error::origin check refused a request through Cloudflare; is the X-Origin-Auth Transform Rule in place? Disarming it."
+              hdrs=$(mktemp)
+              edge=$(curl -s -o /dev/null -D "$hdrs" -w '%{http_code}' --max-time 15 https://api.negolah.my/health || true)
+              refused=""
+              if grep -qi '^x-origin-check: *refused' "$hdrs"; then refused=1; fi
+              mitigated=$(grep -i '^cf-mitigated:' "$hdrs" | cut -d: -f2 | tr -d ' \r' || true)
+              rm -f "$hdrs"
+              if [ -n "$refused" ]; then
+                echo "::error::Caddy refused a request that came through Cloudflare, so the zone is not sending X-Origin-Auth. Is the Transform Rule in place? Disarming the origin check."
                 : > caddy.env
-                sudo docker compose up -d --force-recreate caddy
+                # --no-deps: `up caddy` would otherwise recreate the backend
+                # too, and without the tag compose falls back to :latest.
+                sudo env BACKEND_IMAGE_TAG="$IMAGE_TAG" docker compose up -d --no-deps --force-recreate caddy
                 exit 1
+              elif [ "$edge" != "200" ]; then
+                echo "::warning::Could not confirm the origin check: /health through Cloudflare answered ${edge}${mitigated:+ (cf-mitigated: $mitigated)}, and it was not Caddy refusing it. Enforcement stays on."
               fi
             fi
             sudo docker image prune -f

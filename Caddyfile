@@ -19,6 +19,9 @@ api.negolah.my {
     # sets X-Origin-Auth; without it the request never reaches the API. Inert
     # while ORIGIN_AUTH_SECRET is unset (see SPEC-104 for the rollout).
     @not_via_our_zone expression `{env.ORIGIN_AUTH_SECRET} != "" && {http.request.header.X-Origin-Auth} != {env.ORIGIN_AUTH_SECRET}`
+    # The mark tells the deploy guard this 403 is ours, not one Cloudflare
+    # answered itself (Bot Fight Mode, WAF) without reaching the origin.
+    header @not_via_our_zone X-Origin-Check refused
     respond @not_via_our_zone "Forbidden" 403
 
     request_body {

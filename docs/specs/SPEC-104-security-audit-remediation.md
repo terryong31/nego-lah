@@ -55,9 +55,10 @@ proxied with the header removed.
 
 **Deploy guard.** After the health check, if `caddy.env` is non-empty the deploy requests
 `https://api.negolah.my/health` through Cloudflare. Caddy marks its own refusal with
-`X-Origin-Check: refused`; that mark means the zone is not sending the header, so the deploy
-empties `caddy.env`, recreates Caddy alone (`--no-deps`, on the deployed tag; check off) and fails
-red. Any other non-200 is a `::warning::` and leaves the check on: Cloudflare answers some requests
+`X-Origin-Check: refused; X-Origin-Auth absent|mismatched` (a `map`; the received value is never
+echoed, since on a mismatch it may be the zone's real secret). On that mark the deploy empties
+`caddy.env`, recreates Caddy alone (`--no-deps`, on the deployed tag; check off) and fails red,
+naming the `cf-ray` (or its absence) and the mark. Any other non-200 is a `::warning::` and leaves the check on: Cloudflare answers some requests
 itself (Bot Fight Mode challenges a datacenter IP with a 403 and `cf-mitigated: challenge`), and
 that says nothing about the Transform Rule. The first guard keyed on a bare 403. On 2026-10-07 it
 disarmed the check on a 403 nobody could attribute. Its `up caddy` also recreated the backend
@@ -68,14 +69,24 @@ Edit* and *Zone: Read*, then run `CLOUDFLARE_API_TOKEN=… scripts/enable_origin
 creates the Transform Rule, stores `ORIGIN_AUTH_SECRET` in Infisical `prod:/Backend`, and never
 prints the secret. Enforcement starts on the next backend deploy. `--rotate` issues a new secret.
 
+**When the guard fires**, its error says which of these it is:
+
+| Mark | `cf-ray` | Meaning | Fix |
+|---|---|---|---|
+| `absent` | yes | The zone's rule is not adding the header | Run `scripts/enable_origin_auth.sh`, then re-run the deploy job |
+| `mismatched` | yes | The rule sends a value other than Infisical's | Same: the script rewrites the rule from Infisical's value |
+| either | no | The probe reached Caddy without crossing Cloudflare | Proxy `api.negolah.my` (orange cloud); remove any local `/etc/hosts` entry on the server |
+
 - [x] Rollout script run (2026-10-07): rule and Infisical secret in place, values match
-- [ ] The next backend deploy is green
+- [ ] The next backend deploy is green. The `537315c` deploy (2026-10-07) got Caddy's own refusal
+  through the edge, before the mark said why; the check is off until the cause above is fixed.
 - [ ] A `--resolve` request straight to the origin gets 403
 
 # TDD Scenarios
 
 - [x] Caddyfile/compose config tests: global client-IP settings, header rewrite, header strip, 403 matcher; caddy env_file; deploy writes `caddy.env` from one key.
-- [x] Deploy guard, run in bash with `curl` and `sudo` stubbed: Caddy's marked 403 → check off, Caddy alone recreated on the deployed tag, exit 1; Cloudflare's own 403, an unreachable edge → warning, check on, exit 0; 200 → silent. Every `docker compose up` in the deploy pins `BACKEND_IMAGE_TAG`.
+- [x] Caddy's mark: a `map` on `X-Origin-Auth` gives `absent`/`mismatched`; no `X-Origin-Check` line echoes the header.
+- [x] Deploy guard, run in bash with `curl` and `sudo` stubbed: Caddy's marked 403 → check off, Caddy alone recreated on the deployed tag, exit 1, the error naming `cf-ray`, the mark and the fix (or that the probe skipped Cloudflare); Cloudflare's own 403, an unreachable edge → warning, check on, exit 0; 200 → silent. Every `docker compose up` in the deploy pins `BACKEND_IMAGE_TAG`.
 - [x] CORS preflight requesting `CF-Connecting-IP` is not allowed.
 - [x] PWA: API-origin URLs (including `.png`-suffixed paths) match no rule.
 - [x] `web_search` output is fenced; an injected closing fence tag in a result is neutralised; long snippets are truncated.

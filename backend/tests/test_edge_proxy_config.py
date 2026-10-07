@@ -62,7 +62,24 @@ class TestOriginAuth:
         that never reached the origin. Only Caddy's own refusal carries the mark."""
         site = _site_block()
         name = re.search(r"@(\w+)\s+expression\s+`", site).group(1)
-        assert re.search(rf"header\s+@{name}\s+X-Origin-Check\s+refused\b", site)
+        assert re.search(rf'header\s+@{name}\s+X-Origin-Check\s+"refused\b', site)
+
+    def test_the_mark_says_whether_the_header_was_absent_or_wrong(self):
+        """Absent means the zone's rule is not running; wrong means it sends another
+        value. The remedy differs, so the deploy log has to say which."""
+        site = _site_block()
+        mapping = re.search(r"map\s+\{http\.request\.header\.X-Origin-Auth\}\s+\{(\w+)\}\s*\{([^}]*)\}", site)
+        assert mapping, "origin-auth reason map missing"
+        output, body = mapping.groups()
+        assert re.search(r'^\s*""\s+absent\s*$', body, re.M)
+        assert re.search(r"^\s*default\s+mismatched\s*$", body, re.M)
+        assert re.search(rf'X-Origin-Check\s+"refused; X-Origin-Auth \{{{output}\}}"', site)
+
+    def test_the_mark_never_echoes_the_header_value(self):
+        """On a mismatch the value Caddy received may be the zone's real secret."""
+        for line in _site_block().splitlines():
+            if "X-Origin-Check" in line:
+                assert "{http.request.header" not in line, line
 
     def test_the_secret_never_reaches_the_backend(self):
         assert re.search(r"header_up\s+-X-Origin-Auth", _site_block())
@@ -116,6 +133,11 @@ _STUB_SUDO = """#!/usr/bin/env bash
 echo "$*" >> sudo.log
 """
 
+_REFUSED_VIA_CLOUDFLARE = (
+    "HTTP/2 403\r\nserver: cloudflare\r\ncf-ray: 8c9d0e1f2a3b4c5d-SIN\r\n"
+    "x-origin-check: refused; X-Origin-Auth absent\r\n\r\n"
+)
+
 
 class TestOriginGuard:
     """ADR-0032 ordering guard: a secret in Infisical with no Transform Rule at
@@ -164,13 +186,30 @@ class TestOriginGuard:
         return run
 
     def test_caddys_refusal_disarms_the_check_and_fails_red(self, run_guard):
-        r = run_guard("403", "HTTP/2 403\r\nserver: cloudflare\r\nx-origin-check: refused\r\n\r\n")
+        r = run_guard("403", _REFUSED_VIA_CLOUDFLARE)
         assert r.code == 1
         assert r.caddy_env == ""
         assert "::error::" in r.out
 
+    def test_a_refusal_through_cloudflare_names_the_ray_the_reason_and_the_fix(self, run_guard):
+        r = run_guard("403", _REFUSED_VIA_CLOUDFLARE)
+        assert "8c9d0e1f2a3b4c5d-SIN" in r.out
+        assert "X-Origin-Auth absent" in r.out
+        assert "scripts/enable_origin_auth.sh" in r.out
+
+    def test_a_refusal_that_skipped_cloudflare_says_so(self, run_guard):
+        # No cf-ray: the probe reached Caddy without passing the zone (DNS, /etc/hosts).
+        # Still disarmed (availability first), but the fix is not the Transform Rule.
+        r = run_guard(
+            "403", "HTTP/1.1 403 Forbidden\r\nServer: Caddy\r\nX-Origin-Check: refused; X-Origin-Auth absent\r\n\r\n"
+        )
+        assert r.code == 1
+        assert r.caddy_env == ""
+        assert "did not pass through Cloudflare" in r.out
+        assert "scripts/enable_origin_auth.sh" not in r.out
+
     def test_disarming_recreates_only_caddy_on_the_deployed_tag(self, run_guard):
-        r = run_guard("403", "HTTP/2 403\r\nx-origin-check: refused\r\n\r\n")
+        r = run_guard("403", _REFUSED_VIA_CLOUDFLARE)
         assert "--force-recreate caddy" in r.sudo
         assert "--no-deps" in r.sudo
         assert "BACKEND_IMAGE_TAG=abc123" in r.sudo

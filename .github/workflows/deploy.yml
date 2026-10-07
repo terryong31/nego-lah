@@ -491,15 +491,22 @@ jobs:
             # noticed. Only Caddy's 403 carries X-Origin-Check: Cloudflare also
             # answers 403 itself (Bot Fight Mode challenging this datacenter IP,
             # a WAF rule), and that says nothing about the Transform Rule.
+            # Every response that crossed Cloudflare carries cf-ray, so its
+            # absence means the probe reached Caddy some other way (DNS not
+            # proxied, a local /etc/hosts entry) and the rule is not the fault.
             if [ -s caddy.env ]; then
               hdrs=$(mktemp)
               edge=$(curl -s -o /dev/null -D "$hdrs" -w '%{http_code}' --max-time 15 https://api.negolah.my/health || true)
-              refused=""
-              if grep -qi '^x-origin-check: *refused' "$hdrs"; then refused=1; fi
+              mark=$(grep -i '^x-origin-check:' "$hdrs" | cut -d: -f2- | tr -d '\r' | sed 's/^ *//' || true)
+              ray=$(grep -i '^cf-ray:' "$hdrs" | cut -d: -f2 | tr -d ' \r' || true)
               mitigated=$(grep -i '^cf-mitigated:' "$hdrs" | cut -d: -f2 | tr -d ' \r' || true)
               rm -f "$hdrs"
-              if [ -n "$refused" ]; then
-                echo "::error::Caddy refused a request that came through Cloudflare, so the zone is not sending X-Origin-Auth. Is the Transform Rule in place? Disarming the origin check."
+              if [ "${mark%%;*}" = "refused" ]; then
+                if [ -n "$ray" ]; then
+                  echo "::error::Caddy refused a request that came through Cloudflare (cf-ray $ray; $mark). The zone's Transform Rule is missing or sends a different value from Infisical's: run scripts/enable_origin_auth.sh (it rewrites the rule from Infisical), then re-run this job. Disarming the origin check."
+                else
+                  echo "::error::Caddy refused the probe ($mark), but it did not pass through Cloudflare (no cf-ray). Check that api.negolah.my is proxied and that this server does not resolve it locally. Disarming the origin check."
+                fi
                 : > caddy.env
                 # --no-deps: `up caddy` would otherwise recreate the backend
                 # too, and without the tag compose falls back to :latest.

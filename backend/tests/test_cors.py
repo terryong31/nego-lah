@@ -123,3 +123,17 @@ def test_defense_middleware_413_omits_cors_headers_for_disallowed_origin():
     )
     assert response.status_code == 413
     assert response.headers.get("access-control-allow-origin") is None
+
+
+def test_cors_does_not_let_browsers_send_cf_connecting_ip():
+    """SPEC-104 SEC-02: the client IP is Cloudflare's to state, never the page's."""
+    response = client.options(
+        "/items",
+        headers={
+            "Origin": "https://nego-lah.pages.dev",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "CF-Connecting-IP",
+        },
+    )
+    allowed = (response.headers.get("access-control-allow-headers") or "").lower()
+    assert "cf-connecting-ip" not in allowed

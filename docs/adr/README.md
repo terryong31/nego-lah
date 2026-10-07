@@ -54,5 +54,6 @@ with the metadata block from [`TEMPLATE.md`](TEMPLATE.md).
 | [0029](0029-ci-owns-production-migrations.md) | CI owns production migrations | Accepted | 2026-09-18 |
 | [0030](0030-the-domain-graph-is-acyclic.md) | The domain graph is acyclic | Accepted | 2026-09-20 |
 | [0031](0031-videos-are-code.md) | Videos Are Code | Accepted | 2026-10-07 |
+| [0032](0032-origin-authenticated-by-zone-secret-header.md) | The origin authenticates our Cloudflare zone with a secret header | Accepted | 2026-10-07 |
 <!-- END GENERATED -->
 <!-- vale on -->

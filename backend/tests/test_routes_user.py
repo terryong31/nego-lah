@@ -671,3 +671,30 @@ async def test_repeated_wrong_passwords_lock_the_account_not_the_address(
     # A different account is unaffected — the limit is not a global or per-IP one.
     auth_user("user-2")
     assert (await _delete_account(client, user_id="user-2", password="guess")).status_code == 401
+
+
+async def test_update_profile_rejects_a_display_name_over_50_characters(client, auth_user, patch_supabase):
+    """SPEC-104 SEC-08: the server holds the same ceiling the form does."""
+    auth_user("user-1")
+    fake_admin = MagicMock()
+    fake_admin.auth.admin.get_user_by_id.return_value = _existing_user_result()
+    patch_supabase("domains.identity.routes", admin=fake_admin, user=MagicMock())
+
+    resp = await client.put("/user/user-1/profile", data={"display_name": "x" * 51})
+
+    assert resp.status_code == 400
+    fake_admin.auth.admin.update_user_by_id.assert_not_called()
+    fake_admin.storage.from_.assert_not_called()
+
+
+async def test_update_profile_trims_the_display_name_before_measuring_it(client, auth_user, patch_supabase):
+    auth_user("user-1")
+    fake_admin = MagicMock()
+    fake_admin.auth.admin.get_user_by_id.return_value = _existing_user_result()
+    patch_supabase("domains.identity.routes", admin=fake_admin, user=MagicMock())
+
+    resp = await client.put("/user/user-1/profile", data={"display_name": "  " + "y" * 50 + "  "})
+
+    assert resp.status_code == 200
+    updated_metadata = fake_admin.auth.admin.update_user_by_id.call_args[0][1]["user_metadata"]
+    assert updated_metadata["display_name"] == "y" * 50

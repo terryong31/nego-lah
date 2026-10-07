@@ -41,6 +41,9 @@ from domains.identity.user_session import clear_session_cookies
 
 SUPPORTED_LANGUAGES = {"en", "ms", "zh"}
 
+# Mirrors `displayName` in frontend/app/utils/schemas.ts.
+MAX_DISPLAY_NAME_LENGTH = 50
+
 # SPEC-056 #7. Password guessing is an attack on ONE ACCOUNT mounted from
 # wherever the attacker likes, so throttling it per IP is the wrong axis — a
 # botnet sails through, and a conference behind one NAT address gets punished
@@ -250,6 +253,16 @@ async def update_profile(
     `custom_avatar_url` so an OAuth sign-in can't overwrite it.
     """
     get_user_id_from_body_or_token(user_id, token_user_id)
+
+    # SPEC-104: the same ceiling the profile form holds, checked before any
+    # upload or write so an oversized name costs nothing.
+    if display_name is not None:
+        display_name = display_name.strip()
+        if len(display_name) > MAX_DISPLAY_NAME_LENGTH:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Display name cannot exceed {MAX_DISPLAY_NAME_LENGTH} characters",
+            )
 
     # Supabase's client is synchronous. This handler has to stay `async def`
     # (it awaits the upload), so every call below goes through a thread —

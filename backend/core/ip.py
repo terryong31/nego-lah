@@ -2,9 +2,10 @@
 Client IP resolution for Nego-Lah.
 
 Behind Cloudflare and Caddy:
-- When api.negolah.my is proxied by Cloudflare and the origin firewall allows
-  only Cloudflare IP ranges, Cloudflare injects the authoritative `CF-Connecting-IP`
-  header containing the true visitor IP.
+- Caddy resolves the client IP itself — from `CF-Connecting-IP` only when the
+  peer is a Cloudflare edge, otherwise the peer address — and overwrites the
+  upstream `CF-Connecting-IP` with it (SPEC-104). The backend is reachable only
+  through Caddy, so the header it sees here is Caddy's, never the caller's.
 - In local development, testing, or direct connections, fallback to `request.client.host`
   or ASGI `scope["client"][0]`.
 - Reading raw `X-Forwarded-For` without trusted-proxy validation is dangerous because

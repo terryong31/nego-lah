@@ -45,7 +45,7 @@ graph LR
 | Component | Role |
 |-----------|------|
 | **Nuxt SPA** on Cloudflare Pages | Pure client-side app (`ssr: false`). Holds no tokens and no Supabase SDK; every call goes to the API with `credentials: 'include'` ([ADR-0004](../adr/0004-nuxt-spa-cloudflare-pages-and-turnstile.md), [ADR-0028](../adr/0028-buyer-sessions-move-behind-the-api.md)). |
-| **FastAPI** on Lightsail | The only backend: REST, SSE, webhooks, the agent, and two in-process [background loops](../workers/README.md). The origin accepts traffic only through the Cloudflare proxy ([ADR-0025](../adr/0025-edge-proxy-pre-auth-rate-limiting-local-jwt.md)). |
+| **FastAPI** on Lightsail | The only backend: REST, SSE, webhooks, the agent, and two in-process [background loops](../workers/README.md). The origin accepts traffic only through the Cloudflare proxy ([ADR-0025](../adr/0025-edge-proxy-pre-auth-rate-limiting-local-jwt.md)), and only from this site's zone: Caddy checks a secret header the zone adds ([ADR-0032](../adr/0032-origin-authenticated-by-zone-secret-header.md)). |
 | **Supabase** | Postgres (reached through PostgREST with the service role), Auth (brokered by the API, never called from the browser), and Storage for item images and avatars. |
 | **Redis** | Managed Upstash (`rediss://`) in production, set by the `REDIS_URL` secret; there is no Redis container on the box. Buyer and admin sessions, rate limits, the LLM lease, pending payment links, unread-digest queues, and the pub/sub channel that fans notifications out across workers. |
 | **LLMs** | Self-hosted Qwen first, Gemini on overflow — see [agent architecture](agent.md). |

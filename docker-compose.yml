@@ -23,6 +23,10 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile
       - caddy_data:/data
       - caddy_config:/config
+    # ADR-0032: only ORIGIN_AUTH_SECRET, which the deploy copies out of the
+    # backend's env file. Caddy has no use for the rest of it.
+    env_file:
+      - ./caddy.env
     mem_limit: 128m
     cpus: 0.4
     logging: *default-logging

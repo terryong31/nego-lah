@@ -14,6 +14,9 @@
  * clone, so a media route pays that cost for no cache benefit at all. Leaving
  * media unmatched means Workbox never calls `respondWith` and the browser owns
  * the stream end to end, byte-range support intact.
+ *
+ * Cross-origin patterns must be anchored at `^https://`: Workbox's `RegExpRoute`
+ * ignores a cross-origin match that does not start at index 0.
  */
 
 /** Extensions that must never be routed through the service worker. */
@@ -86,8 +89,10 @@ export const runtimeCaching: RuntimeCachingRule[] = [
     // Public Supabase Storage objects — images only. The previous
     // `/storage/v1/object/public/.*` catch-all also matched
     // `videos/negotiation-demo.mp4`, which is what broke the homepage video.
+    // Anchored at the scheme: Workbox only routes a cross-origin URL when the
+    // match starts at index 0, so the unanchored version never matched at all.
     urlPattern: new RegExp(
-      `/storage/v1/object/public/.*\\.${IMAGE_EXTENSION_PATTERN}${OPTIONAL_QUERY}`,
+      `^https://[^/]+/storage/v1/object/public/.*\\.${IMAGE_EXTENSION_PATTERN}${OPTIONAL_QUERY}`,
       'i'
     ),
     handler: 'StaleWhileRevalidate',
@@ -101,10 +106,8 @@ export const runtimeCaching: RuntimeCachingRule[] = [
         statuses: [0, 200]
       }
     }
-  },
-  {
-    // Never serve stale responses for API calls or chat / negotiation
-    urlPattern: /^https:\/\/api\.negolah\.my\/api\/.*/i,
-    handler: 'NetworkOnly'
   }
+  // No rule for the API, deliberately (SPEC-104). A request no route matches is
+  // never handled by the worker: the browser fetches it and nothing is cached,
+  // and SSE streams are not held open inside the service worker.
 ]

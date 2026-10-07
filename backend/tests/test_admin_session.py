@@ -123,6 +123,42 @@ def test_enforce_login_rate_limit_scoped_per_email_and_ip():
     enforce_login_rate_limit("fresh@example.com", "10.0.0.3")
 
 
+def test_enforce_login_rate_limit_caps_one_account_across_many_ips():
+    """SPEC-104 SEC-05: guessing one admin's password is an attack on the account,
+    so rotating addresses must not buy more guesses."""
+    email = "admin-target@example.com"
+    for n in range(admin_session._LOGIN_ACCOUNT_MAX):
+        enforce_login_rate_limit(email, f"203.0.113.{n}")
+
+    with pytest.raises(HTTPException) as exc_info:
+        enforce_login_rate_limit(email, "198.51.100.250")
+    assert exc_info.value.status_code == 429
+
+
+def test_enforce_login_rate_limit_account_key_ignores_email_case():
+    for n in range(admin_session._LOGIN_ACCOUNT_MAX):
+        enforce_login_rate_limit("Case-Target@Example.com", f"203.0.113.{n}")
+
+    with pytest.raises(HTTPException):
+        enforce_login_rate_limit("case-target@example.com", "198.51.100.251")
+
+
+def test_one_ip_cannot_spend_the_whole_account_budget():
+    """The per-IP check runs first, so a single address is turned away before
+    it can lock the owner out from everywhere else."""
+    email = "budget@example.com"
+    for _ in range(admin_session._LOGIN_MAX + 20):
+        try:
+            enforce_login_rate_limit(email, "10.9.9.9")
+        except HTTPException:
+            pass
+    enforce_login_rate_limit(email, "10.9.9.10")  # should not raise
+
+
+def test_account_ceiling_is_above_the_per_ip_ceiling():
+    assert admin_session._LOGIN_ACCOUNT_MAX > admin_session._LOGIN_MAX
+
+
 def test_enforce_otp_rate_limit_allows_up_to_max_then_blocks():
     handle = "handle-rate-limit-test"
     for _ in range(admin_session._OTP_MAX):

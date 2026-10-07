@@ -216,7 +216,8 @@ app.add_middleware(
         "baggage",
         "X-Turnstile-Token",
         "cf-turnstile-response",
-        "CF-Connecting-IP",
+        # Not CF-Connecting-IP: the client IP is Cloudflare's to state, and Caddy
+        # overwrites it anyway (SPEC-104).
     ],
     expose_headers=["X-CSRF-Token", "sentry-trace", "baggage", "Retry-After"],
 )

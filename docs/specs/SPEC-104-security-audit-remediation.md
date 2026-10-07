@@ -54,8 +54,14 @@ proxied with the header removed.
 `ORIGIN_AUTH_SECRET=` line only (empty file when unset); compose loads it for `caddy`.
 
 **Deploy guard.** After the health check, if `caddy.env` is non-empty the deploy requests
-`https://api.negolah.my/health` through Cloudflare. A 403 means the zone is not sending the
-header: the deploy empties `caddy.env`, recreates Caddy (check off) and fails red.
+`https://api.negolah.my/health` through Cloudflare. Caddy marks its own refusal with
+`X-Origin-Check: refused`; that mark means the zone is not sending the header, so the deploy
+empties `caddy.env`, recreates Caddy alone (`--no-deps`, on the deployed tag; check off) and fails
+red. Any other non-200 is a `::warning::` and leaves the check on: Cloudflare answers some requests
+itself (Bot Fight Mode challenges a datacenter IP with a 403 and `cf-mitigated: challenge`), and
+that says nothing about the Transform Rule. The first guard keyed on a bare 403. On 2026-10-07 it
+disarmed the check on a 403 nobody could attribute. Its `up caddy` also recreated the backend
+without the tag, so production ran `:latest`, which the SHA-pinned deploy never pulls.
 
 **Rollout (owner).** Create a Cloudflare API token scoped to `negolah.my` with *Transform Rules:
 Edit* and *Zone: Read*, then run `CLOUDFLARE_API_TOKEN=… scripts/enable_origin_auth.sh`. It
@@ -68,7 +74,8 @@ prints the secret. Enforcement starts on the next backend deploy. `--rotate` iss
 
 # TDD Scenarios
 
-- [x] Caddyfile/compose config tests: global client-IP settings, header rewrite, header strip, 403 matcher; caddy env_file; deploy writes `caddy.env` from one key; deploy disarms the check on an edge 403.
+- [x] Caddyfile/compose config tests: global client-IP settings, header rewrite, header strip, 403 matcher; caddy env_file; deploy writes `caddy.env` from one key.
+- [x] Deploy guard, run in bash with `curl` and `sudo` stubbed: Caddy's marked 403 → check off, Caddy alone recreated on the deployed tag, exit 1; Cloudflare's own 403, an unreachable edge → warning, check on, exit 0; 200 → silent. Every `docker compose up` in the deploy pins `BACKEND_IMAGE_TAG`.
 - [x] CORS preflight requesting `CF-Connecting-IP` is not allowed.
 - [x] PWA: API-origin URLs (including `.png`-suffixed paths) match no rule.
 - [x] `web_search` output is fenced; an injected closing fence tag in a result is neutralised; long snippets are truncated.

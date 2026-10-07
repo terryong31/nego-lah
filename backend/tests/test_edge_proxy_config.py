@@ -11,8 +11,12 @@ The behaviour was verified against `caddy:2.7` in Docker; these are config
 tests that keep the manifest from drifting away from it.
 """
 
+import os
 import pathlib
 import re
+import shutil
+import subprocess
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -53,6 +57,13 @@ class TestOriginAuth:
         assert '{env.ORIGIN_AUTH_SECRET} != ""' in expr
         assert re.search(rf"respond\s+@{name}\b[^\n]*403", site)
 
+    def test_refusals_are_marked_so_the_deploy_can_tell_them_from_cloudflares(self):
+        """Cloudflare answers some requests itself (Bot Fight Mode, WAF) with a 403
+        that never reached the origin. Only Caddy's own refusal carries the mark."""
+        site = _site_block()
+        name = re.search(r"@(\w+)\s+expression\s+`", site).group(1)
+        assert re.search(rf"header\s+@{name}\s+X-Origin-Check\s+refused\b", site)
+
     def test_the_secret_never_reaches_the_backend(self):
         assert re.search(r"header_up\s+-X-Origin-Auth", _site_block())
 
@@ -69,24 +80,119 @@ class TestSecretDelivery:
         assert caddy.get("env_file") == ["./caddy.env"]
 
     def test_deploy_writes_caddy_env_from_the_one_key(self):
-        workflow = yaml.safe_load((REPO_ROOT / ".github" / "workflows" / "deploy.yml").read_text())
-        steps = workflow["jobs"]["deploy-backend"]["steps"]
-        script = next(s["with"]["script"] for s in steps if "script" in s.get("with", {}))
+        script = _deploy_script()
         assert re.search(r"grep -E '\^ORIGIN_AUTH_SECRET=' backend/\.env > caddy\.env", script)
         assert "chmod 600 caddy.env" in script
         # It must exist before compose reads it.
         assert script.index("caddy.env") < script.index("docker compose up")
 
 
-def test_deploy_disarms_the_origin_check_if_the_zone_is_not_sending_the_secret():
-    """ADR-0032 ordering guard: a secret in Infisical with no Transform Rule at
-    Cloudflare would refuse every request. The deploy checks through the edge and,
-    on a 403, empties caddy.env, recreates Caddy and fails red."""
+def _deploy_script() -> str:
     workflow = yaml.safe_load((REPO_ROOT / ".github" / "workflows" / "deploy.yml").read_text())
     steps = workflow["jobs"]["deploy-backend"]["steps"]
-    script = next(s["with"]["script"] for s in steps if "script" in s.get("with", {}))
-    guard = script[script.index("https://api.negolah.my/health") :]
-    assert '"403"' in guard
-    assert ": > caddy.env" in guard
-    assert "--force-recreate caddy" in guard
-    assert "exit 1" in guard
+    return next(s["with"]["script"] for s in steps if "script" in s.get("with", {}))
+
+
+def test_every_compose_up_pins_the_backend_tag():
+    """Compose falls back to `:latest`, which the deploy never pulls. An `up` without
+    the tag recreates the backend from whatever `:latest` happens to be on the box; the
+    2026-10-07 guard did exactly that through `caddy`'s depends_on."""
+    ups = [line for line in _deploy_script().splitlines() if "docker compose up" in line]
+    assert ups
+    for line in ups:
+        assert "BACKEND_IMAGE_TAG=" in line, line
+
+
+_STUB_CURL = """#!/usr/bin/env bash
+# Writes $STUB_HEADERS to the -D file and prints $STUB_CODE as curl's -w output.
+while [ $# -gt 0 ]; do
+  if [ "$1" = "-D" ]; then printf '%b' "$STUB_HEADERS" > "$2"; shift; fi
+  shift
+done
+printf '%s' "$STUB_CODE"
+"""
+
+_STUB_SUDO = """#!/usr/bin/env bash
+echo "$*" >> sudo.log
+"""
+
+
+class TestOriginGuard:
+    """ADR-0032 ordering guard: a secret in Infisical with no Transform Rule at
+    Cloudflare would refuse every request. After the health check the deploy asks
+    through the edge. Only Caddy's own refusal disarms the check; a 403 Cloudflare
+    produced itself says nothing about the Transform Rule."""
+
+    @pytest.fixture
+    def run_guard(self, tmp_path):
+        bash = shutil.which("bash")
+        if not bash:
+            pytest.skip("needs bash")
+        script = _deploy_script()
+        guard = script[script.index("if [ -s caddy.env ]") : script.index("sudo docker image prune")]
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        for name, body in (("curl", _STUB_CURL), ("sudo", _STUB_SUDO)):
+            (bin_dir / name).write_text(body)
+            (bin_dir / name).chmod(0o755)
+
+        def run(code: str, headers: str):
+            (tmp_path / "caddy.env").write_text("ORIGIN_AUTH_SECRET=s3cret\n")
+            (tmp_path / "sudo.log").unlink(missing_ok=True)
+            env = {
+                **os.environ,
+                "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+                "STUB_CODE": code,
+                "STUB_HEADERS": headers,
+            }
+            proc = subprocess.run(  # noqa: S603 - our own workflow script, stubbed curl/sudo
+                [bash, "-c", "set -eu\nIMAGE_TAG=abc123\n" + guard],
+                cwd=tmp_path,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            sudo_log = tmp_path / "sudo.log"
+            return SimpleNamespace(
+                code=proc.returncode,
+                out=proc.stdout,
+                caddy_env=(tmp_path / "caddy.env").read_text(),
+                sudo=sudo_log.read_text() if sudo_log.exists() else "",
+            )
+
+        return run
+
+    def test_caddys_refusal_disarms_the_check_and_fails_red(self, run_guard):
+        r = run_guard("403", "HTTP/2 403\r\nserver: cloudflare\r\nx-origin-check: refused\r\n\r\n")
+        assert r.code == 1
+        assert r.caddy_env == ""
+        assert "::error::" in r.out
+
+    def test_disarming_recreates_only_caddy_on_the_deployed_tag(self, run_guard):
+        r = run_guard("403", "HTTP/2 403\r\nx-origin-check: refused\r\n\r\n")
+        assert "--force-recreate caddy" in r.sudo
+        assert "--no-deps" in r.sudo
+        assert "BACKEND_IMAGE_TAG=abc123" in r.sudo
+
+    def test_cloudflares_own_403_leaves_the_check_on(self, run_guard):
+        # Bot Fight Mode challenging a datacenter IP: answered at the edge, never reached Caddy.
+        r = run_guard("403", "HTTP/2 403\r\nserver: cloudflare\r\ncf-mitigated: challenge\r\n\r\n")
+        assert r.code == 0
+        assert r.caddy_env == "ORIGIN_AUTH_SECRET=s3cret\n"
+        assert r.sudo == ""
+        assert "::warning::" in r.out
+        assert "challenge" in r.out
+
+    def test_an_unreachable_edge_warns_and_leaves_the_check_on(self, run_guard):
+        r = run_guard("000", "")
+        assert r.code == 0
+        assert r.caddy_env == "ORIGIN_AUTH_SECRET=s3cret\n"
+        assert "::warning::" in r.out
+
+    def test_a_healthy_edge_passes_quietly(self, run_guard):
+        r = run_guard("200", "HTTP/2 200\r\nserver: cloudflare\r\n\r\n")
+        assert r.code == 0
+        assert r.caddy_env == "ORIGIN_AUTH_SECRET=s3cret\n"
+        assert r.sudo == ""
+        assert "::" not in r.out

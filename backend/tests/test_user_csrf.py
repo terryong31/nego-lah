@@ -18,6 +18,7 @@ import pytest
 from fastapi import Depends, FastAPI
 from httpx import ASGITransport, AsyncClient
 
+from core.cache import cache_ban_status
 from core.csrf import USER_SCOPE, generate_csrf_token, verify_user_csrf_token
 from core.env import USER_COOKIE_NAME
 from domains.identity.user_session import create_session
@@ -71,6 +72,9 @@ async def test_the_matching_token_passes_the_gate(client, session_cookie, patch_
     """The positive path, end to end: cookie in, CSRF echoed, handler runs."""
     sid, token = session_cookie
     patch_supabase("domains.negotiation.routes", admin=fake_supabase)
+    # Stated, not inherited: this test used to pass only because its unpatched
+    # ban lookup crashed and the check failed open (SPEC-104 SEC-03).
+    cache_ban_status("buyer-1", False)
 
     res = await client.post("/chat/read", cookies={USER_COOKIE_NAME: sid}, headers={"X-CSRF-Token": token})
 

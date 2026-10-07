@@ -54,6 +54,10 @@ _ALLOW_TTL = 90 * 24 * 3600
 
 # Rate limits
 _LOGIN_MAX, _LOGIN_WINDOW = 5, 900  # 5 password attempts / 15 min per email+IP
+# SPEC-104: and 20 / 15 min per account from anywhere, so rotating addresses
+# buys no extra guesses. Higher than the per-IP ceiling so the owner, on one
+# address, is stopped by that first and never spends the account's budget.
+_LOGIN_ACCOUNT_MAX = 20
 _OTP_MAX, _OTP_WINDOW = 5, 300  # 5 OTP attempts / 5 min per pre-auth handle
 
 
@@ -66,9 +70,8 @@ def _auth_client():
 def client_ip(request: Request) -> str:
     """The caller's address, as resolved by the server — never as claimed.
 
-    Behind Cloudflare and Caddy, this prioritizes CF-Connecting-IP injected by
-    Cloudflare edge (when origin firewall restricts access to Cloudflare IPs),
-    falling back to uvicorn's resolved peer (request.client.host).
+    Behind Cloudflare and Caddy this is the CF-Connecting-IP that Caddy itself
+    resolved and rewrote (SPEC-104), falling back to uvicorn's resolved peer.
     """
     return get_client_ip(request)
 
@@ -102,7 +105,12 @@ def _is_admin_user(user) -> bool:
 
 
 def enforce_login_rate_limit(email: str, ip: str) -> None:
-    if not check_rate_limit(f"adminlogin:{email}:{ip}", _LOGIN_MAX, _LOGIN_WINDOW):
+    account = email.strip().lower()
+    # Per address first: an address that is already refused never reaches the
+    # account counter, so one attacker cannot lock the owner out from everywhere.
+    if not check_rate_limit(f"adminlogin:{account}:{ip}", _LOGIN_MAX, _LOGIN_WINDOW):
+        raise HTTPException(status_code=429, detail="Too many attempts. Try again later.")
+    if not check_rate_limit(f"adminlogin:acct:{account}", _LOGIN_ACCOUNT_MAX, _LOGIN_WINDOW):
         raise HTTPException(status_code=429, detail="Too many attempts. Try again later.")
 
 

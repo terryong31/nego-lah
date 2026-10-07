@@ -35,8 +35,11 @@ from domains.identity.user_session import resolve_user_id
 def _is_user_banned(user_id: str) -> bool:
     """
     Check whether a user is banned, backed by a short-lived Redis cache so we
-    don't hit the DB on every authenticated request. Fails open (treats the
-    user as not banned) if the lookup errors, to avoid locking everyone out.
+    don't hit the DB on every authenticated request.
+
+    Fails CLOSED (SPEC-104): when the status cannot be read the request gets a
+    503, and nothing is cached. Failing open let a banned user back in for as
+    long as the database was slow — and cached "not banned" past the outage.
     """
     cached = get_cached_ban_status(user_id)
     if cached is not None:
@@ -44,13 +47,15 @@ def _is_user_banned(user_id: str) -> bool:
 
     try:
         res = admin_supabase.table("user_profiles").select("is_banned").eq("id", user_id).limit(1).execute()
-        banned = bool(res.data and res.data[0].get("is_banned"))
     except Exception as e:
-        # Fail open: a ban lookup that errors must not lock every user out. But
-        # it does mean a banned user gets through, so it is not a silent event.
-        logger.warning(f"Ban lookup failed for {user_id}, treating as not banned: {e}")
-        banned = False
+        logger.error(f"Ban lookup failed for {user_id}, refusing the request: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail="Account check temporarily unavailable. Try again shortly.",
+            headers={"Retry-After": "5"},
+        ) from e
 
+    banned = bool(res.data and res.data[0].get("is_banned"))
     cache_ban_status(user_id, banned)
     return banned
 

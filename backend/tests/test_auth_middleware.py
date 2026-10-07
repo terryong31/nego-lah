@@ -14,7 +14,7 @@ import pytest
 from fastapi import HTTPException
 
 from conftest import make_supabase_result
-from core.cache import cache_ban_status, cache_token_user, get_cached_user_by_token
+from core.cache import cache_ban_status, cache_token_user, get_cached_ban_status, get_cached_user_by_token
 from domains.identity.auth_middleware import get_user_id_from_body_or_token, verify_user_token
 
 
@@ -208,16 +208,33 @@ async def test_ban_status_cache_hit_skips_db_query(patch_supabase, fake_supabase
     fake_supabase.table.assert_not_called()
 
 
-async def test_ban_check_fails_open_on_db_exception(patch_supabase, fake_supabase):
-    """If the ban-status DB lookup errors, the user is treated as not banned
-    (fail open) so a transient DB issue never locks everyone out."""
+async def test_ban_check_fails_closed_on_db_exception(patch_supabase, fake_supabase):
+    """SPEC-104 SEC-03: if the ban status cannot be read, the request is refused.
+
+    It used to fail open, which meant a banned user only had to wait for (or
+    cause) a slow database to get back in — and the "not banned" answer was then
+    cached, so the window outlived the outage.
+    """
     patch_supabase("domains.identity.auth_middleware", admin=fake_supabase)
     fake_supabase.table.side_effect = Exception("db unavailable")
     fake_supabase.auth.get_user.return_value = SimpleNamespace(user=SimpleNamespace(id="user-during-outage"))
 
     request = make_request({"Authorization": "Bearer some-token"})
-    user_id = await verify_user_token(request)
-    assert user_id == "user-during-outage"
+    with pytest.raises(HTTPException) as exc_info:
+        await verify_user_token(request)
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.headers["Retry-After"]
+
+
+async def test_failed_ban_lookup_is_not_cached(patch_supabase, fake_supabase):
+    patch_supabase("domains.identity.auth_middleware", admin=fake_supabase)
+    fake_supabase.table.side_effect = Exception("db unavailable")
+    fake_supabase.auth.get_user.return_value = SimpleNamespace(user=SimpleNamespace(id="user-after-outage"))
+
+    with pytest.raises(HTTPException):
+        await verify_user_token(make_request({"Authorization": "Bearer some-token"}))
+
+    assert get_cached_ban_status("user-after-outage") is None
 
 
 # ---------------------------------------------------------------------------

@@ -5,6 +5,10 @@
 # Closes direct origin access on ports 80 and 443 so traffic to api.negolah.my
 # MUST route through Cloudflare Edge (where WAF, DDoS protection, and rate limits apply).
 #
+# This alone is NOT enough: Cloudflare's ranges are shared by every tenant, so
+# another account's zone can still reach the origin. Caddy closes that gap by
+# requiring the X-Origin-Auth header our zone adds (ADR-0032, SPEC-104).
+#
 # IMPORTANT:
 # - Do NOT hardcode the literal Lightsail public IP in this repository.
 # - Port 22 (SSH) should remain restricted to your administration IP/VPN.

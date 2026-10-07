@@ -140,5 +140,6 @@ tests that prove it. No non-trivial change starts without one (see [`AGENTS.md`]
 | [SPEC-101](SPEC-101-non-functional-audit-remediation.md) | Non-Functional Audit Remediation (2026-10-06) | complete |
 | [SPEC-102](SPEC-102-docs-are-checked-like-code.md) | Docs Are Checked Like Code | complete |
 | [SPEC-103](SPEC-103-dependabot-dependency-updates.md) | Dependabot Owns Dependency Updates | complete |
+| [SPEC-104](SPEC-104-security-audit-remediation.md) | Security Audit Remediation (2026-10-07) | in-progress |
 <!-- END GENERATED -->
 <!-- vale on -->

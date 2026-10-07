@@ -64,3 +64,56 @@ def test_sentry_events_never_carry_session_cookies(monkeypatch):
     assert headers["Cookie"] == headers["Authorization"] == headers["X-CSRF-Token"] == "[Filtered]"
     assert headers["Accept"] == "*/*"
     assert mock_init.call_args.kwargs["before_send_transaction"] is before_send
+
+
+def _before_send(monkeypatch):
+    mock_init = MagicMock()
+    monkeypatch.setattr(sentry_sdk, "init", mock_init)
+    monkeypatch.setenv("SENTRY_DSN", "https://fake@o123.ingest.sentry.io/456")
+    init_sentry(is_prod=True)
+    return mock_init.call_args.kwargs["before_send"], mock_init.call_args.kwargs["event_scrubber"]
+
+
+# SPEC-104 SEC-06: Sentry's default denylist catches `password` and `token` but
+# not the other credentials our request bodies carry.
+CREDENTIAL_FIELDS = ("password", "current_password", "new_password", "code", "handle", "token_hash", "otp")
+
+
+@pytest.mark.parametrize("field", CREDENTIAL_FIELDS)
+def test_sentry_events_never_carry_credentials_from_the_body(monkeypatch, field):
+    before_send, _ = _before_send(monkeypatch)
+    event = {"request": {"data": {field: "hunter2", "email": "a@example.com"}}}
+
+    data = before_send(event, {})["request"]["data"]
+
+    assert data[field] == "[Filtered]"
+    assert data["email"] == "a@example.com"
+
+
+def test_sentry_body_scrub_matches_field_names_case_insensitively(monkeypatch):
+    before_send, _ = _before_send(monkeypatch)
+    event = {"request": {"data": {"New_Password": "hunter2"}}}
+
+    assert before_send(event, {})["request"]["data"]["New_Password"] == "[Filtered]"
+
+
+def test_sentry_scrubber_denylist_covers_body_credentials_too(monkeypatch):
+    """The SDK's own scrubber runs first; both layers must know the names."""
+    _, scrubber = _before_send(monkeypatch)
+    for field in CREDENTIAL_FIELDS:
+        assert field in scrubber.denylist
+
+
+def test_sentry_events_never_carry_the_origin_secret(monkeypatch):
+    """ADR-0032: Caddy strips X-Origin-Auth, but an event must not depend on that."""
+    before_send, _ = _before_send(monkeypatch)
+    event = {"request": {"headers": {"X-Origin-Auth": "zone-secret"}}}
+
+    assert before_send(event, {})["request"]["headers"]["X-Origin-Auth"] == "[Filtered]"
+
+
+def test_sentry_tolerates_a_non_dict_body(monkeypatch):
+    before_send, _ = _before_send(monkeypatch)
+    event = {"request": {"data": "[raw body]"}}
+
+    assert before_send(event, {})["request"]["data"] == "[raw body]"

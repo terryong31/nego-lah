@@ -44,16 +44,30 @@ SENSITIVE_COOKIES = (
 )
 
 
+# Request-body fields that are credentials (SPEC-104). The FastAPI integration
+# attaches JSON bodies to events, and Sentry's default denylist knows `password`
+# and `token` but not `new_password`, the admin OTP `code`, its pre-auth
+# `handle`, or the recovery `token_hash`.
+SENSITIVE_BODY_FIELDS = ("password", "current_password", "new_password", "code", "handle", "token_hash", "otp")
+
+SENSITIVE_HEADERS = ("cookie", "authorization", "x-csrf-token", "x-origin-auth")
+
+
 def scrub_event(event, _hint=None):
-    """`before_send`: drop cookies outright — no event needs them to be debugged."""
+    """`before_send`: drop cookies outright and filter credential headers and body fields."""
     request = event.get("request")
     if isinstance(request, dict):
         request.pop("cookies", None)
         headers = request.get("headers")
         if isinstance(headers, dict):
             for name in list(headers):
-                if name.lower() in ("cookie", "authorization", "x-csrf-token"):
+                if name.lower() in SENSITIVE_HEADERS:
                     headers[name] = "[Filtered]"
+        data = request.get("data")
+        if isinstance(data, dict):
+            for name in list(data):
+                if isinstance(name, str) and name.lower() in SENSITIVE_BODY_FIELDS:
+                    data[name] = "[Filtered]"
     return event
 
 
@@ -85,7 +99,9 @@ def init_sentry(is_prod: bool = False):
         send_default_pii=True,
         before_send=scrub_event,
         before_send_transaction=scrub_event,
-        event_scrubber=EventScrubber(denylist=DEFAULT_DENYLIST + list(SENSITIVE_COOKIES)),
+        event_scrubber=EventScrubber(
+            denylist=DEFAULT_DENYLIST + list(SENSITIVE_COOKIES) + list(SENSITIVE_BODY_FIELDS) + ["x_origin_auth"]
+        ),
         # 1. Logs (Pipes structured logs to Sentry Logs)
         enable_logs=True,
         # 2. Metrics (Custom & runtime metrics)

@@ -457,6 +457,10 @@ jobs:
               mv backend/.env.production backend/.env
               chmod 600 backend/.env
             fi
+            # ADR-0032: Caddy gets the one secret it needs, not the backend's
+            # whole env. Empty (and the origin check inert) until it is set.
+            grep -E '^ORIGIN_AUTH_SECRET=' backend/.env > caddy.env || true
+            chmod 600 caddy.env
             PREV_IMAGE=$(sudo docker inspect -f '{{.Image}}' nego-lah-backend 2>/dev/null || true)
             echo "$GHCR_TOKEN" | sudo docker login ghcr.io -u "$GHCR_ACTOR" --password-stdin
             sudo env BACKEND_IMAGE_TAG="$IMAGE_TAG" docker compose pull
@@ -480,5 +484,17 @@ jobs:
                 sudo env BACKEND_IMAGE_TAG=rollback docker compose up -d backend
               fi
               exit 1
+            fi
+            # ADR-0032 ordering guard: a secret set before the zone's Transform
+            # Rule exists would refuse every request. Ask through the edge; on a
+            # 403, disarm the origin check and fail red so it gets noticed.
+            if [ -s caddy.env ]; then
+              edge=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 https://api.negolah.my/health || true)
+              if [ "$edge" = "403" ]; then
+                echo "::error::origin check refused a request through Cloudflare; is the X-Origin-Auth Transform Rule in place? Disarming it."
+                : > caddy.env
+                sudo docker compose up -d --force-recreate caddy
+                exit 1
+              fi
             fi
             sudo docker image prune -f

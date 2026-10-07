@@ -235,3 +235,114 @@ class TestOriginGuard:
         assert r.caddy_env == "ORIGIN_AUTH_SECRET=s3cret\n"
         assert r.sudo == ""
         assert "::" not in r.out
+
+
+_STUB_CF_CURL = """#!/usr/bin/env bash
+# Answers the Cloudflare API by URL; logs writes; the /health probe writes
+# $STUB_HEALTH_HEADERS to the -D file and prints $STUB_HEALTH_CODE.
+url="" hdrs="" method=GET
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -D) hdrs="$2"; shift ;;
+    -X) method="$2"; shift ;;
+    https://*) url="$1" ;;
+  esac
+  shift
+done
+case "$url" in
+  *"/zones?name="*) echo '{"success":true,"result":[{"id":"z1"}]}' ;;
+  *"/dns_records"*) printf '%s' "$STUB_DNS" ;;
+  *"/entrypoint")
+    if [ "$method" = PUT ]; then echo "PUT $url" >> calls.log; echo '{"success":true,"result":{"rules":[{}]}}'
+    else echo '{"success":false}'; fi ;;
+  *"/health") [ -n "$hdrs" ] && printf '%b' "$STUB_HEALTH_HEADERS" > "$hdrs"; printf '%s' "$STUB_HEALTH_CODE" ;;
+  *) echo "unexpected curl $url" >&2; exit 2 ;;
+esac
+"""
+
+_STUB_INFISICAL = """#!/usr/bin/env bash
+case "$1 $2" in
+  "secrets get") echo s3cret ;;
+  "secrets set") echo "infisical set" >> calls.log ;;
+esac
+"""
+
+_PROXIED = '{"success":true,"result":[{"type":"A","proxied":true}]}'
+_DNS_ONLY = '{"success":true,"result":[{"type":"A","proxied":false}]}'
+_VIA_CLOUDFLARE = "HTTP/2 200\r\nserver: cloudflare\r\ncf-ray: 8c9d0e1f2a3b4c5d-SIN\r\n\r\n"
+
+
+class TestEnableOriginAuthScript:
+    """The secret header only arrives on requests that cross the zone. On 2026-10-07
+    `api.negolah.my` was DNS-only: the script wrote the rule and stored the secret, its
+    probe went straight to Caddy and got 200, and the next deploy's guard had to disarm
+    the check. The script now refuses before writing anything unless the record is proxied,
+    and its probe must carry `cf-ray`."""
+
+    @pytest.fixture
+    def run_script(self, tmp_path):
+        bash, jq = shutil.which("bash"), shutil.which("jq")
+        if not (bash and jq):
+            pytest.skip("needs bash and jq")
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        for name, body in (("curl", _STUB_CF_CURL), ("infisical", _STUB_INFISICAL)):
+            (bin_dir / name).write_text(body)
+            (bin_dir / name).chmod(0o755)
+
+        def run(dns: str, health_code: str = "200", health_headers: str = _VIA_CLOUDFLARE):
+            (tmp_path / "calls.log").unlink(missing_ok=True)
+            env = {
+                **os.environ,
+                "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+                "CLOUDFLARE_API_TOKEN": "t",
+                "STUB_DNS": dns,
+                "STUB_HEALTH_CODE": health_code,
+                "STUB_HEALTH_HEADERS": health_headers,
+            }
+            proc = subprocess.run(  # noqa: S603 - our own script, stubbed curl/infisical
+                [bash, str(REPO_ROOT / "scripts" / "enable_origin_auth.sh")],
+                cwd=tmp_path,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            calls = tmp_path / "calls.log"
+            return SimpleNamespace(
+                code=proc.returncode,
+                out=proc.stdout + proc.stderr,
+                calls=calls.read_text() if calls.exists() else "",
+            )
+
+        return run
+
+    def test_a_proxied_record_writes_the_rule_and_stores_the_secret(self, run_script):
+        r = run_script(_PROXIED)
+        assert r.code == 0, r.out
+        assert "PUT " in r.calls
+        assert "infisical set" in r.calls
+        assert "s3cret" not in r.out
+
+    def test_a_dns_only_record_is_refused_before_anything_is_written(self, run_script):
+        r = run_script(_DNS_ONLY)
+        assert r.code == 1
+        assert r.calls == ""
+        assert "Proxied" in r.out
+
+    def test_a_missing_record_is_refused(self, run_script):
+        r = run_script('{"success":true,"result":[]}')
+        assert r.code == 1
+        assert r.calls == ""
+
+    def test_a_token_that_cannot_read_dns_names_the_permission(self, run_script):
+        r = run_script('{"success":false,"errors":[{"code":10000,"message":"Authentication error"}]}')
+        assert r.code == 1
+        assert r.calls == ""
+        assert "DNS → Read" in r.out
+
+    def test_a_probe_that_skipped_cloudflare_fails(self, run_script):
+        # Proxied at the zone, but this machine resolves the host to the origin (/etc/hosts).
+        r = run_script(_PROXIED, health_headers="HTTP/1.1 200 OK\r\nServer: Caddy\r\n\r\n")
+        assert r.code == 1
+        assert "did not pass through Cloudflare" in r.out

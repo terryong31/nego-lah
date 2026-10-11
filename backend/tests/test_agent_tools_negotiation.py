@@ -368,27 +368,25 @@ def test_offer_below_min_price_is_held_without_a_counter(fake_supabase, patch_su
     assert "70" not in result
 
 
-def test_min_price_defaults_to_70_percent_of_listed_when_unset(fake_supabase, patch_supabase):
-    """No `min_price` key on the item row -> falls back to listed_price * 0.7.
+def test_an_unset_min_price_concedes_nothing_below_the_listing(fake_supabase, patch_supabase):
+    """No `min_price` -> the floor is the listed price (SPEC-105).
 
-    Probed with an offer of 75: it clears a 70% floor (70) and gets a COUNTER,
-    but would fall *below* a broken fallback floor (== listed price 100) and be
-    held instead -- so the branch taken distinguishes a correct default from a
-    wrong one without the tool ever naming the floor (SPEC-044).
+    This used to assert a 70% default, which only a fixture without the key
+    could reach: a real row carries `min_price: None` and crashed `float(None)`.
+    A seller who set no floor authorised no discount, so 75 on a 100 listing is
+    held, not countered -- and the floor is still never named (SPEC-044).
     """
     _set_item(fake_supabase, {"price": 100})
     patch_supabase("core.connector", admin=fake_supabase)
 
     result = _invoke_offer(item_id="i", offered_price=75.0)
 
-    assert result == (
-        "COUNTER: Offer of RM75.0 is below your price of RM100. "
-        "Counter with RM95 (must stay ≤ RM100 — never go back up)."
-    )
+    assert result.startswith("REJECT_FLOOR")
+    assert "100" not in result
 
 
-def test_explicit_min_price_overrides_70_percent_default(fake_supabase, patch_supabase):
-    """An explicit min_price of 40 (well below the 70% default of 70) is
+def test_explicit_min_price_is_honoured(fake_supabase, patch_supabase):
+    """An explicit min_price of 40 is
     honored -- an offer of 50 clears the explicit floor and is not rejected."""
     _set_item(fake_supabase, {"price": 100, "min_price": 40})
     patch_supabase("core.connector", admin=fake_supabase)

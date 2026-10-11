@@ -90,7 +90,7 @@ def create_checkout_link(item_id: str, agreed_price: float) -> str:
     # This check CANNOT be bypassed by prompt injection
     # The LLM's decision is irrelevant - code enforces rules
     # ========================================
-    min_price = float(item.get("min_price") or item.get("price", 0))
+    min_price = CatalogService.floor_price(item)
     asking_price = float(item.get("price", 0))
 
     logger.info(f"🔒 SECURITY CHECK: agreed_price={agreed_price}, min_price={min_price}, asking_price={asking_price}")

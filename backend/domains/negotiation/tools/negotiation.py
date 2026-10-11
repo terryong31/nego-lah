@@ -107,7 +107,7 @@ def evaluate_offer(
         logger.info("❌ Item not found!")
         return "Cannot evaluate - item not found."
     listed_price = float(item.get("price", 0))
-    min_price = float(item.get("min_price", listed_price * 0.7))  # Absolute floor from DB
+    min_price = CatalogService.floor_price(item)  # Absolute floor; listed price when unset (SPEC-105)
 
     # Apply extra discount to the acceptable threshold (not below min_price)
     discount_amount = listed_price * (extra_discount_percent / 100)

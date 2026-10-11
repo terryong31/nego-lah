@@ -141,5 +141,7 @@ tests that prove it. No non-trivial change starts without one (see [`AGENTS.md`]
 | [SPEC-102](SPEC-102-docs-are-checked-like-code.md) | Docs Are Checked Like Code | complete |
 | [SPEC-103](SPEC-103-dependabot-dependency-updates.md) | Dependabot Owns Dependency Updates | complete |
 | [SPEC-104](SPEC-104-security-audit-remediation.md) | Security Audit Remediation (2026-10-07) | in-progress |
+| [SPEC-105](SPEC-105-one-floor-price-resolver.md) | One Floor-Price Resolver, Fail-Closed When the Seller Sets None | complete |
+| [SPEC-106](SPEC-106-cloud-prompt-bans-false-floor-claims.md) | The Cloud Prompt Bans False Floor Claims on Every Reply | complete |
 <!-- END GENERATED -->
 <!-- vale on -->

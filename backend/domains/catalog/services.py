@@ -99,6 +99,20 @@ class CatalogService:
             return None
 
     @staticmethod
+    def floor_price(item: dict) -> float:
+        """The lowest price this item may sell for (SPEC-105).
+
+        `min_price` is optional, and a seller who set none authorised no
+        discount, so an unset floor is the listed price. A floor above the
+        listing is a data-entry slip; clamp it rather than refuse every sale.
+        """
+        listed = float(item.get("price") or 0)
+        floor = item.get("min_price")
+        if floor is None or float(floor) <= 0:
+            return listed
+        return min(float(floor), listed)
+
+    @staticmethod
     def get_live_item_with_floor_price(item_id: str, supabase_client: Any = None) -> dict | None:
         """As `get_item_with_floor_price`, but soft-deleted items are invisible."""
         client = supabase_client or admin_supabase

@@ -1,6 +1,6 @@
 # Nego-Lah Documentation
 
-Nego-Lah is a second-hand marketplace where an AI agent negotiates the price with each buyer.
+Nego-Lah is a single-seller second-hand store where an AI agent negotiates the price with each buyer.
 This folder is the engineering documentation. The [project README](../README.md) has the pitch
 and the quickstart.
 

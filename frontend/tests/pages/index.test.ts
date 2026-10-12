@@ -27,13 +27,15 @@ describe('pages/index.vue', () => {
   })
 
   describe('corporate memphis hero section', () => {
-    it('leads with the marketplace ghosting hook and AI seller value prop', async () => {
+    it('leads with the ghosting hook and AI seller value prop', async () => {
       const wrapper = await mountSuspended(IndexPage)
 
       expect(wrapper.text()).toContain('Hi, is this')
       expect(wrapper.text()).toContain('available?')
-      expect(wrapper.text()).toContain('Facebook Marketplace')
-      expect(wrapper.text()).toContain('negotiates and closes sales 24/7')
+      expect(wrapper.text()).toContain('haggles and closes the sale 24/7')
+      // The hook once quoted an unsourced "up to 80%" ghosting rate; the hero
+      // states nothing it cannot back.
+      expect(wrapper.text()).not.toContain('80%')
 
       // Renders the hero illustration
       expect(wrapper.find('img[src*="hero-illustration"]').exists()).toBe(true)

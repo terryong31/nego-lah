@@ -139,6 +139,16 @@ def test_both_prompts_protect_the_floor():
         assert "never" in prompt
 
 
+def test_cloud_prompt_bans_the_best_i_can_do_family_on_every_reply():
+    """SPEC-106. The speaker banned this vocabulary in SPEC-091; the cloud prompt
+    banned only "minimum / floor / lowest" and only on HOLD and REJECT_FLOOR, so
+    Gemini closed counters with "best I can do is RM165" and failed two eval
+    scenarios. Gemini serves every turn the laptop doesn't, so it gets the same list."""
+    for phrase in ("my best", "the best i can do", "my final offer", "last price", "bottom line"):
+        assert phrase in CLOUD
+    assert "on hold or reject_floor" not in CLOUD
+
+
 def test_both_prompts_carry_the_cod_policy():
     for prompt in (CLOUD, LOCAL):
         assert "cod" in prompt

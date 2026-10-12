@@ -52,7 +52,7 @@ def checkout(
         # `evaluate_offer` never commits below it, but checkout is the money
         # path and shouldn't trust that on faith.
         listed_price = float(item["price"])
-        floor_price = float(item.get("min_price") or listed_price)
+        floor_price = CatalogService.floor_price(item)
         negotiated = active_negotiated_price(user_id, item_id)
         effective_price = min(listed_price, negotiated) if negotiated is not None else listed_price
         effective_price = max(effective_price, floor_price)

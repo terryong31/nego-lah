@@ -15,8 +15,14 @@
  * media unmatched means Workbox never calls `respondWith` and the browser owns
  * the stream end to end, byte-range support intact.
  *
- * Cross-origin patterns must be anchored at `^https://`: Workbox's `RegExpRoute`
- * ignores a cross-origin match that does not start at index 0.
+ * THE ORIGIN RULE (SPEC-107): no route may claim a URL that `connect-src` forbids.
+ * An `<img>` is governed by `img-src`, but once a route claims it Workbox
+ * re-issues it with `fetch()`, which `connect-src` governs. That is how Supabase
+ * Storage images broke: SPEC-101 took Supabase out of `connect-src`, and the
+ * moment SPEC-104 anchored the storage rule so it actually matched, every item
+ * image was refused. Unclaimed cross-origin images load under `img-src` and the
+ * browser's own HTTP cache. Workbox only routes a cross-origin match at index 0,
+ * so the unanchored image rule below stays same-origin.
  */
 
 /** Extensions that must never be routed through the service worker. */
@@ -58,20 +64,6 @@ export interface RuntimeCachingRule {
  */
 export const runtimeCaching: RuntimeCachingRule[] = [
   {
-    urlPattern: /^https:\/\/fonts\.(?:googleapis|gstatic)\.com\/.*/i,
-    handler: 'CacheFirst',
-    options: {
-      cacheName: 'google-fonts',
-      expiration: {
-        maxEntries: 10,
-        maxAgeSeconds: 60 * 60 * 24 * 365
-      },
-      cacheableResponse: {
-        statuses: [0, 200]
-      }
-    }
-  },
-  {
     urlPattern: new RegExp(`\\.${IMAGE_EXTENSION_PATTERN}${OPTIONAL_QUERY}`, 'i'),
     handler: 'StaleWhileRevalidate',
     options: {
@@ -79,28 +71,6 @@ export const runtimeCaching: RuntimeCachingRule[] = [
       expiration: {
         maxEntries: 100,
         maxAgeSeconds: 60 * 60 * 24 * 30
-      },
-      cacheableResponse: {
-        statuses: [0, 200]
-      }
-    }
-  },
-  {
-    // Public Supabase Storage objects — images only. The previous
-    // `/storage/v1/object/public/.*` catch-all also matched
-    // `videos/negotiation-demo.mp4`, which is what broke the homepage video.
-    // Anchored at the scheme: Workbox only routes a cross-origin URL when the
-    // match starts at index 0, so the unanchored version never matched at all.
-    urlPattern: new RegExp(
-      `^https://[^/]+/storage/v1/object/public/.*\\.${IMAGE_EXTENSION_PATTERN}${OPTIONAL_QUERY}`,
-      'i'
-    ),
-    handler: 'StaleWhileRevalidate',
-    options: {
-      cacheName: 'supabase-storage-images',
-      expiration: {
-        maxEntries: 100,
-        maxAgeSeconds: 60 * 60 * 24 * 7
       },
       cacheableResponse: {
         statuses: [0, 200]

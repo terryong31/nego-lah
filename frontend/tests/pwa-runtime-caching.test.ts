@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { MEDIA_EXTENSIONS, runtimeCaching } from '../pwa/runtime-caching'
+import { contentSecurityPolicy } from '../build/csp'
 
 /**
  * SPEC-030 — the service worker must never intercept media.
@@ -9,7 +10,7 @@ import { MEDIA_EXTENSIONS, runtimeCaching } from '../pwa/runtime-caching'
  * pattern that matched more URLs than intended.
  */
 
-const CDN_ORIGIN = 'https://umtsegjkgpfefjvhyysh.supabase.co'
+const CDN_ORIGIN = 'https://example-project.supabase.co'
 const STORAGE_PREFIX = `${CDN_ORIGIN}/storage/v1/object/public/images`
 const APP_ORIGIN = 'https://negolah.my'
 // SPEC-045: the demo video moved to a Cloudflare R2 bucket behind this domain.
@@ -51,21 +52,45 @@ describe('SPEC-030 — Workbox runtime caching rules', () => {
     }
   })
 
-  it('still caches public storage images under the supabase-storage-images cache', () => {
-    for (const path of ['branding/logo.png', 'listings/item-1.webp', 'branding/mark.svg']) {
-      const rule = resolveRule(`${STORAGE_PREFIX}/${path}`)
-      expect(rule, path).toBeDefined()
-      expect(rule!.handler).toBe('StaleWhileRevalidate')
+  // SPEC-107: Workbox re-issues a claimed request with fetch(), which `connect-src`
+  // governs — not `img-src`. Claiming Supabase images blocked every one of them.
+  it('leaves public storage images to the browser', () => {
+    for (const path of ['items/5e2a/0.jpeg', 'listings/item-1.webp', 'branding/mark.svg?width=400']) {
+      expect(matchingRules(`${STORAGE_PREFIX}/${path}`), path).toEqual([])
     }
+  })
 
-    // The dedicated storage cache must still be reachable for a storage-only
-    // format that the generic image rule does not claim first.
-    const storageRule = runtimeCaching.find(
-      rule => rule.options?.cacheName === 'supabase-storage-images'
-    )
-    expect(storageRule).toBeDefined()
-    expect(workboxMatches(storageRule!.urlPattern, `${STORAGE_PREFIX}/branding/logo.png`)).toBe(true)
-    expect(workboxMatches(storageRule!.urlPattern, `${STORAGE_PREFIX}/videos/negotiation-demo.mp4`)).toBe(false)
+  it('claims no cross-origin URL that connect-src forbids the worker to fetch', () => {
+    const connectSrc = contentSecurityPolicy({ dev: false })
+      .split(';')
+      .find(directive => directive.trim().startsWith('connect-src'))!
+      .trim()
+      .split(/\s+/)
+      .slice(1)
+    const allowed = (origin: string) => connectSrc.some((source) => {
+      if (!source.startsWith('https://')) return false
+      const host = new URL(origin).host
+      const pattern = source.slice('https://'.length)
+      return pattern.startsWith('*.') ? host.endsWith(pattern.slice(1)) : host === pattern
+    })
+
+    for (const url of [
+      `${STORAGE_PREFIX}/items/5e2a/0.jpeg`,
+      `${STORAGE_PREFIX}/branding/logo.png`,
+      'https://fonts.googleapis.com/css2?family=Inter',
+      'https://fonts.gstatic.com/s/inter/v13/font.woff2',
+      `${MEDIA_CDN_ORIGIN}/posters/demo.webp`,
+      'https://images.example.com/photo.jpg'
+    ]) {
+      if (matchingRules(url).length === 0) continue
+      expect(allowed(new URL(url).origin), url).toBe(true)
+    }
+  })
+
+  it('still caches same-origin images', () => {
+    const rule = resolveRule(`${APP_ORIGIN}/images/hero.webp`)
+    expect(rule).toBeDefined()
+    expect(rule!.handler).toBe('StaleWhileRevalidate')
   })
 
   // SPEC-104 SEC-04: an unmatched request is never handled by the worker, so the
@@ -86,11 +111,5 @@ describe('SPEC-030 — Workbox runtime caching rules', () => {
 
   it('has no rule that matches only invented URLs', () => {
     expect(runtimeCaching.some(rule => rule.urlPattern.source.includes('\\/api\\/'))).toBe(false)
-  })
-
-  it('still caches Google Fonts with CacheFirst', () => {
-    const rule = resolveRule('https://fonts.gstatic.com/s/inter/v13/font.woff2')
-    expect(rule).toBeDefined()
-    expect(rule!.handler).toBe('CacheFirst')
   })
 })

@@ -16,7 +16,6 @@ on their own account (token user id must match the path user id).
 
 import asyncio
 import os
-import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
@@ -25,9 +24,10 @@ from core import bus
 from core.cache import cache_ban_status, check_rate_limit, invalidate_token
 from core.connector import admin_supabase, new_user_client
 from core.csrf import verify_user_csrf_token
-from core.env import API_BASE_URL, STORAGE_BUCKET
+from core.env import API_BASE_URL
 from core.images import MAX_AVATAR_EDGE, process_upload
 from core.logger import logger
+from core.media import media_store, media_url, new_key
 from core.schemas import (
     AccountDeleteSchema,
     EmailUpdateSchema,
@@ -288,26 +288,17 @@ async def update_profile(
             max_edge=MAX_AVATAR_EDGE,
             max_bytes=MAX_AVATAR_IMAGE_BYTES,
         )
-        file_path = f"avatars/{user_id}/{uuid.uuid4().hex}.{ext}"
         try:
-
-            def _upload() -> str:
-                admin_supabase.storage.from_(STORAGE_BUCKET).upload(
-                    file_path,
-                    contents,
-                    {
-                        "content-type": content_type,
-                        "upsert": "true",
-                    },
-                )
-                return admin_supabase.storage.from_(STORAGE_BUCKET).get_public_url(file_path)
-
+            # SPEC-108: a fresh key per upload, and the key — not a URL — is
+            # what the metadata keeps; it is resolved whenever it is served.
             # Deliberately NOT `avatar_url`: Supabase re-syncs user_metadata from
             # the identity provider's claims on every OAuth sign-in, and Google's
             # claims carry `avatar_url` / `picture`. Writing there means the next
             # Google login silently replaces the user's upload with their Google
             # photo. `custom_avatar_url` is ours alone, so it survives.
-            metadata["custom_avatar_url"] = await asyncio.to_thread(_upload)
+            metadata["custom_avatar_url"] = await asyncio.to_thread(
+                media_store.put, new_key(f"avatars/{user_id}", ext), contents, content_type
+            )
         except Exception as e:
             logger.error(f"Avatar upload failed for {user_id}: {e}")
             raise HTTPException(status_code=500, detail="Failed to upload avatar") from e
@@ -329,7 +320,7 @@ async def update_profile(
         "message": "Profile updated successfully",
         "display_name": metadata.get("display_name"),
         # The *effective* avatar, resolved the same way the clients resolve it.
-        "avatar_url": metadata.get("custom_avatar_url") or metadata.get("avatar_url"),
+        "avatar_url": media_url(metadata.get("custom_avatar_url") or metadata.get("avatar_url")),
     }
 
 
@@ -340,13 +331,15 @@ _DELETED_ACCOUNT_BLOCK_SECONDS = 2 * 3600
 
 
 def _purge_avatars(user_id: str) -> None:
-    """Best-effort: uploaded avatars sit in a public bucket and are usually a face."""
+    """Best-effort: uploaded avatars sit in a public bucket and are usually a face.
+
+    Self-service uploads live under `avatars/<user>/`; the admin console used to
+    name them `avatars/<user>_<rand>`, which that prefix never matched.
+    """
     try:
-        bucket = admin_supabase.storage.from_(STORAGE_BUCKET)
-        prefix = f"avatars/{user_id}"
-        names = [f"{prefix}/{obj['name']}" for obj in (bucket.list(prefix) or []) if obj.get("name")]
-        if names:
-            bucket.remove(names)
+        keys = media_store.list(f"avatars/{user_id}/") + media_store.list(f"avatars/{user_id}_")
+        if keys:
+            media_store.delete(keys)
     except Exception as e:
         logger.warning(f"Avatar cleanup failed for deleted user {user_id}: {e}")
 

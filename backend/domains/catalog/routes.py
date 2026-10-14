@@ -4,7 +4,14 @@ import json
 from fastapi import APIRouter, HTTPException, Request, status
 
 from core import bus
-from domains.catalog.items import PUBLIC_ITEM_COLUMNS, PUBLIC_ITEM_SELECT, get_featured_items, get_items
+from domains.catalog.items import (
+    PUBLIC_ITEM_COLUMNS,
+    PUBLIC_ITEM_SELECT,
+    get_featured_items,
+    get_items,
+    image_urls,
+    resolve_image_path,
+)
 from domains.identity import get_optional_user_id
 
 # Public items API — READ ONLY.
@@ -22,27 +29,17 @@ def _to_public(row: dict) -> dict:
     up from `PUBLIC_ITEM_COLUMNS` means a column added to the table later stays
     server-side until someone deliberately adds it to that list.
 
-    The DB stores `id` and `image_path` (a JSON map {filename: url}); the
-    frontend expects `item_id` and `images` (a JSON array of URLs). We add those
-    aliases alongside the originals.
+    The DB stores `id` and `image_path` (a JSON map {filename: key}); the
+    frontend expects `item_id` and `images` (a JSON array of CDN URLs). We add
+    those aliases alongside the originals.
     """
     out = {column: row[column] for column in PUBLIC_ITEM_COLUMNS if column in row}
     out["item_id"] = row.get("id")
 
-    urls: list = []
-    image_path = row.get("image_path")
-    if image_path:
-        try:
-            parsed = json.loads(image_path)
-            if isinstance(parsed, dict):
-                urls = list(parsed.values())
-            elif isinstance(parsed, list):
-                urls = parsed
-            else:
-                urls = [image_path]
-        except Exception:
-            urls = [image_path]
-    out["images"] = json.dumps(urls)
+    # SPEC-108: rows hold storage keys; the client only ever gets CDN URLs.
+    if "image_path" in out:
+        out["image_path"] = resolve_image_path(out["image_path"])
+    out["images"] = json.dumps(image_urls(row.get("image_path")))
     return out
 
 

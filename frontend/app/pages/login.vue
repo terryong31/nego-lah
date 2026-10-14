@@ -63,7 +63,14 @@ const providers = computed(() => [{
   }
 }])
 
-const { token: turnstileToken, isEnabled: isTurnstileEnabled } = useTurnstileToken()
+const {
+  token: turnstileToken,
+  isEnabled: isTurnstileEnabled,
+  isPending: isTurnstilePending,
+  widget: turnstileWidget,
+  options: turnstileOptions,
+  spend: spendTurnstileToken
+} = useTurnstileWidget('login')
 
 async function onSubmit(payload: FormSubmitEvent<LoginForm>) {
   if (isTurnstileEnabled.value && !turnstileToken.value) {
@@ -105,6 +112,8 @@ async function onSubmit(payload: FormSubmitEvent<LoginForm>) {
       color: 'error'
     })
   } finally {
+    // Single-use, whichever way the request went (see useTurnstileWidget).
+    spendTurnstileToken()
     loading.value = false
   }
 }
@@ -121,6 +130,7 @@ async function onSubmit(payload: FormSubmitEvent<LoginForm>) {
         :fields="fields"
         :providers="providers"
         :loading="loading"
+        :submit="{ disabled: isTurnstilePending }"
         @submit="onSubmit"
       >
         <template #password-hint>
@@ -136,8 +146,9 @@ async function onSubmit(payload: FormSubmitEvent<LoginForm>) {
             class="flex justify-center my-3 min-h-[65px]"
           >
             <NuxtTurnstile
+              ref="turnstileWidget"
               v-model="turnstileToken"
-              :options="{ action: 'login' }"
+              :options="turnstileOptions"
             />
           </div>
         </template>

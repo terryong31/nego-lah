@@ -12,9 +12,9 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 
 from core import bus
-from core.env import STORAGE_BUCKET
 from core.images import MAX_AVATAR_EDGE, process_upload
 from core.logger import logger
+from core.media import media_store, media_url, new_key
 from core.schemas import BanRequest, UserProfileUpdateRequest
 from core.uploads import MAX_AVATAR_IMAGE_BYTES
 from domains.identity.admin_session import verify_admin, write_audit
@@ -104,7 +104,6 @@ async def upload_user_avatar(
 ):
     """Upload a user avatar."""
     import base64
-    import uuid
 
     from core.connector import admin_supabase
 
@@ -120,24 +119,24 @@ async def upload_user_avatar(
         max_bytes=MAX_AVATAR_IMAGE_BYTES,
     )
 
-    # Supabase's client is synchronous and this handler must stay `async def`
-    # (it awaits the upload), so the storage round trip goes through a thread —
-    # on the event loop it would stall every buyer this worker is serving.
+    # The store and Supabase clients are synchronous and this handler must stay
+    # `async def` (it awaits the upload), so the round trips go through a thread —
+    # on the event loop they would stall every buyer this worker is serving.
     # Try to use storage first
     try:
-        unique_id = str(uuid.uuid4())[:8]
         # Every part of the key is chosen here — `user_id` is a path parameter
         # and the rest is generated. The uploaded filename used to be
         # interpolated in raw, which put client-controlled slashes in the path.
-        file_path = f"avatars/{user_id}_{unique_id}.{ext}"
+        # SPEC-108: under `avatars/<user>/`, the prefix account deletion purges,
+        # and the row keeps the key rather than a URL.
+        key = new_key(f"avatars/{user_id}", ext)
 
         def _store() -> str:
-            admin_supabase.storage.from_(STORAGE_BUCKET).upload(file_path, contents, {"content-type": content_type})
-            url = admin_supabase.storage.from_(STORAGE_BUCKET).get_public_url(file_path)
+            media_store.put(key, contents, content_type)
             admin_supabase.table("user_profiles").upsert(
-                {"id": user_id, "avatar_url": url, "updated_at": "now()"}
+                {"id": user_id, "avatar_url": key, "updated_at": "now()"}
             ).execute()
-            return url
+            return media_url(key)
 
         public_url = await asyncio.to_thread(_store)
 

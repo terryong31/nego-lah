@@ -20,9 +20,15 @@ router = APIRouter()
 def admin_list_items():
     """List every live item (including sold), newest first. Soft-deleted items are hidden."""
     from core.connector import admin_supabase
+    from domains.catalog.items import resolve_image_path
 
     res = admin_supabase.table("items").select("*").is_("deleted_at", "null").order("created_at", desc=True).execute()
-    return res.data or []
+    # SPEC-108: rows hold storage keys; the console renders (and edits) URLs.
+    rows = res.data or []
+    for row in rows:
+        if "image_path" in row:
+            row["image_path"] = resolve_image_path(row["image_path"])
+    return rows
 
 
 @router.post("/items", status_code=201)

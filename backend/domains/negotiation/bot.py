@@ -685,10 +685,14 @@ Buyer: {message}"""
                     if item_details.get("image_path"):
                         import json
 
+                        from core.media import media_url
+
                         images_map = json.loads(item_details["image_path"])
                         # Two is enough to answer "what does it look like"; more
-                        # is mostly duplicate angles at full price each.
-                        item_images = list(images_map.values())[:2]
+                        # is mostly duplicate angles at full price each. The
+                        # model's provider fetches them, so they are CDN URLs
+                        # (SPEC-108), never the raw keys the row holds.
+                        item_images = [media_url(value) for value in list(images_map.values())[:2]]
                 except Exception as e:
                     logger.info(f"Failed to parse item images: {e}")
         else:

@@ -282,8 +282,9 @@ def test_email_template_renders_cdn_brand_logo():
             "order_date": "Sept 06, 2026",
         },
     )
-    # Must render brand logo image from Supabase Storage CDN
-    assert "branding/logo.png" in html
+    # SPEC-108: the logo comes from our own media CDN, never a Supabase host.
+    assert 'src="https://media.example.test/branding/logo.png"' in html
+    assert "supabase" not in html
     assert "<img src=" in html
     assert 'alt="Nego-lah"' in html
     assert 'width="24"' in html

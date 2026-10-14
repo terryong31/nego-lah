@@ -146,6 +146,14 @@ CSRF_COOKIE_SECURE = os.getenv("CSRF_COOKIE_SECURE", "true" if _is_https else "f
 CSRF_COOKIE_SAMESITE = os.getenv("CSRF_COOKIE_SAMESITE", "lax").lower()
 CSRF_COOKIE_DOMAIN = os.getenv("CSRF_COOKIE_DOMAIN", _default_cookie_domain)
 
-# Supabase Storage bucket for item images and avatars.
-# Must match an existing bucket in your Supabase project.
+# The Supabase Storage bucket user media lived in before SPEC-108. Read-only
+# now: `core.media` maps its public URLs, still in older rows, onto R2 keys.
 STORAGE_BUCKET = os.getenv("STORAGE_BUCKET", "images")
+
+# User media (SPEC-108, ADR-0033): an R2 bucket served from our own domain.
+# The credentials are an R2 API token scoped to that one bucket.
+MEDIA_CDN_URL = os.getenv("MEDIA_CDN_URL", "https://media.negolah.my").rstrip("/")
+R2_ACCOUNT_ID = os.getenv("R2_ACCOUNT_ID", "")
+R2_ACCESS_KEY_ID = os.getenv("R2_ACCESS_KEY_ID", "")
+R2_SECRET_ACCESS_KEY = os.getenv("R2_SECRET_ACCESS_KEY", "")
+R2_BUCKET = os.getenv("R2_BUCKET", "nego-lah-media")

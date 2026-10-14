@@ -769,6 +769,18 @@ async def test_admin_list_items_success(client, admin_user, admin_supabase):
     assert response.json() == [{"id": "item-1", "name": "Widget"}]
 
 
+async def test_admin_list_items_serves_photos_as_cdn_urls(client, admin_user, admin_supabase):
+    """SPEC-108: the console renders and edits URLs; the row holds keys."""
+    admin_user()
+    admin_supabase.table.return_value.select.return_value.is_.return_value.order.return_value.execute.return_value = (
+        make_supabase_result([{"id": "item-1", "image_path": json.dumps({"a.jpeg": "items/item-1/a.jpeg"})}])
+    )
+
+    response = await client.get("/admin/items")
+
+    assert json.loads(response.json()[0]["image_path"]) == {"a.jpeg": "https://media.example.test/items/item-1/a.jpeg"}
+
+
 async def test_admin_list_items_empty(client, admin_user, admin_supabase):
     admin_user()
     admin_supabase.table.return_value.select.return_value.is_.return_value.order.return_value.execute.return_value = (

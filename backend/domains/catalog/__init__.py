@@ -7,6 +7,9 @@ _EXPORTS = {
     "PUBLIC_ITEM_COLUMNS": ("domains.catalog.items", "PUBLIC_ITEM_COLUMNS"),
     "PUBLIC_ITEM_SELECT": ("domains.catalog.items", "PUBLIC_ITEM_SELECT"),
     "CONFIDENTIAL_ITEM_COLUMNS": ("domains.catalog.items", "CONFIDENTIAL_ITEM_COLUMNS"),
+    # Item photos as client URLs (SPEC-108): rows hold storage keys.
+    "image_urls": ("domains.catalog.items", "image_urls"),
+    "resolve_image_path": ("domains.catalog.items", "resolve_image_path"),
     # Courier naming and tracking URLs (SPEC-057). Billing's order console
     # records a shipment, so these are part of catalog's public contract.
     "normalise_courier": ("domains.catalog.shipping", "normalise_courier"),

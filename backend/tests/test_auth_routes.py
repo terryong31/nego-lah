@@ -325,3 +325,34 @@ async def test_an_email_change_link_lands_on_the_profile(client, fake_auth):
     res = await client.get("/auth/callback?token_hash=abc&type=email_change", follow_redirects=False)
 
     assert res.headers["location"].endswith("/profile?status=email_updated")
+
+
+# ---------------------------------------------------------------------------
+# SPEC-108: an uploaded avatar is stored as a key and served as a CDN URL
+# ---------------------------------------------------------------------------
+
+
+def test_user_payload_serves_an_uploaded_avatar_from_the_cdn():
+    legacy = "https://test-project.supabase.co/storage/v1/object/public/test-images/avatars/u-1/old.png?"
+    user = SimpleNamespace(
+        id="u-1",
+        email="b@example.com",
+        user_metadata={"custom_avatar_url": "avatars/u-1/abc.png", "avatar_url": legacy, "name": "B"},
+    )
+
+    payload = auth_routes._user_payload(user)
+
+    assert payload["user_metadata"] == {
+        "custom_avatar_url": "https://media.example.test/avatars/u-1/abc.png",
+        "avatar_url": "https://media.example.test/avatars/u-1/old.png",
+        "name": "B",
+    }
+    # The user object itself is not mutated.
+    assert user.user_metadata["custom_avatar_url"] == "avatars/u-1/abc.png"
+
+
+def test_user_payload_passes_a_provider_photo_through():
+    google = "https://lh3.googleusercontent.com/a/photo"
+    user = SimpleNamespace(id="u-1", email="b@example.com", user_metadata={"avatar_url": google})
+
+    assert auth_routes._user_payload(user)["user_metadata"] == {"avatar_url": google}

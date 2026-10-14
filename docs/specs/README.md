@@ -143,5 +143,6 @@ tests that prove it. No non-trivial change starts without one (see [`AGENTS.md`]
 | [SPEC-104](SPEC-104-security-audit-remediation.md) | Security Audit Remediation (2026-10-07) | in-progress |
 | [SPEC-105](SPEC-105-one-floor-price-resolver.md) | One Floor-Price Resolver, Fail-Closed When the Seller Sets None | complete |
 | [SPEC-106](SPEC-106-cloud-prompt-bans-false-floor-claims.md) | The Cloud Prompt Bans False Floor Claims on Every Reply | complete |
+| [SPEC-107](SPEC-107-service-worker-stays-same-origin.md) | The Service Worker Routes No Request the CSP Forbids It to Fetch | complete |
 <!-- END GENERATED -->
 <!-- vale on -->

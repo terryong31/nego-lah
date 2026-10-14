@@ -301,16 +301,36 @@ async def test_get_item_by_id_uses_eq_id_filter(client, patch_supabase, fake_sup
 
 
 def test_to_public_dict_image_path():
-    row = {"id": "1", "image_path": json.dumps({"a.jpg": "url-a", "b.jpg": "url-b"})}
+    row = {"id": "1", "image_path": json.dumps({"a.jpg": "https://x.test/a.jpg", "b.jpg": "https://x.test/b.jpg"})}
     out = routes_items._to_public(row)
     assert out["item_id"] == "1"
-    assert sorted(json.loads(out["images"])) == sorted(["url-a", "url-b"])
+    assert json.loads(out["images"]) == ["https://x.test/a.jpg", "https://x.test/b.jpg"]
 
 
 def test_to_public_list_image_path():
-    row = {"id": "2", "image_path": json.dumps(["url-x", "url-y"])}
+    row = {"id": "2", "image_path": json.dumps(["https://x.test/x.jpg", "https://x.test/y.jpg"])}
     out = routes_items._to_public(row)
-    assert json.loads(out["images"]) == ["url-x", "url-y"]
+    assert json.loads(out["images"]) == ["https://x.test/x.jpg", "https://x.test/y.jpg"]
+
+
+CDN = "https://media.example.test"
+LEGACY = "https://test-project.supabase.co/storage/v1/object/public/test-images"
+
+
+def test_to_public_serves_stored_keys_as_cdn_urls():
+    """SPEC-108: rows hold keys; the storefront only ever sees our CDN."""
+    row = {"id": "k", "image_path": json.dumps({"a.jpeg": "items/k/a.jpeg", "b.jpeg": "items/k/b.jpeg"})}
+    out = routes_items._to_public(row)
+    assert json.loads(out["images"]) == [f"{CDN}/items/k/a.jpeg", f"{CDN}/items/k/b.jpeg"]
+    assert json.loads(out["image_path"]) == {"a.jpeg": f"{CDN}/items/k/a.jpeg", "b.jpeg": f"{CDN}/items/k/b.jpeg"}
+
+
+def test_to_public_never_leaks_a_legacy_supabase_url():
+    """A row written before SPEC-108 resolves to the same object on the CDN."""
+    row = {"id": "l", "image_path": json.dumps({"0.jpeg": f"{LEGACY}/items/l/0.jpeg?"})}
+    out = routes_items._to_public(row)
+    assert json.loads(out["images"]) == [f"{CDN}/items/l/0.jpeg"]
+    assert "supabase" not in json.dumps(out)
 
 
 def test_to_public_scalar_image_path():

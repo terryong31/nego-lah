@@ -13,6 +13,7 @@ Tests for items.py:
 
 import io
 import json
+import re
 import time
 from datetime import UTC, datetime
 
@@ -294,10 +295,20 @@ def test_get_featured_items_exception_falls_back_to_empty_list(patch_supabase, f
 # upload_item
 # ---------------------------------------------------------------------------
 
+CDN = "https://media.example.test"
+LEGACY = "https://test-project.supabase.co/storage/v1/object/public/test-images"
+_ITEM_KEY = re.compile(r"^items/[0-9a-f-]{36}/[0-9a-f]{16}\.png$")
 
-async def test_upload_item_success_uploads_images_and_inserts_row(patch_supabase, fake_supabase):
+
+def _tiny_png(size: int) -> bytes:
+    """A distinct, tiny PNG — too small for a re-encode to pay, so stored as-is."""
+    buf = io.BytesIO()
+    Image.new("RGB", (size, size), (size, 0, 0)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+async def test_upload_item_success_uploads_images_and_inserts_row(patch_supabase, fake_supabase, fake_media):
     patch_supabase("domains.catalog.items", admin=fake_supabase)
-    fake_supabase.storage.from_.return_value.get_public_url.return_value = "https://cdn.example.com/img0.jpg"
     fake_supabase.table.return_value.insert.return_value.execute.return_value = make_supabase_result([{"id": "x"}])
 
     images = [FakeUploadFile("photo.png", content=PNG_BYTES)]
@@ -311,15 +322,15 @@ async def test_upload_item_success_uploads_images_and_inserts_row(patch_supabase
     )
 
     assert ok is True
-    fake_supabase.storage.from_.assert_any_call("test-images")
-    upload_call = fake_supabase.storage.from_.return_value.upload.call_args
+    key, body, content_type = fake_media.put.call_args.args
     # SPEC-054: the extension and content type come from the DECODE, not from
     # the filename or the client's content_type (which claims jpeg here). This
     # PNG is too small for a re-encode to pay for itself, so the original bytes
     # are what gets stored.
-    assert upload_call.kwargs["file"] == PNG_BYTES
-    assert upload_call.kwargs["path"].endswith("/0.png")
-    assert upload_call.kwargs["file_options"]["content-type"] == "image/png"
+    assert body == PNG_BYTES
+    assert content_type == "image/png"
+    # SPEC-108: a unique name under the item, so the CDN can cache it forever.
+    assert _ITEM_KEY.match(key)
 
     insert_call = fake_supabase.table.return_value.insert.call_args
     item_data = insert_call.args[0]
@@ -334,13 +345,13 @@ async def test_upload_item_success_uploads_images_and_inserts_row(patch_supabase
     created_at = datetime.fromisoformat(item_data["created_at"])
     assert created_at.tzinfo is not None
     assert abs((created_at - datetime.now(UTC)).total_seconds()) < 5
-    urls = json.loads(item_data["image_path"])
-    assert urls == {"0.png": "https://cdn.example.com/img0.jpg"}
+    assert key.startswith(f"items/{item_data['id']}/")
+    # SPEC-108: the row holds the key, never a URL.
+    assert json.loads(item_data["image_path"]) == {key.rsplit("/", 1)[-1]: key}
 
 
-async def test_upload_item_without_min_price_omits_it(patch_supabase, fake_supabase):
+async def test_upload_item_without_min_price_omits_it(patch_supabase, fake_supabase, fake_media):
     patch_supabase("domains.catalog.items", admin=fake_supabase)
-    fake_supabase.storage.from_.return_value.get_public_url.return_value = "https://cdn.example.com/img0.jpg"
     fake_supabase.table.return_value.insert.return_value.execute.return_value = make_supabase_result([{"id": "x"}])
 
     images = [FakeUploadFile("photo.jpg")]
@@ -357,13 +368,12 @@ async def test_upload_item_without_min_price_omits_it(patch_supabase, fake_supab
     assert "min_price" not in item_data
 
 
-async def test_upload_item_ignores_the_filename_entirely(patch_supabase, fake_supabase):
+async def test_upload_item_ignores_the_filename_entirely(patch_supabase, fake_supabase, fake_media):
     """SPEC-054: the extension used to be `filename.split(".")[-1]`, so a photo
     with no filename was stored as `.dat` and a lying filename decided how the
     CDN would later serve the bytes. The decode decides both now, so a missing
     filename is simply irrelevant."""
     patch_supabase("domains.catalog.items", admin=fake_supabase)
-    fake_supabase.storage.from_.return_value.get_public_url.return_value = "https://cdn.example.com/img"
 
     images = [FakeUploadFile(filename=None, content=PNG_BYTES)]
     ok = await upload_item(
@@ -375,12 +385,12 @@ async def test_upload_item_ignores_the_filename_entirely(patch_supabase, fake_su
     )
 
     assert ok is True
-    upload_call = fake_supabase.storage.from_.return_value.upload.call_args
-    assert upload_call.kwargs["path"].endswith("/0.png")
-    assert upload_call.kwargs["file_options"]["content-type"] == "image/png"
+    key, _, content_type = fake_media.put.call_args.args
+    assert key.endswith(".png")
+    assert content_type == "image/png"
 
 
-async def test_upload_item_rejects_a_payload_that_is_not_an_image(patch_supabase, fake_supabase):
+async def test_upload_item_rejects_a_payload_that_is_not_an_image(patch_supabase, fake_supabase, fake_media):
     """A listing photo now goes through the same gate as an avatar (SPEC-044/054)."""
     patch_supabase("domains.catalog.items", admin=fake_supabase)
 
@@ -388,13 +398,12 @@ async def test_upload_item_rejects_a_payload_that_is_not_an_image(patch_supabase
     ok = await upload_item(name="Nope", description="desc", condition="used", uploaded_images=images, price=1.0)
 
     assert ok is False
-    fake_supabase.storage.from_.return_value.upload.assert_not_called()
+    fake_media.put.assert_not_called()
 
 
-async def test_upload_item_downscales_and_recompresses_a_large_photo(patch_supabase, fake_supabase):
+async def test_upload_item_downscales_and_recompresses_a_large_photo(patch_supabase, fake_supabase, fake_media):
     """The whole point: a phone photo is not served to the storefront at 12 MP."""
     patch_supabase("domains.catalog.items", admin=fake_supabase)
-    fake_supabase.storage.from_.return_value.get_public_url.return_value = "https://cdn.example.com/img"
     fake_supabase.table.return_value.insert.return_value.execute.return_value = make_supabase_result([{"id": "x"}])
 
     big = _encode_photo((4000, 3000))
@@ -407,14 +416,13 @@ async def test_upload_item_downscales_and_recompresses_a_large_photo(patch_supab
     )
 
     assert ok is True
-    stored = fake_supabase.storage.from_.return_value.upload.call_args.kwargs["file"]
+    stored = fake_media.put.call_args.args[1]
     assert len(stored) < len(big)
     assert max(Image.open(io.BytesIO(stored)).size) == MAX_ITEM_EDGE
 
 
-async def test_upload_item_multiple_images_all_uploaded(patch_supabase, fake_supabase):
+async def test_upload_item_multiple_images_all_uploaded_under_distinct_keys(patch_supabase, fake_supabase, fake_media):
     patch_supabase("domains.catalog.items", admin=fake_supabase)
-    fake_supabase.storage.from_.return_value.get_public_url.return_value = "https://cdn.example.com/img"
     fake_supabase.table.return_value.insert.return_value.execute.return_value = make_supabase_result([{"id": "x"}])
 
     images = [FakeUploadFile("a.jpg"), FakeUploadFile("b.png"), FakeUploadFile("c.gif")]
@@ -427,30 +435,33 @@ async def test_upload_item_multiple_images_all_uploaded(patch_supabase, fake_sup
     )
 
     assert ok is True
-    assert fake_supabase.storage.from_.return_value.upload.call_count == 3
-    item_data = fake_supabase.table.return_value.insert.call_args.args[0]
-    urls = json.loads(item_data["image_path"])
-    # All three are the same PNG regardless of what they were named.
-    assert set(urls.keys()) == {"0.png", "1.png", "2.png"}
+    assert fake_media.put.call_count == 3
+    keys = json.loads(fake_supabase.table.return_value.insert.call_args.args[0]["image_path"])
+    # Three identical PNGs, three objects: a name is never reused.
+    assert len(set(keys.values())) == 3
+    assert all(_ITEM_KEY.match(key) for key in keys.values())
 
 
-async def test_upload_item_stores_images_in_the_order_they_were_given(patch_supabase, fake_supabase):
+async def test_upload_item_stores_images_in_the_order_they_were_given(patch_supabase, fake_supabase, fake_media):
     """Uploads run concurrently, but the stored map must stay in input order --
     the storefront reads the first entry as the item's thumbnail."""
     patch_supabase("domains.catalog.items", admin=fake_supabase)
     fake_supabase.table.return_value.insert.return_value.execute.return_value = make_supabase_result([{"id": "x"}])
 
+    bodies = [_tiny_png(n) for n in (1, 2, 3)]
     # Make the first upload the slowest, so a naive gather-and-collect would
     # end up with it last.
-    delays = {"0.png": 0.03, "1.png": 0.02, "2.png": 0.0}
+    delays = {bodies[0]: 0.03, bodies[1]: 0.02, bodies[2]: 0.0}
+    key_for = {}
 
-    def slow_upload(*, file, path, file_options):
-        time.sleep(delays[path.rsplit("/", 1)[-1]])
+    def slow_put(key, body, content_type):
+        time.sleep(delays[body])
+        key_for[body] = key
+        return key
 
-    fake_supabase.storage.from_.return_value.upload.side_effect = slow_upload
-    fake_supabase.storage.from_.return_value.get_public_url.side_effect = lambda path: f"https://cdn.example.com/{path}"
+    fake_media.put.side_effect = slow_put
 
-    images = [FakeUploadFile("a.jpg"), FakeUploadFile("b.png"), FakeUploadFile("c.gif")]
+    images = [FakeUploadFile(f"{n}.png", content=body) for n, body in enumerate(bodies)]
     ok = await upload_item(
         name="Ordered",
         description="desc",
@@ -460,13 +471,13 @@ async def test_upload_item_stores_images_in_the_order_they_were_given(patch_supa
     )
 
     assert ok is True
-    urls = json.loads(fake_supabase.table.return_value.insert.call_args.args[0]["image_path"])
-    assert list(urls.keys()) == ["0.png", "1.png", "2.png"]
+    keys = json.loads(fake_supabase.table.return_value.insert.call_args.args[0]["image_path"])
+    assert list(keys.values()) == [key_for[body] for body in bodies]
 
 
-async def test_upload_item_exception_returns_false(patch_supabase, fake_supabase):
+async def test_upload_item_exception_returns_false(patch_supabase, fake_supabase, fake_media):
     patch_supabase("domains.catalog.items", admin=fake_supabase)
-    fake_supabase.storage.from_.return_value.upload.side_effect = Exception("storage exploded")
+    fake_media.put.side_effect = Exception("storage exploded")
 
     images = [FakeUploadFile("a.jpg")]
     ok = await upload_item(
@@ -478,6 +489,7 @@ async def test_upload_item_exception_returns_false(patch_supabase, fake_supabase
     )
 
     assert ok is False
+    fake_supabase.table.return_value.insert.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -492,141 +504,149 @@ def _stub_current_images(fake_supabase, image_path):
     )
 
 
-async def test_sync_item_images_keeps_a_subset_in_the_requested_order(patch_supabase, fake_supabase):
+async def test_sync_item_images_keeps_a_subset_in_the_requested_order(patch_supabase, fake_supabase, fake_media):
     patch_supabase("domains.catalog.items", admin=fake_supabase)
     _stub_current_images(
         fake_supabase,
-        {
-            "0.jpg": "https://cdn.example.com/a.jpg",
-            "1.jpg": "https://cdn.example.com/b.jpg",
-            "2.jpg": "https://cdn.example.com/c.jpg",
-        },
+        {"a.jpg": "items/item-1/a.jpg", "b.jpg": "items/item-1/b.jpg", "c.jpg": "items/item-1/c.jpg"},
     )
 
-    result = await sync_item_images(
-        "item-1",
-        ["https://cdn.example.com/c.jpg", "https://cdn.example.com/a.jpg"],
-    )
+    # The page sends back photos as it was served them: CDN URLs.
+    result = await sync_item_images("item-1", [f"{CDN}/items/item-1/c.jpg", f"{CDN}/items/item-1/a.jpg"])
 
-    urls = json.loads(result)
-    assert list(urls.items()) == [
-        ("2.jpg", "https://cdn.example.com/c.jpg"),
-        ("0.jpg", "https://cdn.example.com/a.jpg"),
-    ]
-    fake_supabase.storage.from_.return_value.upload.assert_not_called()
+    assert list(json.loads(result).items()) == [("c.jpg", "items/item-1/c.jpg"), ("a.jpg", "items/item-1/a.jpg")]
+    fake_media.put.assert_not_called()
 
 
-async def test_sync_item_images_uploads_new_files_at_their_requested_position(patch_supabase, fake_supabase):
+async def test_sync_item_images_rewrites_a_kept_legacy_url_as_its_key(patch_supabase, fake_supabase, fake_media):
+    """A pre-SPEC-108 row holds Supabase URLs. Whether the page sends the photo
+    back as the CDN URL it is served now or the legacy URL a stale tab still
+    holds, the photo is kept — and stored as a key from then on."""
     patch_supabase("domains.catalog.items", admin=fake_supabase)
-    _stub_current_images(fake_supabase, {"0.jpg": "https://cdn.example.com/a.jpg"})
-    fake_supabase.storage.from_.return_value.get_public_url.return_value = "https://cdn.example.com/new.png"
+    _stub_current_images(
+        fake_supabase,
+        {"0.jpeg": f"{LEGACY}/items/item-1/0.jpeg?", "1.jpeg": f"{LEGACY}/items/item-1/1.jpeg"},
+    )
+
+    result = await sync_item_images("item-1", [f"{CDN}/items/item-1/1.jpeg", f"{LEGACY}/items/item-1/0.jpeg"])
+
+    assert list(json.loads(result).items()) == [("1.jpeg", "items/item-1/1.jpeg"), ("0.jpeg", "items/item-1/0.jpeg")]
+    fake_media.delete.assert_not_called()
+
+
+async def test_sync_item_images_uploads_new_files_at_their_requested_position(
+    patch_supabase, fake_supabase, fake_media
+):
+    patch_supabase("domains.catalog.items", admin=fake_supabase)
+    _stub_current_images(fake_supabase, {"a.jpg": "items/item-1/a.jpg"})
 
     result = await sync_item_images(
         "item-1",
-        ["new:0", "https://cdn.example.com/a.jpg"],
+        ["new:0", f"{CDN}/items/item-1/a.jpg"],
         [FakeUploadFile("fresh.png", content=PNG_BYTES, content_type="image/png")],
     )
 
-    urls = json.loads(result)
-    assert list(urls.values()) == ["https://cdn.example.com/new.png", "https://cdn.example.com/a.jpg"]
-
-    upload_call = fake_supabase.storage.from_.return_value.upload.call_args
-    assert upload_call.kwargs["file"] == PNG_BYTES
-    assert upload_call.kwargs["path"].startswith("items/item-1/")
-    assert upload_call.kwargs["path"].endswith(".png")
-    assert upload_call.kwargs["file_options"]["content-type"] == "image/png"
+    key, body, content_type = fake_media.put.call_args.args
+    assert list(json.loads(result).values()) == [key, "items/item-1/a.jpg"]
+    assert body == PNG_BYTES
+    assert key.startswith("items/item-1/") and key.endswith(".png")
+    assert content_type == "image/png"
 
 
-async def test_sync_item_images_names_new_uploads_uniquely(patch_supabase, fake_supabase):
+async def test_sync_item_images_names_new_uploads_uniquely(patch_supabase, fake_supabase, fake_media):
     """A new photo must never overwrite the storage object of a kept one."""
     patch_supabase("domains.catalog.items", admin=fake_supabase)
-    _stub_current_images(fake_supabase, {"0.jpg": "https://cdn.example.com/a.jpg"})
-    fake_supabase.storage.from_.return_value.get_public_url.side_effect = lambda path: f"https://cdn.example.com/{path}"
+    _stub_current_images(fake_supabase, {"0.jpg": "items/item-1/0.jpg"})
 
     result = await sync_item_images(
         "item-1",
-        ["https://cdn.example.com/a.jpg", "new:0", "new:1"],
+        [f"{CDN}/items/item-1/0.jpg", "new:0", "new:1"],
         [FakeUploadFile("x.jpg"), FakeUploadFile("y.jpg")],
     )
 
-    urls = json.loads(result)
-    assert len(urls) == 3
-    assert "0.jpg" in urls  # the kept photo's key survives untouched
-    assert urls["0.jpg"] == "https://cdn.example.com/a.jpg"
+    keys = json.loads(result)
+    assert len(set(keys.values())) == 3
+    assert keys["0.jpg"] == "items/item-1/0.jpg"  # the kept photo survives untouched
 
 
-async def test_sync_item_images_drops_tokens_the_item_does_not_own(patch_supabase, fake_supabase):
+async def test_sync_item_images_drops_tokens_the_item_does_not_own(patch_supabase, fake_supabase, fake_media):
     patch_supabase("domains.catalog.items", admin=fake_supabase)
-    _stub_current_images(fake_supabase, {"0.jpg": "https://cdn.example.com/a.jpg"})
+    _stub_current_images(fake_supabase, {"a.jpg": "items/item-1/a.jpg"})
 
     result = await sync_item_images(
         "item-1",
-        ["https://evil.example.com/x.jpg", "new:7", "https://cdn.example.com/a.jpg"],
+        [
+            "https://evil.example.com/x.jpg",
+            "new:7",
+            f"{CDN}/items/other-item/z.jpg",
+            f"{CDN}/items/item-1/a.jpg",
+        ],
     )
 
-    assert json.loads(result) == {"0.jpg": "https://cdn.example.com/a.jpg"}
+    assert json.loads(result) == {"a.jpg": "items/item-1/a.jpg"}
 
 
-async def test_sync_item_images_removes_storage_objects_that_dropped_out(patch_supabase, fake_supabase):
+async def test_sync_item_images_removes_storage_objects_that_dropped_out(patch_supabase, fake_supabase, fake_media):
     patch_supabase("domains.catalog.items", admin=fake_supabase)
     _stub_current_images(
         fake_supabase,
-        {
-            "0.jpg": "https://cdn.example.com/a.jpg",
-            "1.jpg": "https://cdn.example.com/b.jpg",
-        },
+        {"0.jpeg": f"{LEGACY}/items/item-1/0.jpeg?", "b.jpg": "items/item-1/b.jpg"},
     )
 
-    result = await sync_item_images("item-1", ["https://cdn.example.com/b.jpg"])
+    result = await sync_item_images("item-1", [f"{CDN}/items/item-1/b.jpg"])
 
-    assert json.loads(result) == {"1.jpg": "https://cdn.example.com/b.jpg"}
-    fake_supabase.storage.from_.return_value.remove.assert_called_once_with(["items/item-1/0.jpg"])
+    assert json.loads(result) == {"b.jpg": "items/item-1/b.jpg"}
+    # A legacy URL is deleted by the key it names.
+    fake_media.delete.assert_called_once_with(["items/item-1/0.jpeg"])
 
 
-async def test_sync_item_images_survives_a_failing_storage_remove(patch_supabase, fake_supabase):
+async def test_sync_item_images_survives_a_failing_storage_remove(patch_supabase, fake_supabase, fake_media):
     """Orphaned bytes are cheaper than a failed save the admin cannot retry."""
     patch_supabase("domains.catalog.items", admin=fake_supabase)
-    _stub_current_images(
-        fake_supabase,
-        {
-            "0.jpg": "https://cdn.example.com/a.jpg",
-            "1.jpg": "https://cdn.example.com/b.jpg",
-        },
-    )
-    fake_supabase.storage.from_.return_value.remove.side_effect = Exception("storage down")
+    _stub_current_images(fake_supabase, {"a.jpg": "items/item-1/a.jpg", "b.jpg": "items/item-1/b.jpg"})
+    fake_media.delete.side_effect = Exception("storage down")
 
-    result = await sync_item_images("item-1", ["https://cdn.example.com/b.jpg"])
+    result = await sync_item_images("item-1", [f"{CDN}/items/item-1/b.jpg"])
 
-    assert json.loads(result) == {"1.jpg": "https://cdn.example.com/b.jpg"}
+    assert json.loads(result) == {"b.jpg": "items/item-1/b.jpg"}
 
 
-async def test_sync_item_images_returns_empty_map_when_every_photo_is_dropped(patch_supabase, fake_supabase):
+async def test_sync_item_images_never_deletes_a_url_that_is_not_ours(patch_supabase, fake_supabase, fake_media):
     patch_supabase("domains.catalog.items", admin=fake_supabase)
     _stub_current_images(fake_supabase, {"0.jpg": "https://cdn.example.com/a.jpg"})
+
+    assert json.loads(await sync_item_images("item-1", [])) == {}
+    fake_media.delete.assert_not_called()
+
+
+async def test_sync_item_images_returns_empty_map_when_every_photo_is_dropped(
+    patch_supabase, fake_supabase, fake_media
+):
+    patch_supabase("domains.catalog.items", admin=fake_supabase)
+    _stub_current_images(fake_supabase, {"a.jpg": "items/item-1/a.jpg"})
 
     result = await sync_item_images("item-1", [])
 
     assert json.loads(result) == {}
-    fake_supabase.storage.from_.return_value.remove.assert_called_once_with(["items/item-1/0.jpg"])
+    fake_media.delete.assert_called_once_with(["items/item-1/a.jpg"])
 
 
-async def test_sync_item_images_treats_an_unreadable_image_path_as_empty(patch_supabase, fake_supabase):
+async def test_sync_item_images_treats_an_unreadable_image_path_as_empty(patch_supabase, fake_supabase, fake_media):
     patch_supabase("domains.catalog.items", admin=fake_supabase)
     fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = make_supabase_result(
         [{"image_path": "not-json"}]
     )
-    fake_supabase.storage.from_.return_value.get_public_url.return_value = "https://cdn.example.com/new.png"
 
     result = await sync_item_images("item-1", ["new:0"], [FakeUploadFile("fresh.png")])
 
-    assert list(json.loads(result).values()) == ["https://cdn.example.com/new.png"]
-    fake_supabase.storage.from_.return_value.remove.assert_not_called()
+    assert list(json.loads(result).values()) == [fake_media.put.call_args.args[0]]
+    fake_media.delete.assert_not_called()
 
 
-async def test_sync_item_images_upload_exception_returns_none(patch_supabase, fake_supabase):
+async def test_sync_item_images_upload_exception_returns_none(patch_supabase, fake_supabase, fake_media):
     patch_supabase("domains.catalog.items", admin=fake_supabase)
-    _stub_current_images(fake_supabase, {"0.jpg": "https://cdn.example.com/a.jpg"})
-    fake_supabase.storage.from_.return_value.upload.side_effect = Exception("storage exploded")
+    _stub_current_images(fake_supabase, {"a.jpg": "items/item-1/a.jpg"})
+    fake_media.put.side_effect = Exception("storage exploded")
 
     result = await sync_item_images("item-1", ["new:0"], [FakeUploadFile("fresh.png")])
 
@@ -637,7 +657,7 @@ async def test_sync_item_images_missing_item_returns_none(patch_supabase, fake_s
     patch_supabase("domains.catalog.items", admin=fake_supabase)
     fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = make_supabase_result([])
 
-    result = await sync_item_images("ghost", ["https://cdn.example.com/a.jpg"])
+    result = await sync_item_images("ghost", ["https://media.example.test/items/ghost/a.jpg"])
 
     assert result is None
 

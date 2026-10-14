@@ -24,10 +24,9 @@ from core.env import (
     SMTP_FROM,
     SMTP_HOST,
     SMTP_PORT,
-    STORAGE_BUCKET,
-    SUPABASE_URL,
 )
 from core.logger import logger
+from core.media import media_url
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates" / "emails"
 
@@ -40,10 +39,8 @@ _jinja_env = Environment(
 
 
 def get_brand_logo_url() -> str:
-    """Return the public CDN URL for the brand logo."""
-    base_url = SUPABASE_URL.rstrip("/") if SUPABASE_URL else "https://umtsegjkgpfefjvhyysh.supabase.co"
-    bucket = STORAGE_BUCKET or "images"
-    return f"{base_url}/storage/v1/object/public/{bucket}/branding/logo.png"
+    """Return the public CDN URL for the brand logo (SPEC-108)."""
+    return media_url("branding/logo.png")
 
 
 def render_email_template(template_name: str, context: dict) -> str:

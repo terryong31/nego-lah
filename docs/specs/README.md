@@ -143,5 +143,6 @@ tests that prove it. No non-trivial change starts without one (see [`AGENTS.md`]
 | [SPEC-104](SPEC-104-security-audit-remediation.md) | Security Audit Remediation (2026-10-07) | in-progress |
 | [SPEC-105](SPEC-105-one-floor-price-resolver.md) | One Floor-Price Resolver, Fail-Closed When the Seller Sets None | complete |
 | [SPEC-106](SPEC-106-cloud-prompt-bans-false-floor-claims.md) | The Cloud Prompt Bans False Floor Claims on Every Reply | complete |
+| [SPEC-108](SPEC-108-user-media-on-a-first-party-cdn.md) | User Media Is Served from a First-Party CDN and Stored as Keys | in-progress |
 <!-- END GENERATED -->
 <!-- vale on -->

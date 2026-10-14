@@ -4,6 +4,7 @@
 - Date: 2026-09-08
 - Deciders: Terry (owner), AI Agent
 - Supersedes: the video-delivery portion of SPEC-028 (branding assets on Supabase Storage are unchanged)
+- Superseded in part by: ADR-0033 (user media and branding moved to R2 too)
 
 ## Context
 

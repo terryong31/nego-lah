@@ -248,6 +248,22 @@ def test_build_messages_with_item_id_found_injects_context_and_images(fake_memor
     assert image_parts[1]["image_url"]["url"] == "http://img/2.png"
 
 
+def test_build_messages_hands_the_model_cdn_urls_not_storage_keys(fake_memory, monkeypatch):
+    """SPEC-108: the row holds keys, and the provider has to fetch a real URL."""
+    import json
+
+    monkeypatch.setattr(
+        bot,
+        "get_item_details_for_context",
+        lambda item_id: {"name": "Lamp", "price": 30, "image_path": json.dumps({"a.jpeg": "items/i-1/a.jpeg"})},
+    )
+
+    messages = bot._build_messages("user-1", "what does it look like?", item_id="i-1")
+
+    urls = [p["image_url"]["url"] for p in messages[0].content if p["type"] == "image_url"]
+    assert urls == ["https://media.example.test/items/i-1/a.jpeg"]
+
+
 def test_build_messages_with_item_id_not_found_uses_plain_buyer_prefix(fake_memory, monkeypatch):
     monkeypatch.setattr(bot, "get_item_details_for_context", lambda item_id: None)
 

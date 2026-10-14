@@ -9,7 +9,7 @@ from core.schemas import CheckoutRequest
 from domains.billing.buyer import account_email as _buyer_account_email
 from domains.billing.pay import create_checkout_session
 from domains.billing.pricing import active_negotiated_price
-from domains.catalog import CatalogService, normalise_courier, resolve_tracking_url
+from domains.catalog import CatalogService, normalise_courier, resolve_image_path, resolve_tracking_url
 from domains.identity import get_user_id_from_body_or_token, verify_admin, verify_user_token
 
 router = APIRouter(prefix="/payment", tags=["Payment"])
@@ -188,7 +188,7 @@ def get_user_orders(user_id: str, token_user_id: str = Depends(verify_user_token
                 "id": order.get("id"),
                 "item_id": item_id,
                 "item_name": order.get("item_name") or item_data.get("name", "Unknown Item"),
-                "item_image": item_data.get("image_path"),
+                "item_image": resolve_image_path(item_data.get("image_path")),
                 "item_condition": item_data.get("condition"),
                 "amount": order.get("amount"),
                 "status": order.get("status"),

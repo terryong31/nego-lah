@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mockComponent, mockNuxtImport, mountSuspended } from '@nuxt/test-utils/runtime'
 import { flushPromises, type VueWrapper } from '@vue/test-utils'
-import { ref } from 'vue'
+import { defineComponent, h, ref } from 'vue'
 import LoginPage from '~/pages/_console/login.vue'
 
 // SPEC-044 D: `POST /admin/auth/login` is now Turnstile-gated on the backend —
@@ -13,10 +13,11 @@ import LoginPage from '~/pages/_console/login.vue'
 // `X-Turnstile-Token` (or Cloudflare's own `cf-turnstile-response`), and a
 // mismatch fails silently as "no token supplied" rather than as an error.
 
-const { callMock, toastAddMock, navigateToMock } = vi.hoisted(() => ({
+const { callMock, toastAddMock, navigateToMock, resetMock } = vi.hoisted(() => ({
   callMock: vi.fn(),
   toastAddMock: vi.fn(),
-  navigateToMock: vi.fn()
+  navigateToMock: vi.fn(),
+  resetMock: vi.fn()
 }))
 
 const turnstileEnabled = ref(true)
@@ -34,19 +35,23 @@ mockNuxtImport('useTurnstileToken', () => () => ({
 }))
 
 // The real widget talks to Cloudflare. This stub stands in for it and lets a
-// test hand the page a token the same way a solved challenge would.
-mockComponent('NuxtTurnstile', {
+// test hand the page a token the same way a solved challenge would, and
+// exposes the same `reset()` the real component does.
+mockComponent('NuxtTurnstile', defineComponent({
   props: {
     modelValue: { type: String, default: undefined },
     options: { type: Object, default: () => ({}) }
   },
   emits: ['update:modelValue'],
-  template: `<button
-    data-testid="turnstile"
-    type="button"
-    @click="$emit('update:modelValue', 'solved-token')"
-  >turnstile</button>`
-})
+  setup(_props, { emit, expose }) {
+    expose({ reset: resetMock })
+    return () => h('button', {
+      'data-testid': 'turnstile',
+      'type': 'button',
+      'onClick': () => emit('update:modelValue', 'solved-token')
+    }, 'turnstile')
+  }
+}))
 
 async function submitPassword(wrapper: VueWrapper) {
   await wrapper.find('input[type="email"]').setValue('admin@example.com')
@@ -62,6 +67,7 @@ describe('pages/_console/login.vue — Turnstile gate', () => {
     callMock.mockReset()
     toastAddMock.mockReset()
     navigateToMock.mockReset()
+    resetMock.mockReset()
     turnstileEnabled.value = true
     turnstileToken.value = undefined
   })
@@ -137,5 +143,20 @@ describe('pages/_console/login.vue — Turnstile gate', () => {
 
     expect(callMock).toHaveBeenCalledTimes(1)
     expect(turnstileToken.value).toBeUndefined()
+    // ...and the widget is reset, so that fresh challenge starts now rather
+    // than on its own 250 s timer.
+    expect(resetMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps Continue disabled until the challenge is solved', async () => {
+    wrapper = await mountSuspended(LoginPage)
+    await wrapper.find('input[type="email"]').setValue('admin@example.com')
+    await wrapper.find('input[type="password"]').setValue('super-secret')
+
+    const button = () => wrapper!.find('button[type="submit"]')
+    expect(button().attributes('disabled')).toBeDefined()
+
+    await wrapper.find('[data-testid="turnstile"]').trigger('click')
+    expect(button().attributes('disabled')).toBeUndefined()
   })
 })

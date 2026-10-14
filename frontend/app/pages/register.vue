@@ -34,7 +34,14 @@ const fields = computed(() => [{
 }])
 
 const loading = ref(false)
-const { token: turnstileToken, isEnabled: isTurnstileEnabled } = useTurnstileToken()
+const {
+  token: turnstileToken,
+  isEnabled: isTurnstileEnabled,
+  isPending: isTurnstilePending,
+  widget: turnstileWidget,
+  options: turnstileOptions,
+  spend: spendTurnstileToken
+} = useTurnstileWidget('register')
 
 async function onSubmit(payload: FormSubmitEvent<RegisterForm>) {
   if (isTurnstileEnabled.value && !turnstileToken.value) {
@@ -68,6 +75,8 @@ async function onSubmit(payload: FormSubmitEvent<RegisterForm>) {
       color: 'error'
     })
   } finally {
+    // Single-use, whichever way the request went (see useTurnstileWidget).
+    spendTurnstileToken()
     loading.value = false
   }
 }
@@ -83,6 +92,7 @@ async function onSubmit(payload: FormSubmitEvent<RegisterForm>) {
         icon="i-lucide-user-plus"
         :fields="fields"
         :loading="loading"
+        :submit="{ disabled: isTurnstilePending }"
         @submit="onSubmit"
       >
         <template #validation>
@@ -91,8 +101,9 @@ async function onSubmit(payload: FormSubmitEvent<RegisterForm>) {
             class="flex justify-center my-3 min-h-[65px]"
           >
             <NuxtTurnstile
+              ref="turnstileWidget"
               v-model="turnstileToken"
-              :options="{ action: 'register' }"
+              :options="turnstileOptions"
             />
           </div>
         </template>

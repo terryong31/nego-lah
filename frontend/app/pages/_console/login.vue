@@ -4,7 +4,14 @@ useSeoMeta({ title: 'Admin', robots: 'noindex, nofollow' })
 
 const { call } = useAdminApi()
 const toast = useToast()
-const { token: turnstileToken, isEnabled: isTurnstileEnabled } = useTurnstileToken()
+const {
+  token: turnstileToken,
+  isEnabled: isTurnstileEnabled,
+  isPending: isTurnstilePending,
+  widget: turnstileWidget,
+  options: turnstileOptions,
+  spend: spendTurnstileToken
+} = useTurnstileWidget('admin-login')
 
 const step = ref<'password' | 'otp'>('password')
 const email = ref('')
@@ -36,10 +43,10 @@ async function submitPassword() {
     toast.add({ title: 'Login failed', description: e.data?.detail || 'Invalid credentials', color: 'error' })
   } finally {
     // Siteverify tokens are single-use, so the one we just spent is dead
-    // whichever way the request went. Dropping it makes the widget issue a
-    // fresh one; keeping it would turn every retry into a 403 that reads as
-    // "wrong password".
-    turnstileToken.value = undefined
+    // whichever way the request went. Spending it resets the widget so it
+    // issues a fresh one; keeping it would turn every retry into a 403 that
+    // reads as "wrong password".
+    spendTurnstileToken()
     loading.value = false
   }
 }
@@ -120,8 +127,9 @@ function back() {
           class="flex justify-center min-h-[65px]"
         >
           <NuxtTurnstile
+            ref="turnstileWidget"
             v-model="turnstileToken"
-            :options="{ action: 'admin-login' }"
+            :options="turnstileOptions"
           />
         </div>
         <UButton
@@ -129,7 +137,7 @@ function back() {
           block
           label="Continue"
           :loading="loading"
-          :disabled="!email || !password"
+          :disabled="!email || !password || isTurnstilePending"
         />
       </form>
 

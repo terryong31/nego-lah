@@ -105,6 +105,12 @@ _TEST_ENV = {
     "ADMIN_SESSION_TTL": "7200",
     "ADMIN_PREAUTH_TTL": "300",
     "STORAGE_BUCKET": "test-images",
+    # SPEC-108: pinned, and no R2 credentials — an unpatched upload raises
+    # MediaStoreNotConfigured instead of reaching a real bucket.
+    "MEDIA_CDN_URL": "https://media.example.test",
+    "R2_ACCOUNT_ID": "",
+    "R2_ACCESS_KEY_ID": "",
+    "R2_SECRET_ACCESS_KEY": "",
     "ENV": "test",
     "DISABLE_PAYMENT_CLEANUP": "1",
     "DISABLE_UNREAD_DIGEST": "1",
@@ -260,6 +266,25 @@ def inbox_from(histories: dict, messages=()) -> dict:
 def fake_supabase():
     """A fresh chainable MagicMock per test — see module docstring for usage."""
     return MagicMock()
+
+
+@pytest.fixture
+def fake_media(monkeypatch):
+    """Stand-in for the R2 media store (SPEC-108): records calls, no network.
+
+    `put` echoes the key back, as the real store does. The methods are patched
+    on the one `media_store` instance, so every module that imported it sees
+    the fake — whatever name it was imported under.
+    """
+    from core.media import media_store
+
+    fake = MagicMock()
+    fake.put.side_effect = lambda key, body, content_type: key
+    fake.list.return_value = []
+    fake.exists.return_value = False
+    for name in ("put", "delete", "list", "exists"):
+        monkeypatch.setattr(media_store, name, getattr(fake, name))
+    return fake
 
 
 # Every domain service binds `admin_supabase` / `user_supabase` at import time,

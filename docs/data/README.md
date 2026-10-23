@@ -34,7 +34,7 @@ erDiagram
 
 | Table | Owner | Purpose | Notable columns |
 |-------|-------|---------|-----------------|
-| `items` | catalog | Listings. | `price`, **`min_price`** (confidential floor), `status` (`available` \| `sold`), **`buyer_id`** (confidential), `image_path` (JSON of public URLs), `translations` (en/ms/zh), `deleted_at` (soft delete). |
+| `items` | catalog | Listings. | `price`, **`min_price`** (confidential floor), `status` (`available` \| `sold`), **`buyer_id`** (confidential), `image_path` (JSON `{filename: storage key}`, display order), `translations` (en/ms/zh), `deleted_at` (soft delete). |
 | `orders` | billing | One per paid purchase; Stripe payment id is the idempotency anchor. | `status` (`pending_info` → `confirmed` → `shipped` → `delivered`, or `cancelled` / `refunded`), shipping address, `courier`, `tracking_number`, `tracking_url`, `shipped_at`, `delivered_at`. |
 | `transactions` | billing | Payment ledger; kept when the item is deleted (`on delete set null`). | `amount`, `stripe_payment_id`, `status` (`completed` \| `refunded`). |
 | `messages` | negotiation | Append-only transcript, `bigint` identity key. | `user_id`, `item_id`, `role` (`human` \| `ai` \| `admin` \| `system`), `source`, `content`, `tool_calls` (JSON, replayed to the agent). |
@@ -64,11 +64,15 @@ record of a sale.
 
 ## Storage
 
-- **Item images and avatars:** Supabase Storage bucket `images`. Public read; writes only from
-  the backend after server-side normalisation (`core/images.py`: HEIC decode, EXIF/GPS strip,
-  resize, recompress) ([ADR-0017](../adr/0017-server-side-image-normalization.md)).
-- **Videos and large media:** Cloudflare R2 behind `media.negolah.my`
-  ([ADR-0010](../adr/0010-cloudflare-r2-media-cdn.md)).
+- **All media:** Cloudflare R2 behind `media.negolah.my` — item photos (`items/<id>/…`), avatars
+  (`avatars/<user>/…`), branding and videos ([ADR-0010](../adr/0010-cloudflare-r2-media-cdn.md),
+  [ADR-0033](../adr/0033-user-media-on-a-first-party-cdn.md)). Writes only from the backend,
+  after server-side normalisation (`core/images.py`: HEIC decode, EXIF/GPS strip, resize,
+  recompress) ([ADR-0017](../adr/0017-server-side-image-normalization.md)), through
+  `core/media.py`. Rows store keys; `media_url()` builds the URL. Every name is unique, so
+  objects are cached `immutable`.
+- **Legacy:** the Supabase Storage bucket `images` held the same objects before SPEC-108. Older
+  rows may still carry its URLs; `media_key()` reads them as keys.
 
 ## Changing the schema
 

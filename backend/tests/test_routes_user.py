@@ -295,17 +295,15 @@ async def test_update_profile_display_name_only(client, auth_user, patch_supabas
     body = resp.json()
     assert body["display_name"] == "New Name"
     assert body["avatar_url"] is None
-    fake_admin.storage.from_.assert_not_called()
     updated_metadata = fake_admin.auth.admin.update_user_by_id.call_args[0][1]["user_metadata"]
     assert updated_metadata["display_name"] == "New Name"
     assert updated_metadata["foo"] == "bar"  # existing metadata preserved
 
 
-async def test_update_profile_with_avatar_success(client, auth_user, patch_supabase):
+async def test_update_profile_with_avatar_success(client, auth_user, patch_supabase, fake_media):
     auth_user("user-1")
     fake_admin = MagicMock()
     fake_admin.auth.admin.get_user_by_id.return_value = _existing_user_result()
-    fake_admin.storage.from_.return_value.get_public_url.return_value = "https://cdn.example.com/avatars/user-1/abc.png"
     patch_supabase("domains.identity.routes", admin=fake_admin, user=MagicMock())
 
     small_file = PNG_BYTES
@@ -316,29 +314,27 @@ async def test_update_profile_with_avatar_success(client, auth_user, patch_supab
     )
 
     assert resp.status_code == 200
+    fake_media.put.assert_called_once()
+    key, body_bytes, content_type = fake_media.put.call_args.args
+    assert key.startswith("avatars/user-1/")
+    assert key.endswith(".png")
+    assert body_bytes == small_file
+    assert content_type == "image/png"
+
     body = resp.json()
-    assert body["avatar_url"] == "https://cdn.example.com/avatars/user-1/abc.png"
+    # SPEC-108: the client gets the CDN URL; the metadata keeps the key.
+    assert body["avatar_url"] == f"https://media.example.test/{key}"
     assert body["display_name"] == "Avatar User"
 
-    fake_admin.storage.from_.return_value.upload.assert_called_once()
-    upload_args = fake_admin.storage.from_.return_value.upload.call_args[0]
-    file_path = upload_args[0]
-    assert file_path.startswith("avatars/user-1/")
-    assert file_path.endswith(".png")
-    assert upload_args[1] == small_file
-    upload_opts = upload_args[2]
-    assert upload_opts["content-type"] == "image/png"
-    assert upload_opts["upsert"] == "true"
-
-    # The uploaded URL goes to `custom_avatar_url`, NOT `avatar_url`. Supabase
+    # The upload goes to `custom_avatar_url`, NOT `avatar_url`. Supabase
     # refreshes user_metadata from the identity provider on every OAuth
     # sign-in, so anything written to a key Google also sets (`avatar_url`,
     # `picture`) is silently replaced by the Google photo on the next login.
     updated_metadata = fake_admin.auth.admin.update_user_by_id.call_args[0][1]["user_metadata"]
-    assert updated_metadata["custom_avatar_url"] == "https://cdn.example.com/avatars/user-1/abc.png"
+    assert updated_metadata["custom_avatar_url"] == key
 
 
-async def test_update_profile_avatar_preserves_google_avatar_url(client, auth_user, patch_supabase):
+async def test_update_profile_avatar_preserves_google_avatar_url(client, auth_user, patch_supabase, fake_media):
     """Uploading an avatar must not clobber the provider-owned `avatar_url` key."""
     auth_user("user-1")
     fake_admin = MagicMock()
@@ -348,9 +344,6 @@ async def test_update_profile_avatar_preserves_google_avatar_url(client, auth_us
             "picture": "https://lh3.googleusercontent.com/a/google-photo",
         }
     )
-    fake_admin.storage.from_.return_value.get_public_url.return_value = (
-        "https://cdn.example.com/avatars/user-1/uploaded.png"
-    )
     patch_supabase("domains.identity.routes", admin=fake_admin, user=MagicMock())
 
     resp = await client.put(
@@ -359,12 +352,13 @@ async def test_update_profile_avatar_preserves_google_avatar_url(client, auth_us
     )
 
     assert resp.status_code == 200
+    key = fake_media.put.call_args.args[0]
     updated_metadata = fake_admin.auth.admin.update_user_by_id.call_args[0][1]["user_metadata"]
-    assert updated_metadata["custom_avatar_url"] == "https://cdn.example.com/avatars/user-1/uploaded.png"
+    assert updated_metadata["custom_avatar_url"] == key
     assert updated_metadata["avatar_url"] == "https://lh3.googleusercontent.com/a/google-photo"
 
     # The response reports the *effective* avatar, which is now the upload.
-    assert resp.json()["avatar_url"] == "https://cdn.example.com/avatars/user-1/uploaded.png"
+    assert resp.json()["avatar_url"] == f"https://media.example.test/{key}"
 
 
 async def test_update_profile_reports_provider_avatar_when_no_upload(client, auth_user, patch_supabase):
@@ -384,7 +378,7 @@ async def test_update_profile_reports_provider_avatar_when_no_upload(client, aut
     assert resp.json()["avatar_url"] == "https://lh3.googleusercontent.com/a/google-photo"
 
 
-async def test_update_profile_avatar_too_large(client, auth_user, patch_supabase):
+async def test_update_profile_avatar_too_large(client, auth_user, patch_supabase, fake_media):
     auth_user("user-1")
     fake_admin = MagicMock()
     fake_admin.auth.admin.get_user_by_id.return_value = _existing_user_result()
@@ -398,11 +392,11 @@ async def test_update_profile_avatar_too_large(client, auth_user, patch_supabase
 
     assert resp.status_code == 400
     assert "too large" in resp.json()["detail"].lower()
-    fake_admin.storage.from_.return_value.upload.assert_not_called()
+    fake_media.put.assert_not_called()
     fake_admin.auth.admin.update_user_by_id.assert_not_called()
 
 
-async def test_update_profile_avatar_exactly_at_the_ceiling_allowed(client, auth_user, patch_supabase):
+async def test_update_profile_avatar_exactly_at_the_ceiling_allowed(client, auth_user, patch_supabase, fake_media):
     """Boundary check: exactly at the ceiling should NOT be rejected.
 
     SPEC-054 raised that ceiling from 2 MB to 8 MB, because the limit is
@@ -413,7 +407,6 @@ async def test_update_profile_avatar_exactly_at_the_ceiling_allowed(client, auth
     auth_user("user-1")
     fake_admin = MagicMock()
     fake_admin.auth.admin.get_user_by_id.return_value = _existing_user_result()
-    fake_admin.storage.from_.return_value.get_public_url.return_value = "https://cdn/x.png"
     patch_supabase("domains.identity.routes", admin=fake_admin, user=MagicMock())
 
     exact_file = PNG_BYTES + b"\x00" * (MAX_AVATAR_IMAGE_BYTES - len(PNG_BYTES))
@@ -425,11 +418,11 @@ async def test_update_profile_avatar_exactly_at_the_ceiling_allowed(client, auth
     assert resp.status_code == 200
 
 
-async def test_update_profile_avatar_upload_failure(client, auth_user, patch_supabase):
+async def test_update_profile_avatar_upload_failure(client, auth_user, patch_supabase, fake_media):
     auth_user("user-1")
     fake_admin = MagicMock()
     fake_admin.auth.admin.get_user_by_id.return_value = _existing_user_result()
-    fake_admin.storage.from_.return_value.upload.side_effect = Exception("storage down")
+    fake_media.put.side_effect = Exception("storage down")
     patch_supabase("domains.identity.routes", admin=fake_admin, user=MagicMock())
 
     resp = await client.put(
@@ -442,7 +435,9 @@ async def test_update_profile_avatar_upload_failure(client, auth_user, patch_sup
     fake_admin.auth.admin.update_user_by_id.assert_not_called()
 
 
-async def test_update_profile_avatar_filename_is_never_used_for_the_extension(client, auth_user, patch_supabase):
+async def test_update_profile_avatar_filename_is_never_used_for_the_extension(
+    client, auth_user, patch_supabase, fake_media
+):
     """The extension used to be `filename.rsplit(".", 1)[-1]`, so a filename
     with no dot became the extension in its entirety ("avatar" -> ".avatar")
     and a filename with slashes walked out of the user's prefix. SPEC-044 C
@@ -451,7 +446,6 @@ async def test_update_profile_avatar_filename_is_never_used_for_the_extension(cl
     auth_user("user-1")
     fake_admin = MagicMock()
     fake_admin.auth.admin.get_user_by_id.return_value = _existing_user_result()
-    fake_admin.storage.from_.return_value.get_public_url.return_value = "https://cdn/x.png"
     patch_supabase("domains.identity.routes", admin=fake_admin, user=MagicMock())
 
     resp = await client.put(
@@ -460,8 +454,7 @@ async def test_update_profile_avatar_filename_is_never_used_for_the_extension(cl
     )
 
     assert resp.status_code == 200
-    upload_args = fake_admin.storage.from_.return_value.upload.call_args[0]
-    file_path = upload_args[0]
+    file_path = fake_media.put.call_args.args[0]
     assert file_path.endswith(".png")
     assert "avatar" not in file_path.removeprefix("avatars/")
 
@@ -534,15 +527,21 @@ async def test_delete_account_success(client, auth_user, patch_supabase, session
     assert cleaned_tables == ["chat_settings", "messages", "user_profiles"]
 
 
-async def test_delete_account_ends_every_session_and_removes_avatars(client, auth_user, patch_supabase, session_client):
+async def test_delete_account_ends_every_session_and_removes_avatars(
+    client, auth_user, patch_supabase, session_client, fake_media
+):
     """Audit PRV-3: the cookie session outlived the account, and the avatar
     (usually a face) stayed in a public bucket."""
     from core.cache import get_cached_ban_status
 
     auth_user("user-1")
     fake_admin = MagicMock()
-    bucket = fake_admin.storage.from_.return_value
-    bucket.list.return_value = [{"name": "a.jpg"}, {"name": "b.webp"}]
+    # Self-service uploads live under `avatars/<user>/`; the admin console used
+    # to name them `avatars/<user>_<rand>`. Both are the user's face.
+    fake_media.list.side_effect = lambda prefix: {
+        "avatars/user-1/": ["avatars/user-1/a.jpg", "avatars/user-1/b.webp"],
+        "avatars/user-1_": ["avatars/user-1_3f2a.png"],
+    }[prefix]
     patch_supabase("domains.identity.routes", admin=fake_admin, user=MagicMock())
     session_client()
 
@@ -552,8 +551,9 @@ async def test_delete_account_ends_every_session_and_removes_avatars(client, aut
     set_cookie = resp.headers.get_list("set-cookie")
     assert any(c.startswith("nl_sid=") and "Max-Age=0" in c for c in set_cookie)
     assert get_cached_ban_status("user-1") is True
-    bucket.list.assert_called_once_with("avatars/user-1")
-    bucket.remove.assert_called_once_with(["avatars/user-1/a.jpg", "avatars/user-1/b.webp"])
+    fake_media.delete.assert_called_once_with(
+        ["avatars/user-1/a.jpg", "avatars/user-1/b.webp", "avatars/user-1_3f2a.png"]
+    )
 
 
 async def test_delete_account_invalidates_token(client, auth_user, patch_supabase, monkeypatch, session_client):
@@ -684,7 +684,6 @@ async def test_update_profile_rejects_a_display_name_over_50_characters(client, 
 
     assert resp.status_code == 400
     fake_admin.auth.admin.update_user_by_id.assert_not_called()
-    fake_admin.storage.from_.assert_not_called()
 
 
 async def test_update_profile_trims_the_display_name_before_measuring_it(client, auth_user, patch_supabase):

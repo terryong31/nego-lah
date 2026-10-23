@@ -33,6 +33,7 @@ from core.env import (
     USER_PKCE_COOKIE_NAME,
 )
 from core.logger import logger
+from core.media import media_url
 from core.schemas import AuthCredentialsRequest, AuthEmailRequest, AuthPasswordResetRequest
 from core.security import verify_turnstile
 from domains.identity.auth_middleware import verify_user_token
@@ -82,11 +83,19 @@ def _landing_for(link_type: str | None, stored_next: str | None) -> str:
 
 
 def _user_payload(user) -> dict:
-    """The subset of the Supabase user the SPA actually renders."""
+    """The subset of the Supabase user the SPA actually renders.
+
+    An uploaded avatar is stored as a media key (SPEC-108); the SPA gets its
+    CDN URL. A provider's `avatar_url` passes through `media_url` unchanged.
+    """
+    metadata = dict(getattr(user, "user_metadata", None) or {})
+    for field in ("custom_avatar_url", "avatar_url"):
+        if metadata.get(field):
+            metadata[field] = media_url(metadata[field])
     return {
         "id": getattr(user, "id", None),
         "email": getattr(user, "email", None),
-        "user_metadata": getattr(user, "user_metadata", None) or {},
+        "user_metadata": metadata,
     }
 
 

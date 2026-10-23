@@ -175,12 +175,12 @@ dir = "backend"
 run = "infisical run --env=prod --path=/Backend -- uv run python scripts/diagnose_resend.py"
 
 [tasks."cdn:sync:staging"]
-description = "Synchronize email branding icons to staging Supabase Storage CDN"
+description = "Synchronize email branding icons to the staging media CDN (R2)"
 dir = "backend"
 run = "infisical run --env=dev --path=/Backend -- uv run python scripts/sync_cdn_assets.py"
 
 [tasks."cdn:sync:prod"]
-description = "Synchronize email branding icons to production Supabase Storage CDN"
+description = "Synchronize email branding icons to the production media CDN (R2)"
 dir = "backend"
 run = "infisical run --env=prod --path=/Backend -- uv run python scripts/sync_cdn_assets.py"
 

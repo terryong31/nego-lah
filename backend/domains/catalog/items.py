@@ -13,9 +13,9 @@ from core.cache import (
     redis_client,
 )
 from core.connector import admin_supabase, user_supabase
-from core.env import STORAGE_BUCKET
 from core.images import MAX_ITEM_EDGE, process_upload
 from core.logger import logger
+from core.media import media_key, media_store, media_url, new_key
 
 # ---------------------------------------------------------------------------
 # Column boundary (SPEC-036)
@@ -54,6 +54,43 @@ CONFIDENTIAL_ITEM_COLUMNS: frozenset[str] = frozenset(
 
 # PostgREST select list for every query issued with the anon key.
 PUBLIC_ITEM_SELECT = ", ".join(PUBLIC_ITEM_COLUMNS)
+
+
+def image_urls(image_path: str | None) -> list[str]:
+    """An item's photo URLs in display order, resolved for the client (SPEC-108).
+
+    `image_path` is a JSON {filename: key} map; rows from before SPEC-108 hold
+    Supabase URLs instead, and older still a JSON list or a bare string. Every
+    shape resolves through `media_url`, so the client only ever sees the CDN.
+    """
+    if not image_path:
+        return []
+    try:
+        parsed = json.loads(image_path)
+    except (TypeError, ValueError):
+        parsed = image_path
+    if isinstance(parsed, dict):
+        values = list(parsed.values())
+    elif isinstance(parsed, list):
+        values = parsed
+    else:
+        values = [image_path]
+    return [media_url(value) for value in values if value]
+
+
+def resolve_image_path(image_path: str | None) -> str | None:
+    """`image_path` with each value resolved to its URL, shape and order kept.
+
+    For the admin console, which edits the map: it sends kept photos back as
+    the URLs it was given, and `sync_item_images` maps them back to keys.
+    """
+    try:
+        parsed = json.loads(image_path) if image_path else None
+    except (TypeError, ValueError):
+        return image_path
+    if not isinstance(parsed, dict):
+        return image_path
+    return json.dumps({name: media_url(value) for name, value in parsed.items()})
 
 
 def compute_items_hash(count: int, max_created_at: str) -> str:
@@ -192,7 +229,7 @@ async def upload_item(
     translations: dict = None,
 ) -> bool:
     """
-    Uploads images to Supabase Storage and creates an item in the database.
+    Uploads images to the media store and creates an item in the database.
 
     Args:
         name: Item name
@@ -207,7 +244,7 @@ async def upload_item(
     try:
         random_uuid = str(uuid.uuid4())
 
-        async def upload_image(i: int, img: UploadFile) -> tuple[str, str]:
+        async def upload_image(img: UploadFile) -> tuple[str, str]:
             raw = await img.read()
             # SPEC-054: the extension and content type come from what actually
             # decoded, never from `filename` / `content_type` — the browser's
@@ -217,23 +254,17 @@ async def upload_item(
             file_content, content_type, img_extension = await asyncio.to_thread(
                 process_upload, raw, max_edge=MAX_ITEM_EDGE
             )
-            img_name = f"{i}.{img_extension}"
-            # The storage client is synchronous, so each upload gets its own
-            # thread — otherwise a five-photo listing pays for five round trips
-            # back to back.
-            await asyncio.to_thread(
-                admin_supabase.storage.from_(STORAGE_BUCKET).upload,
-                file=file_content,
-                path=f"items/{random_uuid}/{img_name}",
-                file_options={"content-type": content_type},
+            # SPEC-108: a unique name, so the CDN can cache it forever, and the
+            # row keeps the key — the URL is built when the item is served.
+            # Each upload gets its own thread — otherwise a five-photo listing
+            # pays for five round trips back to back.
+            key = await asyncio.to_thread(
+                media_store.put, new_key(f"items/{random_uuid}", img_extension), file_content, content_type
             )
-            public_url_response = admin_supabase.storage.from_(STORAGE_BUCKET).get_public_url(
-                path=f"items/{random_uuid}/{img_name}"
-            )
-            return img_name, public_url_response
+            return key.rsplit("/", 1)[-1], key
 
         # gather preserves input order, so image 0 stays the thumbnail.
-        urls = dict(await asyncio.gather(*(upload_image(i, img) for i, img in enumerate(uploaded_images))))
+        keys = dict(await asyncio.gather(*(upload_image(img) for img in uploaded_images)))
 
         item_data = {
             "id": random_uuid,
@@ -241,7 +272,7 @@ async def upload_item(
             "price": price,
             "description": description,
             "condition": condition,
-            "image_path": json.dumps(urls),
+            "image_path": json.dumps(keys),
             "status": "available",  # Default status for new items
             "created_at": datetime.now(UTC).isoformat(),
         }
@@ -268,13 +299,16 @@ async def sync_item_images(item_id: str, ordered: list[str], new_images: list[Up
     """
     Rebuild an item's image map from an ordered list of tokens (edit flow).
 
-    `image_path` is a {filename: url} map whose insertion order *is* the display
+    `image_path` is a {filename: key} map whose insertion order *is* the display
     order, so this returns a freshly built map rather than patching the old one.
+    Rows written before SPEC-108 hold Supabase URLs instead of keys; both resolve
+    through `media_url`, and a kept photo is rewritten as its key.
 
     Args:
         item_id: Item whose photos are being replaced
         ordered: One token per photo, in display order (first = thumbnail).
-            A token is either the public URL of a photo the item already has,
+            A token is either the public URL of a photo the item already has
+            (as served now, or the legacy URL a stale page may still hold),
             or "new:<n>" naming the nth file in `new_images`. Anything else is
             dropped, so a stale client can never write a foreign URL into the row.
         new_images: Newly uploaded files referenced by the "new:<n>" tokens
@@ -295,7 +329,7 @@ async def sync_item_images(item_id: str, ordered: list[str], new_images: list[Up
             current = {}
 
         # Kept photos arrive as URLs; map back to the filename that keys them.
-        by_url = {url: name for name, url in current.items()}
+        by_url = {media_url(value): name for name, value in current.items()}
 
         async def upload_new(img: UploadFile) -> tuple[str, str]:
             raw = await img.read()
@@ -304,15 +338,10 @@ async def sync_item_images(item_id: str, ordered: list[str], new_images: list[Up
             )
             # Random names, not positional ones: a photo added at slot 0 must
             # never overwrite the object of a photo the listing still points at.
-            img_name = f"{uuid.uuid4().hex[:8]}.{img_extension}"
-            path = f"items/{item_id}/{img_name}"
-            await asyncio.to_thread(
-                admin_supabase.storage.from_(STORAGE_BUCKET).upload,
-                file=file_content,
-                path=path,
-                file_options={"content-type": content_type},
+            key = await asyncio.to_thread(
+                media_store.put, new_key(f"items/{item_id}", img_extension), file_content, content_type
             )
-            return img_name, admin_supabase.storage.from_(STORAGE_BUCKET).get_public_url(path=path)
+            return key.rsplit("/", 1)[-1], key
 
         uploaded = list(await asyncio.gather(*(upload_new(img) for img in (new_images or []))))
 
@@ -320,17 +349,18 @@ async def sync_item_images(item_id: str, ordered: list[str], new_images: list[Up
         for token in ordered:
             if token.startswith("new:"):
                 try:
-                    img_name, url = uploaded[int(token[4:])]
+                    img_name, key = uploaded[int(token[4:])]
                 except (ValueError, IndexError):
                     continue
-                urls[img_name] = url
-            elif token in by_url:
-                urls[by_url[token]] = token
+                urls[img_name] = key
+            elif media_url(token) in by_url:
+                name = by_url[media_url(token)]
+                urls[name] = media_key(current[name]) or current[name]
 
-        dropped = [f"items/{item_id}/{name}" for name in current if name not in urls]
+        dropped = [key for name, value in current.items() if name not in urls if (key := media_key(value))]
         if dropped:
             try:
-                await asyncio.to_thread(admin_supabase.storage.from_(STORAGE_BUCKET).remove, dropped)
+                await asyncio.to_thread(media_store.delete, dropped)
             except Exception as e:
                 # Orphaned bytes are cheaper than a save the admin can't retry.
                 logger.warning(f"Failed to remove dropped images for item {item_id}: {e}")

@@ -18,7 +18,14 @@ const fields = computed(() => [{
 
 const loading = ref(false)
 const sent = ref(false)
-const { token: turnstileToken, isEnabled: isTurnstileEnabled } = useTurnstileToken()
+const {
+  token: turnstileToken,
+  isEnabled: isTurnstileEnabled,
+  isPending: isTurnstilePending,
+  widget: turnstileWidget,
+  options: turnstileOptions,
+  spend: spendTurnstileToken
+} = useTurnstileWidget('forgot-password')
 
 async function onSubmit(payload: FormSubmitEvent<ForgotPasswordForm>) {
   if (isTurnstileEnabled.value && !turnstileToken.value) {
@@ -48,6 +55,8 @@ async function onSubmit(payload: FormSubmitEvent<ForgotPasswordForm>) {
       color: 'error'
     })
   } finally {
+    // Single-use, whichever way the request went (see useTurnstileWidget).
+    spendTurnstileToken()
     loading.value = false
   }
 }
@@ -86,7 +95,7 @@ async function onSubmit(payload: FormSubmitEvent<ForgotPasswordForm>) {
         icon="i-lucide-key-round"
         :fields="fields"
         :loading="loading"
-        :submit="{ label: $t('auth.sendResetLink') }"
+        :submit="{ label: $t('auth.sendResetLink'), disabled: isTurnstilePending }"
         @submit="onSubmit"
       >
         <template #validation>
@@ -95,8 +104,9 @@ async function onSubmit(payload: FormSubmitEvent<ForgotPasswordForm>) {
             class="flex justify-center my-3 min-h-[65px]"
           >
             <NuxtTurnstile
+              ref="turnstileWidget"
               v-model="turnstileToken"
-              :options="{ action: 'forgot-password' }"
+              :options="turnstileOptions"
             />
           </div>
         </template>

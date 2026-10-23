@@ -55,5 +55,6 @@ with the metadata block from [`TEMPLATE.md`](TEMPLATE.md).
 | [0030](0030-the-domain-graph-is-acyclic.md) | The domain graph is acyclic | Accepted | 2026-09-20 |
 | [0031](0031-videos-are-code.md) | Videos Are Code | Accepted | 2026-10-07 |
 | [0032](0032-origin-authenticated-by-zone-secret-header.md) | The origin authenticates our Cloudflare zone with a secret header | Accepted | 2026-10-07 |
+| [0033](0033-user-media-on-a-first-party-cdn.md) | User media is served from R2 on our own domain and stored as keys | Accepted | 2026-10-14 |
 <!-- END GENERATED -->
 <!-- vale on -->

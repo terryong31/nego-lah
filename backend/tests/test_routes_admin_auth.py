@@ -393,11 +393,12 @@ async def test_update_user_profile_requires_admin(client):
 # ===========================================================================
 
 
-async def test_upload_user_avatar_storage_success(client, admin_user, fake_supabase, patch_supabase, monkeypatch):
+async def test_upload_user_avatar_storage_success(
+    client, admin_user, fake_supabase, patch_supabase, monkeypatch, fake_media
+):
     admin_user()
     patch_supabase("core.connector", admin=fake_supabase)
     monkeypatch.setattr(admin_users, "write_audit", MagicMock())
-    fake_supabase.storage.from_.return_value.get_public_url.return_value = "https://cdn.example.com/avatars/x.png"
 
     resp = await client.post(
         "/admin/users/target-user/avatar",
@@ -405,22 +406,26 @@ async def test_upload_user_avatar_storage_success(client, admin_user, fake_supab
     )
 
     assert resp.status_code == 200
+    fake_media.put.assert_called_once()
+    key, body_bytes, _ = fake_media.put.call_args.args
+    # SPEC-108: under `avatars/<user>/`, the prefix account deletion purges.
+    assert key.startswith("avatars/target-user/")
+    assert body_bytes == PNG_BYTES
     body = resp.json()
-    assert body["avatar_url"] == "https://cdn.example.com/avatars/x.png"
+    assert body["avatar_url"] == f"https://media.example.test/{key}"
     assert body["message"] == "Avatar uploaded successfully"
-    fake_supabase.storage.from_.return_value.upload.assert_called_once()
-    upload_args = fake_supabase.storage.from_.return_value.upload.call_args[0]
-    assert upload_args[0].startswith("avatars/target-user_")
-    assert upload_args[1] == PNG_BYTES
+    # The profile row keeps the key; it is resolved whenever it is served.
+    upserted = fake_supabase.table.return_value.upsert.call_args.args[0]
+    assert upserted["avatar_url"] == key
 
 
 async def test_upload_user_avatar_storage_failure_falls_back_to_base64(
-    client, admin_user, fake_supabase, patch_supabase, monkeypatch
+    client, admin_user, fake_supabase, patch_supabase, monkeypatch, fake_media
 ):
     admin_user()
     patch_supabase("core.connector", admin=fake_supabase)
     monkeypatch.setattr(admin_users, "write_audit", MagicMock())
-    fake_supabase.storage.from_.return_value.upload.side_effect = Exception("storage unavailable")
+    fake_media.put.side_effect = Exception("storage unavailable")
 
     resp = await client.post(
         "/admin/users/target-user/avatar",

@@ -7,6 +7,7 @@ from scripts import revoke_all_sessions as script
 def test_revokes_sessions_csrf_and_token_cache_but_keeps_the_admin_allowlist():
     for key in ("user:sess:a", "user:sess:b", "admin:sess:c", "ucsrf:a", "csrf:c", "token:t", "user:refreshlock:a"):
         redis_client.setex(key, 600, "x")
+    redis_client.zadd("user:sids:u1", {"a": 1.0, "b": 2.0})
     redis_client.setex("admin:allow:u1", 600, "admin@example.com")
     redis_client.setex("item:1", 600, "{}")
 
@@ -15,6 +16,7 @@ def test_revokes_sessions_csrf_and_token_cache_but_keeps_the_admin_allowlist():
     assert counts["user:sess:*"] == 2
     assert counts["admin:sess:*"] == 1
     assert redis_client.keys("user:sess:*") == [] and redis_client.keys("csrf:*") == []
+    assert redis_client.keys("user:sids:*") == []
     assert redis_client.get("admin:allow:u1") == "admin@example.com"
     assert redis_client.get("item:1") == "{}"
 

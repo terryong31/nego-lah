@@ -27,6 +27,7 @@ from core.cache import redis_client
 from core.connector import new_user_client
 from core.csrf import USER_SCOPE, clear_csrf, generate_csrf_token, set_csrf_cookie
 from core.env import (
+    LEGACY_SESSION_COOKIE_DOMAIN,
     USER_COOKIE_DOMAIN,
     USER_COOKIE_NAME,
     USER_COOKIE_PATH,
@@ -40,6 +41,10 @@ from core.logger import logger
 
 _SESS_KEY = "user:sess:"
 _LOCK_KEY = "user:refreshlock:"
+# Every sid a user holds, so a password change can find the other devices
+# (audit SEC-10). A sorted set scored by creation time; members whose session
+# key is gone are just skipped.
+_SIDS_KEY = "user:sids:"
 
 # Refresh this far ahead of expiry, so a request that arrives mid-flight is not
 # the one that discovers the token is already dead.
@@ -80,6 +85,8 @@ def create_session(user_id: str, access_token: str, refresh_token: str, expires_
             }
         ),
     )
+    redis_client.zadd(f"{_SIDS_KEY}{user_id}", {sid: time.time()})
+    redis_client.expire(f"{_SIDS_KEY}{user_id}", USER_SESSION_TTL)
     return sid
 
 
@@ -106,8 +113,29 @@ def _save_session(sid: str, data: dict) -> None:
 def destroy_session(sid: str | None) -> None:
     """Revoke a session. The next request carrying this cookie is anonymous."""
     if sid:
+        session = read_session(sid)
         redis_client.delete(_key(sid))
         redis_client.delete(f"{USER_SCOPE.redis_prefix}{sid}")
+        if session and session.get("user_id"):
+            redis_client.zrem(f"{_SIDS_KEY}{session['user_id']}", sid)
+
+
+def revoke_other_sessions(user_id: str, keep_sid: str | None) -> int:
+    """Sign the user out of every session but `keep_sid`. Returns how many went.
+
+    A password change or reset is the owner saying the old credential is no
+    longer theirs alone. Waiting for Supabase to refuse the next token refresh
+    is not enough: the session resolves from Redis without asking Supabase, so
+    another device would stay in until then — and indefinitely if the refresh
+    token is still honoured.
+    """
+    revoked = 0
+    for sid in redis_client.zrangebyscore(f"{_SIDS_KEY}{user_id}", 0, time.time() + 1):
+        if sid != keep_sid:
+            destroy_session(sid)
+            redis_client.zrem(f"{_SIDS_KEY}{user_id}", sid)
+            revoked += 1
+    return revoked
 
 
 # ---------------------------------------------------------------------------
@@ -194,6 +222,9 @@ def resolve_session(sid: str) -> dict | None:
     ttl = redis_client.ttl(_key(sid))
     if isinstance(ttl, int) and 0 < ttl < USER_SESSION_TTL - _SLIDE_AFTER:
         redis_client.expire(_key(sid), USER_SESSION_TTL)
+        # The index has to outlive every session in it, or revocation misses one.
+        if session.get("user_id"):
+            redis_client.expire(f"{_SIDS_KEY}{session['user_id']}", USER_SESSION_TTL)
 
     return session
 
@@ -229,6 +260,7 @@ def set_session_cookies(response: Response, sid: str) -> str:
         path=USER_COOKIE_PATH,
         domain=USER_COOKIE_DOMAIN,
     )
+    _expire_legacy_cookie(response)
     token = generate_csrf_token(sid, USER_SCOPE)
     set_csrf_cookie(response, token, USER_SCOPE)
     return token
@@ -239,7 +271,16 @@ def clear_session_cookies(request: Request, response: Response) -> None:
     sid = request.cookies.get(USER_COOKIE_NAME)
     destroy_session(sid)
     response.delete_cookie(key=USER_COOKIE_NAME, path=USER_COOKIE_PATH, domain=USER_COOKIE_DOMAIN)
+    _expire_legacy_cookie(response)
     clear_csrf(sid, response, USER_SCOPE)
+
+
+def _expire_legacy_cookie(response: Response) -> None:
+    """Drop the copy of the session cookie set under the shared domain before
+    SPEC-110. Left alone, it would be sent alongside the host-only one and would
+    keep signing the browser in after the host-only one is cleared."""
+    if LEGACY_SESSION_COOKIE_DOMAIN and LEGACY_SESSION_COOKIE_DOMAIN != USER_COOKIE_DOMAIN:
+        response.delete_cookie(key=USER_COOKIE_NAME, path=USER_COOKIE_PATH, domain=LEGACY_SESSION_COOKIE_DOMAIN)
 
 
 def open_session_for(response: Response, supabase_session) -> str:

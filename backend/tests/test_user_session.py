@@ -29,9 +29,10 @@ from supabase_auth.errors import AuthApiError, AuthRetryableError
 
 import domains.identity.user_session as user_session
 from core.cache import redis_client
-from core.env import USER_COOKIE_NAME
+from core.env import USER_COOKIE_NAME, USER_SESSION_TTL
 from domains.identity.user_session import (
     _SESS_KEY,
+    _SIDS_KEY,
     access_token_for,
     create_session,
     destroy_session,
@@ -40,6 +41,7 @@ from domains.identity.user_session import (
     read_session,
     resolve_session,
     resolve_user_id,
+    revoke_other_sessions,
     set_session_cookies,
 )
 
@@ -100,6 +102,56 @@ def test_destroy_session_also_drops_the_csrf_token():
 
 
 # ---------------------------------------------------------------------------
+# Per-user index — a password change has to find every device (SPEC-110)
+# ---------------------------------------------------------------------------
+
+
+def _live(sid: str) -> bool:
+    return redis_client.get(f"{_SESS_KEY}{sid}") is not None
+
+
+def test_create_session_indexes_the_sid_under_its_user():
+    sid = create_session("user-1", "a", "r", int(time.time()) + 3600)
+    assert sid in redis_client.zrangebyscore(f"{_SIDS_KEY}user-1", 0, time.time() + 1)
+
+
+def test_revoke_other_sessions_keeps_the_caller_and_other_users():
+    expires = int(time.time()) + 3600
+    phone, laptop, stolen = (create_session("user-1", "a", "r", expires) for _ in range(3))
+    someone_else = create_session("user-2", "a", "r", expires)
+    set_session_cookies(Response(), stolen)
+
+    assert revoke_other_sessions("user-1", keep_sid=phone) == 2
+
+    assert _live(phone)
+    assert not _live(laptop) and not _live(stolen)
+    assert redis_client.get(f"ucsrf:{stolen}") is None
+    assert _live(someone_else)
+    assert redis_client.zrangebyscore(f"{_SIDS_KEY}user-1", 0, time.time() + 1) == [phone]
+
+
+def test_revoke_other_sessions_for_a_user_with_none_is_a_no_op():
+    assert revoke_other_sessions("nobody", keep_sid=None) == 0
+
+
+def test_destroy_session_drops_the_sid_from_the_index():
+    sid = create_session("user-1", "a", "r", int(time.time()) + 3600)
+    destroy_session(sid)
+    assert redis_client.zrangebyscore(f"{_SIDS_KEY}user-1", 0, time.time() + 1) == []
+
+
+def test_the_index_slides_with_the_session():
+    """A session kept alive past the index's TTL would be one a password change cannot reach."""
+    sid = create_session("user-1", "a", "r", int(time.time()) + 3600)
+    redis_client.expire(f"{_SESS_KEY}{sid}", 100)
+    redis_client.expire(f"{_SIDS_KEY}user-1", 100)
+
+    resolve_user_id(sid)
+
+    assert redis_client.ttl(f"{_SIDS_KEY}user-1") > USER_SESSION_TTL - 5
+
+
+# ---------------------------------------------------------------------------
 # Cookies
 # ---------------------------------------------------------------------------
 
@@ -133,6 +185,52 @@ def test_samesite_is_lax_so_the_stripe_return_still_carries_the_session():
 
     session_cookie = next(c for c in set_cookie_headers(response) if c.startswith(f"{USER_COOKIE_NAME}="))
     assert "samesite=lax" in session_cookie.lower()
+
+
+def test_session_cookies_are_host_only_by_default():
+    """SEC-13: only the API reads the session, so no other subdomain is sent it."""
+    response = Response()
+    open_session_for(response, make_supabase_session())
+
+    session_cookie = next(c for c in set_cookie_headers(response) if c.startswith(f"{USER_COOKIE_NAME}="))
+    assert "domain=" not in session_cookie.lower()
+
+
+def test_signing_in_expires_the_cookie_left_under_the_old_shared_domain(monkeypatch):
+    monkeypatch.setattr(user_session, "LEGACY_SESSION_COOKIE_DOMAIN", ".negolah.my")
+    response = Response()
+    open_session_for(response, make_supabase_session())
+
+    legacy = [c for c in set_cookie_headers(response) if "domain=.negolah.my" in c.lower()]
+    assert len(legacy) == 1
+    assert legacy[0].startswith(f"{USER_COOKIE_NAME}=") and "max-age=0" in legacy[0].lower()
+
+
+def test_no_legacy_cleanup_when_the_session_cookie_still_uses_that_domain(monkeypatch):
+    """An operator who pins USER_COOKIE_DOMAIN back to the shared domain must not
+    have the login response expire the cookie it has just set."""
+    monkeypatch.setattr(user_session, "LEGACY_SESSION_COOKIE_DOMAIN", ".negolah.my")
+    monkeypatch.setattr(user_session, "USER_COOKIE_DOMAIN", ".negolah.my")
+    response = Response()
+    open_session_for(response, make_supabase_session())
+
+    session_cookies = [c for c in set_cookie_headers(response) if c.startswith(f"{USER_COOKIE_NAME}=")]
+    assert len(session_cookies) == 1
+    assert "max-age=0" not in session_cookies[0].lower()
+
+
+def test_signing_out_expires_both_the_host_only_and_the_legacy_cookie(monkeypatch):
+    monkeypatch.setattr(user_session, "LEGACY_SESSION_COOKIE_DOMAIN", ".negolah.my")
+    sid = create_session("user-1", "a", "r", int(time.time()) + 3600)
+    request = SimpleNamespace(cookies={USER_COOKIE_NAME: sid})
+    response = Response()
+
+    user_session.clear_session_cookies(request, response)
+
+    expired = [c for c in set_cookie_headers(response) if c.startswith(f"{USER_COOKIE_NAME}=")]
+    assert len(expired) == 2
+    assert any("domain=.negolah.my" in c.lower() for c in expired)
+    assert not _live(sid)
 
 
 def test_open_session_for_rejects_a_supabase_session_with_no_user():

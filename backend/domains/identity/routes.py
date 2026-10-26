@@ -24,7 +24,7 @@ from core import bus
 from core.cache import cache_ban_status, check_rate_limit, invalidate_token
 from core.connector import admin_supabase, new_user_client
 from core.csrf import verify_user_csrf_token
-from core.env import API_BASE_URL
+from core.env import API_BASE_URL, USER_COOKIE_NAME
 from core.images import MAX_AVATAR_EDGE, process_upload
 from core.logger import logger
 from core.media import media_store, media_url, new_key
@@ -37,7 +37,7 @@ from core.schemas import (
 from core.uploads import MAX_AVATAR_IMAGE_BYTES
 from domains.identity.auth_middleware import get_user_id_from_body_or_token, verify_user_token
 from domains.identity.services import IdentityService
-from domains.identity.user_session import clear_session_cookies
+from domains.identity.user_session import clear_session_cookies, revoke_other_sessions
 
 SUPPORTED_LANGUAGES = {"en", "ms", "zh"}
 
@@ -114,6 +114,8 @@ def change_password(
         logger.error(f"Error changing password for {user_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to change password") from e
 
+    # Audit SEC-10: whoever else held the old password is signed out now.
+    revoke_other_sessions(user_id, keep_sid=request.cookies.get(USER_COOKIE_NAME))
     return {"message": "Password changed successfully"}
 
 

@@ -536,6 +536,31 @@ def test_clear_session_without_cookie_is_a_no_op_but_still_deletes_cookie():
     assert len(cookies) == 2
 
 
+def test_the_admin_cookie_is_host_only_by_default():
+    """SEC-13: the console session goes to the API and nowhere else on the domain."""
+    response = Response()
+    admin_session._set_cookie(response, "sid-1")
+
+    cookies = set_cookie_values(response)
+    assert len(cookies) == 1
+    assert b"domain=" not in cookies[0].lower()
+
+
+def test_signing_in_and_out_expire_the_legacy_shared_domain_cookie(monkeypatch):
+    monkeypatch.setattr(admin_session, "LEGACY_SESSION_COOKIE_DOMAIN", ".negolah.my")
+
+    signed_in = Response()
+    admin_session._set_cookie(signed_in, "sid-1")
+    signed_out = Response()
+    clear_session(make_request(cookies={}), signed_out)
+
+    for response in (signed_in, signed_out):
+        legacy = [c for c in set_cookie_values(response) if b"domain=.negolah.my" in c.lower()]
+        assert len(legacy) == 1
+        assert legacy[0].startswith(admin_session.ADMIN_COOKIE_NAME.encode() + b"=")
+        assert b"max-age=0" in legacy[0].lower()
+
+
 # ---------------------------------------------------------------------------
 # client_ip
 # ---------------------------------------------------------------------------

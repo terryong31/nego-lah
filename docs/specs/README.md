@@ -146,5 +146,6 @@ tests that prove it. No non-trivial change starts without one (see [`AGENTS.md`]
 | [SPEC-107](SPEC-107-service-worker-stays-same-origin.md) | The Service Worker Routes No Request the CSP Forbids It to Fetch | complete |
 | [SPEC-108](SPEC-108-user-media-on-a-first-party-cdn.md) | User Media Is Served from a First-Party CDN and Stored as Keys | in-progress |
 | [SPEC-109](SPEC-109-turnstile-gates-the-submit-button.md) | The Submit Button Waits for Turnstile | complete |
+| [SPEC-110](SPEC-110-white-box-audit-2026-10-27.md) | Password Changes End Other Sessions, Refunds Replay, Chat Attachments Are Bounded | complete |
 <!-- END GENERATED -->
 <!-- vale on -->

@@ -37,6 +37,7 @@ from core.env import (
     ADMIN_COOKIE_SECURE,
     ADMIN_PREAUTH_TTL,
     ADMIN_SESSION_TTL,
+    LEGACY_SESSION_COOKIE_DOMAIN,
     SUPABASE_URL,
     USER_SUPABASE_KEY,
 )
@@ -300,6 +301,14 @@ def _set_cookie(response: Response, sid: str) -> None:
         path=ADMIN_COOKIE_PATH,
         domain=ADMIN_COOKIE_DOMAIN,
     )
+    _expire_legacy_cookie(response)
+
+
+def _expire_legacy_cookie(response: Response) -> None:
+    """Drop the copy set under the shared domain before SPEC-110 made the
+    console cookie host-only, so it cannot outlive a sign-out."""
+    if LEGACY_SESSION_COOKIE_DOMAIN and LEGACY_SESSION_COOKIE_DOMAIN != ADMIN_COOKIE_DOMAIN:
+        response.delete_cookie(key=ADMIN_COOKIE_NAME, path=ADMIN_COOKIE_PATH, domain=LEGACY_SESSION_COOKIE_DOMAIN)
 
 
 def clear_session(request: Request, response: Response) -> None:
@@ -307,6 +316,7 @@ def clear_session(request: Request, response: Response) -> None:
     if sid:
         redis_client.delete(f"{_SESS_KEY}{sid}")
     response.delete_cookie(key=ADMIN_COOKIE_NAME, path=ADMIN_COOKIE_PATH, domain=ADMIN_COOKIE_DOMAIN)
+    _expire_legacy_cookie(response)
 
     # Also clear the CSRF token and its cookie.
     clear_csrf(sid, response)

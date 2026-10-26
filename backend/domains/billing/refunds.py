@@ -44,8 +44,17 @@ def process_refund(item_id: str, reason: str = None) -> dict:
     # Process refund in Stripe. If this raises a StripeError the money never
     # moved, so returning a failure is safe. A non-Stripe error (e.g. network)
     # is deliberately left to propagate for the same reason — nothing to undo.
+    #
+    # The idempotency key covers the one case where that is not true: Stripe
+    # refunded but the response was lost. The operator's retry then replays the
+    # first refund and the DB writes below run, instead of Stripe answering
+    # "already refunded" and leaving the item sold (audit SEC-11).
     try:
-        refund = stripe.Refund.create(payment_intent=payment_id, reason=reason or "requested_by_customer")
+        refund = stripe.Refund.create(
+            payment_intent=payment_id,
+            reason=reason or "requested_by_customer",
+            idempotency_key=f"admin_refund_{payment_id}",
+        )
     except stripe.error.StripeError as e:
         logger.error(f"❌ Stripe refund failed for item {item_id}: {e}")
         return {"success": False, "error": str(e)}

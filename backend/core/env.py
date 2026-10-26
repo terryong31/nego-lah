@@ -105,14 +105,21 @@ ADMIN_PREFIX = "/admin"
 
 _is_https = FRONTEND_URL.startswith("https://")
 
+# Shared across the site, so the SPA on negolah.my can read the CSRF cookie the
+# API sets. Session cookies do NOT use it: only api.negolah.my reads them, and a
+# Domain attribute would send them to every other subdomain too (audit SEC-13).
 _default_cookie_domain = ".negolah.my" if "negolah.my" in FRONTEND_URL else None
+# Where the session cookies lived before SPEC-110 made them host-only. Setting
+# or clearing one also expires that copy, so a pre-deploy cookie cannot outlive
+# sign-out. Removable once those cookies' 30-day max-age has run out (2026-12-01).
+LEGACY_SESSION_COOKIE_DOMAIN = _default_cookie_domain
 
 # Admin session / 2FA configuration.
 ADMIN_COOKIE_NAME = os.getenv("ADMIN_COOKIE_NAME", "admin_sid")
 ADMIN_COOKIE_SECURE = os.getenv("ADMIN_COOKIE_SECURE", "true" if _is_https else "false").lower() == "true" and _is_https
 ADMIN_COOKIE_SAMESITE = os.getenv("ADMIN_COOKIE_SAMESITE", "lax").lower()
 ADMIN_COOKIE_PATH = os.getenv("ADMIN_COOKIE_PATH", "/")
-ADMIN_COOKIE_DOMAIN = os.getenv("ADMIN_COOKIE_DOMAIN", _default_cookie_domain)
+ADMIN_COOKIE_DOMAIN = os.getenv("ADMIN_COOKIE_DOMAIN") or None
 ADMIN_SESSION_TTL = int(os.getenv("ADMIN_SESSION_TTL", "7200"))  # sliding session, seconds
 ADMIN_PREAUTH_TTL = int(os.getenv("ADMIN_PREAUTH_TTL", "300"))  # 2FA pre-auth handle, seconds
 
@@ -128,7 +135,7 @@ USER_COOKIE_NAME = os.getenv("USER_COOKIE_NAME", "nl_sid")
 USER_COOKIE_SECURE = os.getenv("USER_COOKIE_SECURE", "true" if _is_https else "false").lower() == "true" and _is_https
 USER_COOKIE_SAMESITE = os.getenv("USER_COOKIE_SAMESITE", "lax").lower()
 USER_COOKIE_PATH = os.getenv("USER_COOKIE_PATH", "/")
-USER_COOKIE_DOMAIN = os.getenv("USER_COOKIE_DOMAIN", _default_cookie_domain)
+USER_COOKIE_DOMAIN = os.getenv("USER_COOKIE_DOMAIN") or None
 # 30 days, sliding. Long on purpose: prod's managed Redis (Upstash) runs
 # `noeviction` and rejects writes at the cap instead of dropping keys, so a long
 # TTL costs nothing in eviction — what it buys is not asking people to sign in

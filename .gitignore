@@ -64,6 +64,9 @@ video/out/
 dump.rdb
 *.rdb
 
+# ===== Cloudflare =====
+.wrangler/
+
 # ===== Mise & Infisical =====
 .mise.local.toml
 .mise.*.local.toml

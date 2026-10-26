@@ -18,6 +18,7 @@ from core.cache import (
 )
 from core.connector import admin_supabase
 from core.csrf import verify_user_csrf_token
+from core.images import normalize_image
 from core.logger import logger
 from domains.identity import get_user_id_from_body_or_token, verify_user_token
 from domains.negotiation.context import new_turn, pending_discount, pending_handoff
@@ -34,6 +35,16 @@ CHAT_RATE_LIMIT_WARN_AT_REMAINING = 2
 # Longest single message accepted. Generous for a person haggling — several
 # paragraphs — and far below what makes a prompt expensive to run.
 CHAT_MESSAGE_MAX_CHARS = int(os.getenv("CHAT_MESSAGE_MAX_CHARS", "4000"))
+
+# Attachments (audit SEC-12). The SPA sends none; these bound what a direct
+# caller can put in front of the vision model in one turn. Images are decoded
+# and re-encoded rather than forwarded as sent, so the model only ever sees
+# bytes Pillow understood, at a size worth paying for. The filename is prompt
+# text too, so it gets the same treatment as any other text outside the
+# message cap: short and on one line.
+CHAT_MAX_ATTACHMENTS = 4
+CHAT_IMAGE_EDGE = 1024
+CHAT_ATTACHMENT_NAME_MAX = 100
 
 # Wall-clock ceiling on one whole turn, tool calls included. The providers have
 # their own per-request timeouts, but a turn is a *sequence* of requests, so
@@ -558,6 +569,26 @@ async def _run_turn(
         await _flush_handoff_notice(user_id)
 
 
+def _attachment_name(filename: str | None) -> str:
+    """The client's filename, made safe to quote in the prompt: printable, one line, short."""
+    name = "".join(ch for ch in (filename or "") if ch.isprintable()).strip()
+    return name[:CHAT_ATTACHMENT_NAME_MAX] or "file"
+
+
+def _encode_attachments(attachments: list[tuple[str, str, bytes]]) -> list[dict]:
+    """`[{name, type, data}]` for the turn, images re-encoded through `normalize_image`.
+
+    Raises 400 for an image that does not decode — the claimed content type is
+    the client's word, and the model is not where to find out it was wrong.
+    """
+    encoded = []
+    for name, content_type, content in attachments:
+        if content_type.startswith("image/"):
+            content, content_type, _ = normalize_image(content, max_edge=CHAT_IMAGE_EDGE)
+        encoded.append({"name": name, "type": content_type, "data": base64.b64encode(content).decode("utf-8")})
+    return encoded
+
+
 @router.post("/chat/stream", dependencies=[Depends(verify_user_csrf_token)])
 async def chat_stream(request: Request):
     """
@@ -578,7 +609,7 @@ async def chat_stream(request: Request):
     content_type = request.headers.get("content-type", "")
 
     # Parse request based on content type
-    file_data = []  # List of {"name": str, "type": str, "data": base64_str}
+    attachments = []  # (name, content_type, raw bytes), encoded after the rate limit
 
     if "multipart/form-data" in content_type:
         # Handle FormData with potential file attachments
@@ -588,18 +619,17 @@ async def chat_stream(request: Request):
         item_id = form.get("item_id")
         language = form.get("language")
 
-        # Read and encode uploaded files
-        files = form.getlist("files")
+        files = [file for file in form.getlist("files") if hasattr(file, "read")]
+        if len(files) > CHAT_MAX_ATTACHMENTS:
+            raise HTTPException(status_code=400, detail=f"Attach at most {CHAT_MAX_ATTACHMENTS} files.")
         for file in files:
-            if hasattr(file, "read"):
-                content = await file.read()
-                file_data.append(
-                    {
-                        "name": file.filename or "file",
-                        "type": file.content_type or "application/octet-stream",
-                        "data": base64.b64encode(content).decode("utf-8"),
-                    }
+            attachments.append(
+                (
+                    _attachment_name(file.filename),
+                    file.content_type or "application/octet-stream",
+                    await file.read(),
                 )
+            )
     else:
         # Handle JSON body
         body = await request.json()
@@ -619,7 +649,7 @@ async def chat_stream(request: Request):
         language = await asyncio.to_thread(get_user_preferred_language, user_id)
 
     # Validate required fields - allow empty message if files are present
-    if not message and not file_data:
+    if not message and not attachments:
         raise HTTPException(status_code=400, detail="message or files are required")
 
     # A single message could previously be anything under the 10 MB body cap,
@@ -655,6 +685,9 @@ async def chat_stream(request: Request):
 
     # How close this turn is to the wall, for the client's early warning.
     remaining = await asyncio.to_thread(get_rate_limit_remaining, rate_key, CHAT_RATE_LIMIT_MAX)
+
+    # Decoding is the expensive part, so it waits until the turn is allowed.
+    file_data = await asyncio.to_thread(_encode_attachments, attachments)
 
     # SPEC-052: a buyer typing is a buyer who is present. Anything the seller
     # queued for them is by definition seen, so it must not arrive as an email

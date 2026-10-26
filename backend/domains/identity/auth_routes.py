@@ -23,6 +23,7 @@ from urllib.parse import quote_plus, urlencode
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
 
+from core.cache import check_rate_limit
 from core.connector import new_user_client
 from core.csrf import USER_SCOPE, generate_csrf_token, set_csrf_cookie, verify_user_csrf_token
 from core.env import (
@@ -32,6 +33,7 @@ from core.env import (
     USER_COOKIE_NAME,
     USER_PKCE_COOKIE_NAME,
 )
+from core.ip import get_client_ip
 from core.logger import logger
 from core.media import media_url
 from core.schemas import AuthCredentialsRequest, AuthEmailRequest, AuthPasswordResetRequest
@@ -43,10 +45,18 @@ from domains.identity.user_session import (
     new_pkce_pair,
     open_session_for,
     read_session,
+    revoke_other_sessions,
     set_pkce_cookie,
 )
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+# Audit SEC-14. Turnstile makes a guess cost a solve, not a limit on how many
+# one account takes. Per address+IP first, then per address from anywhere —
+# the same pair the console login uses (SPEC-104), set wider because buyers
+# mistype more and a lockout here costs a sale.
+_LOGIN_MAX, _LOGIN_WINDOW = 10, 900
+_LOGIN_ACCOUNT_MAX = 30
 
 _CALLBACK_URL = f"{API_BASE_URL}/auth/callback"
 
@@ -105,18 +115,24 @@ def _user_payload(user) -> dict:
 
 
 @router.post("/login", dependencies=[Depends(verify_turnstile)])
-def login(payload: AuthCredentialsRequest, response: Response):
+def login(payload: AuthCredentialsRequest, request: Request, response: Response):
     """Exchange credentials for a session cookie.
 
     Turnstile-gated for the same reason admin login is: this is an
     unauthenticated credential endpoint, and the per-IP limiter alone does not
     make one cheap to grind.
     """
+    email = payload.email.strip().lower()
+    # An address already refused here never reaches the account counter, so one
+    # attacker cannot spend the owner's budget from everywhere.
+    if not check_rate_limit(f"login:{email}:{get_client_ip(request)}", _LOGIN_MAX, _LOGIN_WINDOW):
+        raise HTTPException(status_code=429, detail="Too many sign-in attempts. Please wait a few minutes.")
+    if not check_rate_limit(f"login:acct:{email}", _LOGIN_ACCOUNT_MAX, _LOGIN_WINDOW):
+        raise HTTPException(status_code=429, detail="Too many sign-in attempts. Please wait a few minutes.")
+
     client = new_user_client()
     try:
-        result = client.auth.sign_in_with_password(
-            {"email": payload.email.strip().lower(), "password": payload.password}
-        )
+        result = client.auth.sign_in_with_password({"email": email, "password": payload.password})
     except Exception:
         # One message for wrong password, unknown address and unconfirmed
         # account alike — the three are not distinguishable from outside.
@@ -345,4 +361,7 @@ def password_reset(payload: AuthPasswordResetRequest, request: Request, user_id:
         except Exception as e:
             logger.debug(f"Best-effort sign_out failed (ignored): {e}")
 
+    # Audit SEC-10: a reset usually means the old password got out, so every
+    # other session goes. The recovery session that made the change stays.
+    revoke_other_sessions(user_id, keep_sid=sid)
     return {"updated": True, "at": int(time.time())}

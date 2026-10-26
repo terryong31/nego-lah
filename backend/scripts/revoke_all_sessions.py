@@ -24,6 +24,7 @@ from core.cache import redis_client  # noqa: E402
 
 PATTERNS = (
     "user:sess:*",
+    "user:sids:*",
     "admin:sess:*",
     "ucsrf:*",
     "csrf:*",

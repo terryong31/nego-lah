@@ -121,7 +121,9 @@ def test_success_path_updates_tables_and_invalidates_cache(patch_supabase, fake_
     assert result == {"success": True, "refund_id": "re_abc123", "amount_refunded": 4999}
 
     # Stripe was called with the payment intent and reason.
-    fake_stripe.Refund.create.assert_called_once_with(payment_intent="pi_123", reason="duplicate")
+    fake_stripe.Refund.create.assert_called_once_with(
+        payment_intent="pi_123", reason="duplicate", idempotency_key="admin_refund_pi_123"
+    )
 
     # Cache was invalidated for this item.
     assert invalidate_calls == ["item-42"]
@@ -164,7 +166,9 @@ def test_success_path_defaults_reason_to_requested_by_customer(patch_supabase, f
     result = process_refund("item-7")  # no reason passed
 
     assert result["success"] is True
-    fake_stripe.Refund.create.assert_called_once_with(payment_intent="pi_999", reason="requested_by_customer")
+    fake_stripe.Refund.create.assert_called_once_with(
+        payment_intent="pi_999", reason="requested_by_customer", idempotency_key="admin_refund_pi_999"
+    )
 
 
 def test_success_path_survives_cache_invalidation_failure(patch_supabase, fake_supabase, fake_stripe, monkeypatch):

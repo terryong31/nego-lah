@@ -80,6 +80,35 @@ async def test_login_rejects_a_response_with_no_session(client, fake_auth):
     assert res.status_code == 401
 
 
+async def test_login_is_throttled_per_address_and_ip_before_supabase_sees_it(client, fake_auth):
+    """SEC-14: Turnstile alone is not a limit on guesses against one account."""
+    fake_auth.auth.sign_in_with_password.side_effect = Exception("Invalid login credentials")
+    body = {"email": "victim@example.com", "password": "guess"}
+
+    for _ in range(auth_routes._LOGIN_MAX):
+        assert (await client.post("/auth/login", json=body)).status_code == 401
+
+    res = await client.post("/auth/login", json={**body, "email": " Victim@Example.com"})
+    assert res.status_code == 429
+    assert fake_auth.auth.sign_in_with_password.call_count == auth_routes._LOGIN_MAX
+
+
+async def test_the_login_limit_is_per_account(client, fake_auth):
+    fake_auth.auth.sign_in_with_password.side_effect = Exception("Invalid login credentials")
+    for _ in range(auth_routes._LOGIN_MAX):
+        await client.post("/auth/login", json={"email": "a@example.com", "password": "x"})
+
+    fake_auth.auth.sign_in_with_password.side_effect = None
+    fake_auth.auth.sign_in_with_password.return_value = SimpleNamespace(session=make_session())
+    res = await client.post("/auth/login", json={"email": "b@example.com", "password": "right"})
+    assert res.status_code == 200
+
+
+def test_the_account_ceiling_is_above_the_per_ip_ceiling():
+    """The owner on one address hits the per-IP limit first and never spends the account's."""
+    assert auth_routes._LOGIN_ACCOUNT_MAX > auth_routes._LOGIN_MAX
+
+
 # ---------------------------------------------------------------------------
 # Register
 # ---------------------------------------------------------------------------
@@ -291,6 +320,43 @@ async def test_reset_password_updates_through_the_recovery_session(client, fake_
     assert res.status_code == 200
     fake_auth.auth.set_session.assert_called_once_with("access-1", "refresh-1")
     fake_auth.auth.update_user.assert_called_once_with({"password": "a-new-password"})
+
+
+async def test_reset_password_signs_out_every_other_session(client, fake_auth, auth_user):
+    """SEC-10: whoever held the old password is signed out, not left on a 30-day session."""
+    auth_user("user-1")
+    expires = int(time.time()) + 3600
+    attacker = create_session("user-1", "access-0", "refresh-0", expires)
+    sid = create_session("user-1", "access-1", "refresh-1", expires)
+
+    res = await client.post(
+        "/auth/password/reset",
+        json={"new_password": "a-new-password"},
+        cookies={USER_COOKIE_NAME: sid},
+        headers={"X-CSRF-Token": _mint_csrf(sid)},
+    )
+
+    assert res.status_code == 200
+    assert redis_client.get(f"{_SESS_KEY}{attacker}") is None
+    assert redis_client.get(f"{_SESS_KEY}{sid}") is not None
+
+
+async def test_a_failed_reset_signs_nobody_out(client, fake_auth, auth_user):
+    auth_user("user-1")
+    expires = int(time.time()) + 3600
+    other = create_session("user-1", "access-0", "refresh-0", expires)
+    sid = create_session("user-1", "access-1", "refresh-1", expires)
+    fake_auth.auth.update_user.side_effect = Exception("weak password")
+
+    res = await client.post(
+        "/auth/password/reset",
+        json={"new_password": "a-new-password"},
+        cookies={USER_COOKIE_NAME: sid},
+        headers={"X-CSRF-Token": _mint_csrf(sid)},
+    )
+
+    assert res.status_code == 400
+    assert redis_client.get(f"{_SESS_KEY}{other}") is not None
 
 
 async def test_reset_password_rejects_a_short_password(client, fake_auth, auth_user):

@@ -7,12 +7,17 @@ per conftest.py's guidance. `Depends(verify_user_token)` is bypassed with the
 `auth_user()` with one id and hitting a different `{user_id}` in the URL.
 """
 
+import time
 from unittest.mock import MagicMock
 
 import pytest
 
 from conftest import PNG_BYTES
+from core.cache import redis_client
+from core.csrf import USER_SCOPE, generate_csrf_token
+from core.env import USER_COOKIE_NAME
 from core.uploads import MAX_AVATAR_IMAGE_BYTES
+from domains.identity.user_session import _SESS_KEY, create_session
 
 # ---------------------------------------------------------------------------
 # GET /user/{id}/account
@@ -84,6 +89,29 @@ async def test_change_password_success(client, auth_user, patch_supabase, sessio
     assert resp.json() == {"message": "Password changed successfully"}
     session.auth.sign_in_with_password.assert_called_once_with({"email": "user@example.com", "password": "oldpass123"})
     fake_admin.auth.admin.update_user_by_id.assert_called_once_with("user-1", {"password": "newpass456"})
+
+
+async def test_change_password_signs_out_every_other_session(client, auth_user, patch_supabase, session_client):
+    """SEC-10: the device that changed the password stays; every other one is signed out."""
+    auth_user("user-1")
+    fake_admin = MagicMock()
+    fake_admin.auth.admin.get_user_by_id.return_value = _user_by_id_result("user@example.com")
+    patch_supabase("domains.identity.routes", admin=fake_admin, user=MagicMock())
+    session_client()
+    expires = int(time.time()) + 3600
+    stolen = create_session("user-1", "a", "r", expires)
+    current = create_session("user-1", "a", "r", expires)
+
+    resp = await client.put(
+        "/user/user-1/password",
+        json={"current_password": "oldpass123", "new_password": "newpass456"},
+        cookies={USER_COOKIE_NAME: current},
+        headers={"X-CSRF-Token": generate_csrf_token(current, USER_SCOPE)},
+    )
+
+    assert resp.status_code == 200
+    assert redis_client.get(f"{_SESS_KEY}{stolen}") is None
+    assert redis_client.get(f"{_SESS_KEY}{current}") is not None
 
 
 async def test_change_password_id_mismatch(client, auth_user, patch_supabase):

@@ -61,3 +61,24 @@ def test_the_user_key_never_falls_back_to_the_admin_key():
     source = (BACKEND / "core" / "env.py").read_text()
     user_key_line = next(line for line in source.splitlines() if line.startswith("USER_SUPABASE_KEY"))
     assert "ADMIN_SUPABASE_KEY" not in user_key_line, user_key_line
+
+
+def test_session_cookies_are_host_only_but_csrf_spans_the_site(monkeypatch):
+    """SEC-13: only api.negolah.my reads `nl_sid`/`admin_sid`, so they carry no Domain.
+    The CSRF cookie must stay readable from negolah.my, where the SPA echoes it."""
+    import importlib
+
+    import core.env
+
+    for name in ("USER_COOKIE_DOMAIN", "ADMIN_COOKIE_DOMAIN", "CSRF_COOKIE_DOMAIN"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("FRONTEND_URL", "https://negolah.my")
+    try:
+        env = importlib.reload(core.env)
+        assert env.USER_COOKIE_DOMAIN is None
+        assert env.ADMIN_COOKIE_DOMAIN is None
+        assert env.CSRF_COOKIE_DOMAIN == ".negolah.my"
+        assert env.LEGACY_SESSION_COOKIE_DOMAIN == ".negolah.my"
+    finally:
+        monkeypatch.undo()
+        importlib.reload(core.env)

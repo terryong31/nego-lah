@@ -1,5 +1,6 @@
 import base64
 import email as email_lib
+import html
 import json
 from email import policy as email_policy
 
@@ -124,7 +125,8 @@ async def resend_webhook(request: Request):
                 "to": RESEND_FORWARD_TO,
                 "reply_to": sender,
                 "subject": f"[{recipient_tag}] {subject}",
-                "html": email_content.get("html") or f"<pre>{email_content.get('text', '')}</pre>",
+                # A text-only email is text: escaped, or its `<` would be markup.
+                "html": email_content.get("html") or f"<pre>{html.escape(email_content.get('text') or '')}</pre>",
                 "text": email_content.get("text"),
             }
             if outbound_attachments:

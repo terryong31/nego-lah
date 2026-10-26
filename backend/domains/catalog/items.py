@@ -102,25 +102,29 @@ def compute_items_hash(count: int, max_created_at: str) -> str:
 def get_items_fingerprint():
     """
     Get a lightweight fingerprint of items table.
-    Queries only COUNT and MAX(created_at) - much cheaper than full table scan.
+    Queries only COUNT and MAX(updated_at) - much cheaper than full table scan.
+
+    `updated_at` is set by a trigger on every write (SPEC-111), so an edit made
+    outside the API — which never calls `invalidate_item_cache` — still changes
+    the fingerprint. MAX(created_at) only ever moved on an insert.
     """
     # Query count (excluding soft-deleted items so the fingerprint matches the
     # filtered storefront data we actually cache below).
     count_response = user_supabase.table("items").select("id", count="exact").is_("deleted_at", "null").execute()
     item_count = count_response.count or 0
 
-    # Query latest created_at
+    # Query latest updated_at
     latest_response = (
         user_supabase.table("items")
-        .select("created_at")
+        .select("updated_at")
         .is_("deleted_at", "null")
-        .order("created_at", desc=True)
+        .order("updated_at", desc=True)
         .limit(1)
         .execute()
     )
-    max_created_at = latest_response.data[0]["created_at"] if latest_response.data else ""
+    max_updated_at = latest_response.data[0]["updated_at"] if latest_response.data else ""
 
-    return item_count, max_created_at
+    return item_count, max_updated_at
 
 
 def should_validate_cache() -> bool:
@@ -161,7 +165,11 @@ def get_items(keyword: str = None) -> list[str]:
                 # Skip validation - trust the cache
                 return cached
 
-        # Cache miss or stale - get full data from DB
+        # Cache miss or stale - get full data from DB. The fingerprint is read
+        # FIRST: if an edit lands between the two reads, the stored hash is the
+        # older one and the next validation refetches. Read after, it could
+        # pin stale rows behind a current hash.
+        count, max_timestamp = get_items_fingerprint()
         # Order by status (available first) then by created_at (newest first)
         retrieve = (
             user_supabase.table("items")
@@ -172,11 +180,7 @@ def get_items(keyword: str = None) -> list[str]:
             .execute()
         )
         if retrieve.data:
-            # Compute hash and cache with it
-            count = len(retrieve.data)
-            max_timestamp = max((item.get("created_at", "") for item in retrieve.data), default="")
-            data_hash = compute_items_hash(count, max_timestamp)
-            cache_items_with_hash(retrieve.data, data_hash)
+            cache_items_with_hash(retrieve.data, compute_items_hash(count, max_timestamp))
             return retrieve.data
         return []
     else:

@@ -79,8 +79,10 @@ def checkout(
         raise
     except Exception as e:
         logger.error(f"Error in checkout: {str(e)}")
+        # The exception text is for the log: it can carry a Supabase or Stripe
+        # internal, and the client can do nothing with it (SPEC-111).
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Checkout failed: {str(e)}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Checkout failed. Please try again."
         ) from e
 
 
@@ -96,7 +98,7 @@ def get_active_payments(user_id: str, token_user_id: str = Depends(verify_user_t
     except Exception as e:
         logger.error(f"Error fetching active payments for user {user_id}: {str(e)}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to fetch active payments: {str(e)}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to fetch active payments."
         ) from e
 
 

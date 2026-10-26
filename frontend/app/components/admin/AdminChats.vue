@@ -520,7 +520,7 @@ const isPaidDeal = computed(() => {
                 </template>
               </UChatMessages>
 
-              <!-- Customer is typing (live via Supabase Realtime) -->
+              <!-- Customer is typing (live via the admin SSE stream, SPEC-094) -->
               <div
                 v-if="!loadingMsgs && customerTyping"
                 class="flex items-center gap-2 mt-2 text-sm text-muted"

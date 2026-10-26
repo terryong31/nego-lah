@@ -1,7 +1,7 @@
 """
 Tests for items.py:
 - compute_items_hash: determinism / sensitivity to inputs.
-- get_items_fingerprint: cheap COUNT + MAX(created_at) query.
+- get_items_fingerprint: cheap COUNT + MAX(updated_at) query.
 - should_validate_cache: Redis-backed 30s debounce gate.
 - get_items: cache hit / stale-cache / cache-miss / keyword-search paths.
 - get_featured_items: success path + broad-except-returns-[] fallback.
@@ -92,8 +92,8 @@ def test_compute_items_hash_differs_for_different_timestamp():
 # ---------------------------------------------------------------------------
 
 
-def configure_fingerprint(fake_user, *, count=3, latest_created_at="2024-05-01T00:00:00"):
-    data = [{"created_at": latest_created_at}] if latest_created_at is not None else []
+def configure_fingerprint(fake_user, *, count=3, latest_updated_at="2024-05-01T00:00:00"):
+    data = [{"updated_at": latest_updated_at}] if latest_updated_at is not None else []
     chain = fake_user.table.return_value.select.return_value.is_.return_value
     chain.execute.return_value = make_supabase_result(data=[], count=count)
     chain.order.return_value.limit.return_value.execute.return_value = make_supabase_result(data=data)
@@ -101,22 +101,25 @@ def configure_fingerprint(fake_user, *, count=3, latest_created_at="2024-05-01T0
 
 def test_get_items_fingerprint_returns_count_and_latest_timestamp(patch_supabase, fake_supabase):
     patch_supabase("domains.catalog.items", user=fake_supabase)
-    configure_fingerprint(fake_supabase, count=7, latest_created_at="2024-05-01T12:00:00")
+    configure_fingerprint(fake_supabase, count=7, latest_updated_at="2024-05-01T12:00:00")
 
-    count, max_created_at = get_items_fingerprint()
+    count, max_updated_at = get_items_fingerprint()
 
     assert count == 7
-    assert max_created_at == "2024-05-01T12:00:00"
+    assert max_updated_at == "2024-05-01T12:00:00"
+    # SPEC-111: an edit (Studio included) bumps updated_at; created_at never moves.
+    chain = fake_supabase.table.return_value.select.return_value.is_.return_value
+    chain.order.assert_called_once_with("updated_at", desc=True)
 
 
 def test_get_items_fingerprint_no_rows_returns_zero_count_and_empty_timestamp(patch_supabase, fake_supabase):
     patch_supabase("domains.catalog.items", user=fake_supabase)
-    configure_fingerprint(fake_supabase, count=None, latest_created_at=None)
+    configure_fingerprint(fake_supabase, count=None, latest_updated_at=None)
 
-    count, max_created_at = get_items_fingerprint()
+    count, max_updated_at = get_items_fingerprint()
 
     assert count == 0
-    assert max_created_at == ""
+    assert max_updated_at == ""
 
 
 # ---------------------------------------------------------------------------
@@ -158,17 +161,18 @@ def test_get_items_no_keyword_cache_miss_fetches_and_caches(patch_supabase, fake
         {"id": "2", "status": "available", "created_at": "2024-01-02T00:00:00"},
     ]
     configure_full_fetch(fake_supabase, items_data)
+    configure_fingerprint(fake_supabase, count=2, latest_updated_at="2024-02-02T00:00:00")
 
     result = get_items()
 
     assert result == items_data
-    # Should now be cached with a matching hash.
+    # Cached under the fingerprint the validator will compare against — the
+    # same query, so an edit to an existing row is not invisible to it.
     from core.cache import get_cached_items_with_hash
 
     cached, cached_hash = get_cached_items_with_hash()
     assert cached == items_data
-    expected_hash = compute_items_hash(2, "2024-01-02T00:00:00")
-    assert cached_hash == expected_hash
+    assert cached_hash == compute_items_hash(2, "2024-02-02T00:00:00")
 
 
 def test_get_items_no_keyword_cache_miss_empty_db_returns_empty_list(patch_supabase, fake_supabase):
@@ -188,7 +192,7 @@ def test_get_items_cache_hit_validated_and_matching_returns_cached(patch_supabas
 
     # should_validate_cache() must be True (no recent validation marker yet)
     assert redis_client.get("items:last_validation") is None
-    configure_fingerprint(fake_supabase, count=1, latest_created_at="2024-03-01T00:00:00")
+    configure_fingerprint(fake_supabase, count=1, latest_updated_at="2024-03-01T00:00:00")
 
     result = get_items()
 
@@ -220,7 +224,7 @@ def test_get_items_cache_stale_invalidates_and_refetches(patch_supabase, fake_su
     cache_items_with_hash(stale_data, stale_hash)
 
     # Fingerprint reflects a DIFFERENT state than what's cached -> hash mismatch.
-    configure_fingerprint(fake_supabase, count=99, latest_created_at="2024-09-09T00:00:00")
+    configure_fingerprint(fake_supabase, count=99, latest_updated_at="2024-09-09T00:00:00")
 
     fresh_data = [{"id": "fresh", "status": "available", "created_at": "2024-09-09T00:00:00"}]
     configure_full_fetch(fake_supabase, fresh_data)
@@ -754,3 +758,18 @@ def test_update_item_exception_returns_false(patch_supabase, fake_supabase):
     ok = update_item("item-1", name="whatever")
 
     assert ok is False
+
+
+def test_items_updated_at_migration_is_a_trigger_and_publishes_no_secret_column():
+    """SPEC-111: the fingerprint reads `updated_at` as the storefront role, so it
+    needs its own column grant — and that grant must not carry the floor price."""
+    from pathlib import Path
+
+    sql = (
+        Path(__file__).resolve().parents[2] / "supabase" / "migrations" / "20261027000000_items_updated_at.sql"
+    ).read_text()
+    grant = sql[sql.index("grant select") :].split(";")[0]
+
+    assert "updated_at" in grant
+    assert "min_price" not in grant and "buyer_id" not in grant
+    assert "before update on public.items" in sql

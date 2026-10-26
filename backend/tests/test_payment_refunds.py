@@ -51,7 +51,9 @@ def _txn_result(data):
 
 def test_no_transaction_found_returns_error_without_calling_stripe(patch_supabase, fake_supabase, fake_stripe):
     patch_supabase("domains.billing.refunds", admin=fake_supabase)
-    fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = _txn_result([])
+    fake_supabase.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
+        _txn_result([])
+    )
 
     result = process_refund("item-1")
 
@@ -61,8 +63,8 @@ def test_no_transaction_found_returns_error_without_calling_stripe(patch_supabas
 
 def test_transaction_already_refunded_returns_error_without_calling_stripe(patch_supabase, fake_supabase, fake_stripe):
     patch_supabase("domains.billing.refunds", admin=fake_supabase)
-    fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = _txn_result(
-        [{"status": "refunded", "stripe_payment_id": "pi_123"}]
+    fake_supabase.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
+        _txn_result([{"status": "refunded", "stripe_payment_id": "pi_123"}])
     )
 
     result = process_refund("item-1")
@@ -71,10 +73,35 @@ def test_transaction_already_refunded_returns_error_without_calling_stripe(patch
     fake_stripe.Refund.create.assert_not_called()
 
 
+def test_a_refunded_and_resold_item_refunds_the_second_sale(patch_supabase, fake_supabase, fake_stripe, monkeypatch):
+    """The first sale's refunded row must not block refunding the second buyer."""
+    patch_supabase("domains.billing.refunds", admin=fake_supabase)
+    fake_supabase.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
+        _txn_result(
+            [
+                {"status": "refunded", "stripe_payment_id": "pi_first", "amount": 50},
+                {"status": "completed", "stripe_payment_id": "pi_second", "amount": 45},
+            ]
+        )
+    )
+    fake_stripe.Refund.create.return_value = type("FakeRefund", (), {"id": "re_second"})()
+    monkeypatch.setattr("core.cache.invalidate_item_cache", lambda item_id=None: None)
+
+    result = process_refund("item-1")
+
+    assert result == {"success": True, "refund_id": "re_second", "amount_refunded": 45}
+    assert fake_stripe.Refund.create.call_args.kwargs["payment_intent"] == "pi_second"
+    fake_supabase.table.return_value.select.return_value.eq.return_value.order.assert_called_once_with(
+        "created_at", desc=True
+    )
+
+
 def test_missing_stripe_payment_id_returns_error_without_calling_stripe(patch_supabase, fake_supabase, fake_stripe):
     patch_supabase("domains.billing.refunds", admin=fake_supabase)
-    fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = _txn_result(
-        [{"status": "completed"}]  # no stripe_payment_id key at all
+    fake_supabase.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
+        _txn_result(
+            [{"status": "completed"}]  # no stripe_payment_id key at all
+        )
     )
 
     result = process_refund("item-1")
@@ -86,8 +113,8 @@ def test_missing_stripe_payment_id_returns_error_without_calling_stripe(patch_su
 def test_missing_stripe_payment_id_when_value_is_falsy(patch_supabase, fake_supabase, fake_stripe):
     """stripe_payment_id present but empty/None should also be treated as missing."""
     patch_supabase("domains.billing.refunds", admin=fake_supabase)
-    fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = _txn_result(
-        [{"status": "completed", "stripe_payment_id": None}]
+    fake_supabase.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
+        _txn_result([{"status": "completed", "stripe_payment_id": None}])
     )
 
     result = process_refund("item-1")
@@ -103,8 +130,8 @@ def test_missing_stripe_payment_id_when_value_is_falsy(patch_supabase, fake_supa
 
 def test_success_path_updates_tables_and_invalidates_cache(patch_supabase, fake_supabase, fake_stripe, monkeypatch):
     patch_supabase("domains.billing.refunds", admin=fake_supabase)
-    fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = _txn_result(
-        [{"status": "completed", "stripe_payment_id": "pi_123", "amount": 4999}]
+    fake_supabase.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
+        _txn_result([{"status": "completed", "stripe_payment_id": "pi_123", "amount": 4999}])
     )
 
     fake_refund = type("FakeRefund", (), {"id": "re_abc123"})()
@@ -149,7 +176,8 @@ def test_success_path_updates_tables_and_invalidates_cache(patch_supabase, fake_
     eq_calls = fake_supabase.table.return_value.update.return_value.eq.call_args_list
     assert eq_calls[0] == call("id", "item-42")
     assert eq_calls[1] == call("stripe_payment_id", "pi_123")
-    assert eq_calls[2] == call("item_id", "item-42")
+    # Only this payment's row: an item that was re-sold has more than one.
+    assert eq_calls[2] == call("stripe_payment_id", "pi_123")
 
     # Each update chain called .execute().
     assert fake_supabase.table.return_value.update.return_value.eq.return_value.execute.call_count == 3
@@ -157,8 +185,8 @@ def test_success_path_updates_tables_and_invalidates_cache(patch_supabase, fake_
 
 def test_success_path_defaults_reason_to_requested_by_customer(patch_supabase, fake_supabase, fake_stripe, monkeypatch):
     patch_supabase("domains.billing.refunds", admin=fake_supabase)
-    fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = _txn_result(
-        [{"status": "completed", "stripe_payment_id": "pi_999", "amount": 100}]
+    fake_supabase.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
+        _txn_result([{"status": "completed", "stripe_payment_id": "pi_999", "amount": 100}])
     )
     fake_stripe.Refund.create.return_value = type("FakeRefund", (), {"id": "re_default"})()
     monkeypatch.setattr("core.cache.invalidate_item_cache", lambda item_id=None: None)
@@ -175,8 +203,8 @@ def test_success_path_survives_cache_invalidation_failure(patch_supabase, fake_s
     """If invalidate_item_cache blows up, the refund should still be reported as successful
     (the function wraps the cache invalidation call in its own try/except)."""
     patch_supabase("domains.billing.refunds", admin=fake_supabase)
-    fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = _txn_result(
-        [{"status": "completed", "stripe_payment_id": "pi_555", "amount": 250}]
+    fake_supabase.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
+        _txn_result([{"status": "completed", "stripe_payment_id": "pi_555", "amount": 250}])
     )
     fake_stripe.Refund.create.return_value = type("FakeRefund", (), {"id": "re_555"})()
 
@@ -197,8 +225,8 @@ def test_db_write_failure_after_stripe_refund_returns_success_with_warning(
     function must NOT propagate (a retry would double-refund). It returns
     success with a `db_sync_warning` for manual reconciliation instead."""
     patch_supabase("domains.billing.refunds", admin=fake_supabase)
-    fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = _txn_result(
-        [{"status": "completed", "stripe_payment_id": "pi_777", "amount": 1500}]
+    fake_supabase.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
+        _txn_result([{"status": "completed", "stripe_payment_id": "pi_777", "amount": 1500}])
     )
     # Every post-refund UPDATE .execute() blows up.
     fake_supabase.table.return_value.update.return_value.eq.return_value.execute.side_effect = RuntimeError(
@@ -226,8 +254,8 @@ def test_stripe_error_is_caught_and_returns_failure_dict(patch_supabase, fake_su
     import stripe
 
     patch_supabase("domains.billing.refunds", admin=fake_supabase)
-    fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = _txn_result(
-        [{"status": "completed", "stripe_payment_id": "pi_bad", "amount": 10}]
+    fake_supabase.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
+        _txn_result([{"status": "completed", "stripe_payment_id": "pi_bad", "amount": 10}])
     )
     fake_stripe.Refund.create.side_effect = stripe.error.StripeError("card issuer declined the refund")
 
@@ -243,8 +271,8 @@ def test_stripe_error_is_caught_and_returns_failure_dict(patch_supabase, fake_su
 
 def test_non_stripe_exception_propagates_uncaught(patch_supabase, fake_supabase, fake_stripe):
     patch_supabase("domains.billing.refunds", admin=fake_supabase)
-    fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = _txn_result(
-        [{"status": "completed", "stripe_payment_id": "pi_weird", "amount": 10}]
+    fake_supabase.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
+        _txn_result([{"status": "completed", "stripe_payment_id": "pi_weird", "amount": 10}])
     )
     fake_stripe.Refund.create.side_effect = ValueError("totally unexpected")
 

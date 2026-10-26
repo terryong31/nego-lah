@@ -13,9 +13,6 @@ the file-specific notes, tests here:
     optionally carrying `tool_call_chunks`).
   - monkeypatch `agent.bot.conversation_memory` directly (NOT agent.memory's
     singleton) since bot.py imports its own instance.
-  - monkeypatch `agent.bot.item_agent` / `agent.bot.stripe_agent` (the names
-    bound into bot.py's namespace via `from .sub_agents.X import X`) for the
-    `call_item_agent` / `call_stripe_agent` wrapper tools.
 
 No real Gemini/Supabase/network call is ever made.
 """
@@ -422,7 +419,6 @@ async def _collect_stream(agen):
 @pytest.mark.parametrize(
     "tool_name,expected_status",
     [
-        ("call_item_agent", "Understanding the item..."),
         ("get_item_info", "Understanding the item..."),
         ("search_items", "Understanding the item..."),
         ("list_all_items", "Understanding the item..."),
@@ -470,82 +466,33 @@ def test_customer_tools_contains_all_direct_tools():
     assert expected.issubset(tool_names)
 
 
-# call_stripe_agent fronts three different jobs (SPEC-078), so its status is
-# not a name-chunk lookup like the tools above — it is classified from the
-# `request` argument once that argument has fully streamed in as valid JSON.
-@pytest.mark.parametrize(
-    "request_text,expected_status",
-    [
-        ("Create payment link for item-1 at RM80", "Generating payment link..."),
-        ("Cancel the existing payment link", "Cancelling your payment link..."),
-        ("Shipping info: recipient John Tan, phone 0123456789", "Saving your shipping details..."),
-        ("Buyer gave their delivery address", "Saving your shipping details..."),
-    ],
-)
-async def test_chat_stream_classifies_stripe_agent_status_from_full_args_in_one_chunk(
-    fake_memory, monkeypatch, request_text, expected_status
-):
-    chunk = AIMessageChunk(
-        content="",
-        tool_call_chunks=[
-            {
-                "name": "call_stripe_agent",
-                "args": json.dumps({"request": request_text}),
-                "id": "call-1",
-                "index": 0,
-            }
-        ],
-    )
-    fake_agent = FakeAgent(stream_chunks=[(chunk, {})])
-    monkeypatch.setattr(bot, "_get_customer_agent", lambda: fake_agent)
-
-    results = await _collect_stream(bot.chat_stream("user-1", "hi"))
-
-    assert results == [{"status": expected_status}]
+def test_the_retired_sub_agents_are_gone():
+    """SPEC-111: SPEC-079 bound the tools directly; the sub-agent wrappers were
+    never bound again but still compiled two LangGraph graphs at import."""
+    for name in ("call_item_agent", "call_stripe_agent", "item_agent", "stripe_agent"):
+        assert not hasattr(bot, name), name
 
 
-async def test_chat_stream_classifies_stripe_agent_status_once_args_finish_streaming(fake_memory, monkeypatch):
-    """Real streams split the args JSON across several continuation chunks
-    (no "name", same id) — nothing should be emitted until they add up to
-    valid JSON, and then exactly one classified status should land."""
-    full_args = json.dumps({"request": "Buyer just sent their shipping address"})
+async def test_a_tool_status_is_yielded_once_however_its_args_stream(fake_memory, monkeypatch):
+    """The name lands on the first fragment; the args continuations add nothing."""
+    full_args = json.dumps({"item_id": "item-1", "price": 80})
     chunks = [
         (
             AIMessageChunk(
                 content="",
-                tool_call_chunks=[{"name": "call_stripe_agent", "args": full_args[:10], "id": "call-1", "index": 0}],
+                tool_call_chunks=[{"name": "create_checkout_link", "args": full_args[:10], "id": "call-1", "index": 0}],
             ),
             {},
         ),
         (
             AIMessageChunk(
                 content="",
-                tool_call_chunks=[{"name": None, "args": full_args[10:20], "id": "call-1", "index": 0}],
-            ),
-            {},
-        ),
-        (
-            AIMessageChunk(
-                content="",
-                tool_call_chunks=[{"name": None, "args": full_args[20:], "id": "call-1", "index": 0}],
+                tool_call_chunks=[{"name": None, "args": full_args[10:], "id": "call-1", "index": 0}],
             ),
             {},
         ),
     ]
     fake_agent = FakeAgent(stream_chunks=chunks)
-    monkeypatch.setattr(bot, "_get_customer_agent", lambda: fake_agent)
-
-    results = await _collect_stream(bot.chat_stream("user-1", "hi"))
-
-    assert results == [{"status": "Saving your shipping details..."}]
-
-
-async def test_chat_stream_stripe_agent_with_no_request_argument_falls_back_to_payment_link(fake_memory, monkeypatch):
-    chunk = AIMessageChunk(
-        content="",
-        tool_call_chunks=[{"name": "call_stripe_agent", "args": "{}", "id": "call-1", "index": 0}],
-    )
-    fake_agent = FakeAgent(stream_chunks=[(chunk, {})])
     monkeypatch.setattr(bot, "_get_customer_agent", lambda: fake_agent)
 
     results = await _collect_stream(bot.chat_stream("user-1", "hi"))
@@ -612,13 +559,8 @@ async def test_chat_stream_multiple_tool_call_chunks_in_one_chunk_yield_multiple
     chunk = AIMessageChunk(
         content="",
         tool_call_chunks=[
-            {"name": "call_item_agent", "args": "", "id": "call-1", "index": 0},
-            {
-                "name": "call_stripe_agent",
-                "args": json.dumps({"request": "Create the checkout link"}),
-                "id": "call-2",
-                "index": 1,
-            },
+            {"name": "get_item_info", "args": "", "id": "call-1", "index": 0},
+            {"name": "create_checkout_link", "args": "", "id": "call-2", "index": 1},
         ],
     )
     fake_agent = FakeAgent(stream_chunks=[(chunk, {})])
@@ -674,181 +616,8 @@ async def test_chat_stream_sets_request_scoped_context(fake_memory, monkeypatch)
 
 
 # ---------------------------------------------------------------------------
-# call_item_agent (sub-agent wrapper tool)
+# transfer_to_human
 # ---------------------------------------------------------------------------
-
-
-async def test_call_item_agent_delegates_to_item_agent_and_returns_last_message(monkeypatch):
-    fake_item_agent = FakeAgent(ainvoke_result={"messages": [SimpleNamespace(content="We have 2 iPhones")]})
-    monkeypatch.setattr(bot, "item_agent", fake_item_agent)
-
-    result = await bot.call_item_agent.ainvoke({"query": "do you have iphones?"})
-
-    assert result == "We have 2 iPhones"
-    sent_messages = fake_item_agent.ainvoke_calls[0]["messages"]
-    assert len(sent_messages) == 1
-    assert isinstance(sent_messages[0], HumanMessage)
-    assert sent_messages[0].content == "do you have iphones?"
-
-
-# ---------------------------------------------------------------------------
-# call_stripe_agent (sub-agent wrapper tool + item_id fallback resolution)
-# ---------------------------------------------------------------------------
-
-
-async def test_call_stripe_agent_uses_context_item_id_without_resolution(monkeypatch):
-    set_context(user_id="user-1", item_id="item-real-uuid-123")
-    fake_stripe_agent = FakeAgent(ainvoke_result={"messages": [SimpleNamespace(content="Link created")]})
-    fake_item_agent = FakeAgent()  # should NOT be called
-    monkeypatch.setattr(bot, "stripe_agent", fake_stripe_agent)
-    monkeypatch.setattr(bot, "item_agent", fake_item_agent)
-
-    result = await bot.call_stripe_agent.ainvoke({"request": "create link for item-real-uuid-123 at RM50"})
-
-    assert result == "Link created"
-    assert fake_item_agent.ainvoke_calls == []
-    sent_messages = fake_stripe_agent.ainvoke_calls[0]["messages"]
-    assert sent_messages[0].content == "create link for item-real-uuid-123 at RM50"
-
-
-class _ItemIdObservingStripeAgent(FakeAgent):
-    """Captures get_item_id() as seen from *inside* stripe_agent.ainvoke().
-
-    NOTE (discovered while testing, not a bug we're fixing per instructions):
-    `call_stripe_agent` does `current_item_id.set(resolved_id)` and then calls
-    `stripe_agent.ainvoke(...)` in the same coroutine, so that nested call DOES
-    observe the resolved id (asserted here). However, LangChain's
-    `BaseTool.ainvoke()` runs the tool's coroutine in a way that isolates its
-    contextvar mutations from the caller -- so `get_item_id()` read from
-    *outside* `call_stripe_agent.ainvoke(...)` after it returns is back to
-    whatever it was before the call (see the isolation test below). The
-    resolved id is effectively only visible to tools invoked synchronously
-    inside this same tool call, not to the wider request context.
-    """
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.item_id_seen_inside = "NOT_CALLED"
-
-    async def ainvoke(self, payload):
-        self.item_id_seen_inside = get_item_id()
-        return await super().ainvoke(payload)
-
-
-@pytest.mark.parametrize("missing_item_id", [None, "test-item-id", "None"])
-async def test_call_stripe_agent_resolves_missing_item_id_from_history(fake_memory, monkeypatch, missing_item_id):
-    set_context(user_id="user-1", item_id=missing_item_id)
-    fake_memory.get_history.return_value = [
-        {"role": "human", "content": "I want the iPhone 12"},
-        {"role": "ai", "content": "Sure, it's RM500"},
-    ]
-    resolved_uuid = "resolved-uuid-1234567890"
-    fake_item_agent = FakeAgent(ainvoke_result={"messages": [SimpleNamespace(content=resolved_uuid)]})
-    fake_stripe_agent = _ItemIdObservingStripeAgent(
-        ainvoke_result={"messages": [SimpleNamespace(content="Link created")]}
-    )
-    monkeypatch.setattr(bot, "item_agent", fake_item_agent)
-    monkeypatch.setattr(bot, "stripe_agent", fake_stripe_agent)
-
-    result = await bot.call_stripe_agent.ainvoke({"request": "create the link"})
-
-    assert result == "Link created"
-    # Resolution query included the conversation history text.
-    resolution_query = fake_item_agent.ainvoke_calls[0]["messages"][0].content
-    assert "I want the iPhone 12" in resolution_query
-    assert "Sure, it's RM500" in resolution_query
-    # The resolved id is visible to stripe_agent.ainvoke() (called within the
-    # same tool invocation)...
-    assert fake_stripe_agent.item_id_seen_inside == resolved_uuid
-    # ...but does NOT propagate back out to this (caller's) context -- see
-    # _ItemIdObservingStripeAgent docstring.
-    assert get_item_id() == missing_item_id
-
-
-async def test_call_stripe_agent_strips_markdown_code_fences_from_resolved_id(fake_memory, monkeypatch):
-    set_context(user_id="user-1", item_id=None)
-    fake_memory.get_history.return_value = [{"role": "human", "content": "the chair"}]
-    fake_item_agent = FakeAgent(
-        ainvoke_result={"messages": [SimpleNamespace(content="```resolved-uuid-abcdefghij```")]}
-    )
-    fake_stripe_agent = _ItemIdObservingStripeAgent(ainvoke_result={"messages": [SimpleNamespace(content="ok")]})
-    monkeypatch.setattr(bot, "item_agent", fake_item_agent)
-    monkeypatch.setattr(bot, "stripe_agent", fake_stripe_agent)
-
-    await bot.call_stripe_agent.ainvoke({"request": "create the link"})
-
-    assert fake_stripe_agent.item_id_seen_inside == "resolved-uuid-abcdefghij"
-
-
-async def test_call_stripe_agent_resolution_from_list_content_blocks(fake_memory, monkeypatch):
-    set_context(user_id="user-1", item_id=None)
-    fake_memory.get_history.return_value = [{"role": "human", "content": "the chair"}]
-    resolution_content = [{"type": "text", "text": "resolved-list-"}, "uuid-9876543210"]
-    fake_item_agent = FakeAgent(ainvoke_result={"messages": [SimpleNamespace(content=resolution_content)]})
-    fake_stripe_agent = _ItemIdObservingStripeAgent(ainvoke_result={"messages": [SimpleNamespace(content="ok")]})
-    monkeypatch.setattr(bot, "item_agent", fake_item_agent)
-    monkeypatch.setattr(bot, "stripe_agent", fake_stripe_agent)
-
-    await bot.call_stripe_agent.ainvoke({"request": "create the link"})
-
-    assert fake_stripe_agent.item_id_seen_inside == "resolved-list-uuid-9876543210"
-
-
-async def test_call_stripe_agent_context_update_does_not_leak_to_caller(fake_memory, monkeypatch):
-    """Documents the contextvar-isolation behavior described above in isolation:
-    even though `call_stripe_agent` resolves and `.set()`s the item id, the
-    caller's own `get_item_id()` is unaffected once `.ainvoke()` returns."""
-    set_context(user_id="user-1", item_id=None)
-    fake_memory.get_history.return_value = [{"role": "human", "content": "the chair"}]
-    fake_item_agent = FakeAgent(ainvoke_result={"messages": [SimpleNamespace(content="resolved-uuid-1234567890")]})
-    fake_stripe_agent = FakeAgent(ainvoke_result={"messages": [SimpleNamespace(content="ok")]})
-    monkeypatch.setattr(bot, "item_agent", fake_item_agent)
-    monkeypatch.setattr(bot, "stripe_agent", fake_stripe_agent)
-
-    await bot.call_stripe_agent.ainvoke({"request": "create the link"})
-
-    assert get_item_id() is None
-
-
-async def test_call_stripe_agent_resolution_not_found_leaves_item_id_unset(fake_memory, monkeypatch):
-    set_context(user_id="user-1", item_id=None)
-    fake_memory.get_history.return_value = [{"role": "human", "content": "something vague"}]
-    fake_item_agent = FakeAgent(ainvoke_result={"messages": [SimpleNamespace(content="NOT_FOUND")]})
-    fake_stripe_agent = FakeAgent(ainvoke_result={"messages": [SimpleNamespace(content="ok")]})
-    monkeypatch.setattr(bot, "item_agent", fake_item_agent)
-    monkeypatch.setattr(bot, "stripe_agent", fake_stripe_agent)
-
-    await bot.call_stripe_agent.ainvoke({"request": "create the link"})
-
-    assert get_item_id() is None
-
-
-async def test_call_stripe_agent_resolution_too_short_is_rejected(fake_memory, monkeypatch):
-    set_context(user_id="user-1", item_id=None)
-    fake_memory.get_history.return_value = [{"role": "human", "content": "something vague"}]
-    # len("12345") == 5, not > 10 -> sanity check fails, treated as unresolved.
-    fake_item_agent = FakeAgent(ainvoke_result={"messages": [SimpleNamespace(content="12345")]})
-    fake_stripe_agent = FakeAgent(ainvoke_result={"messages": [SimpleNamespace(content="ok")]})
-    monkeypatch.setattr(bot, "item_agent", fake_item_agent)
-    monkeypatch.setattr(bot, "stripe_agent", fake_stripe_agent)
-
-    await bot.call_stripe_agent.ainvoke({"request": "create the link"})
-
-    assert get_item_id() is None
-
-
-async def test_call_stripe_agent_skips_resolution_when_no_user_id_in_context(monkeypatch):
-    set_context(user_id=None, item_id=None)
-    fake_item_agent = FakeAgent()  # must not be called: no ctx_user_id means no history lookup
-    fake_stripe_agent = FakeAgent(ainvoke_result={"messages": [SimpleNamespace(content="ok")]})
-    monkeypatch.setattr(bot, "item_agent", fake_item_agent)
-    monkeypatch.setattr(bot, "stripe_agent", fake_stripe_agent)
-
-    result = await bot.call_stripe_agent.ainvoke({"request": "create the link"})
-
-    assert result == "ok"
-    assert fake_item_agent.ainvoke_calls == []
-    assert get_item_id() is None
 
 
 async def test_transfer_to_human_success(fake_memory, monkeypatch):

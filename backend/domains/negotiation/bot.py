@@ -28,8 +28,6 @@ from .config import (
     SELLER_PERSONA,
 )
 from .context import (
-    current_item_id,
-    get_item_id,
     get_user_id,
     get_user_language,
     pending_handoff,
@@ -42,10 +40,6 @@ from .llm_factory import ProviderInfo, current_provider, get_chat_model, hybrid_
 from .memory import ConversationMemory
 from .speak import build_messages as build_speaker_messages
 from .speak import history_digest, speaker_model
-
-# Legacy Sub-Agents (retained for backward compatibility / tests)
-from .sub_agents.item_agent import item_agent
-from .sub_agents.stripe_agent import stripe_agent
 
 # Import Direct Tools (Unified Single-Agent Architecture - SPEC-079 / ADR-0026)
 from .tools.items import get_item_info, list_all_items, search_items
@@ -61,92 +55,6 @@ from .tools.payment import (
 conversation_memory = ConversationMemory()
 
 _customer_agent = None
-
-# --- Sub-Agent Wrapper Tools ---
-
-
-@tool
-async def call_item_agent(query: str) -> str:
-    """
-    Call the Inventory/Item Agent to search for items, get details, or check availability.
-    Use this for ANY question regarding "what do you have", "search for X", or "details of item Y".
-    The Item Agent has direct access to the database.
-
-    Args:
-        query: The user's question or search request regarding items
-    """
-    logger.info(f"📞 Calling Item Agent with: {query}")
-    response = await item_agent.ainvoke({"messages": [HumanMessage(content=query)]})
-    return response["messages"][-1].content
-
-
-@tool
-async def call_stripe_agent(request: str) -> str:
-    """
-    Call the Payment/Stripe Agent to create checkout links, cancel payments, or handle shipping info.
-    Use this ONLY when:
-    1. A price has been AGREED upon and the user wants to pay.
-    2. The user wants to cancel a payment.
-    3. The user is providing shipping information.
-
-    Args:
-        request: The specific action request (e.g. "Create link for item_id at price X", "Cancel link", "Shipping info is...")
-    """
-    # Check context
-    ctx_item_id = get_item_id()
-    ctx_user_id = get_user_id()
-
-    # 1. Fallback Resolution: If no item_id in context, try to find it from history using Item Agent
-    if not ctx_item_id or ctx_item_id in ["test-item-id", "None"]:
-        logger.info("🕵️‍♂️ Missing context item_id. Attempting to resolve from history...")
-
-        # Get recent history
-        if ctx_user_id:
-            history = conversation_memory.get_history(ctx_user_id, limit=10)
-            history_text = "\n".join([f"{msg['role']}: {msg['content']}" for msg in history])
-
-            # Ask Item Agent to identify the item
-            resolution_query = f"""
-            Based on this conversation history, identify the exact UUID of the item the user wants to buy.
-
-            HISTORY:
-            {history_text}
-
-            INSTRUCTIONS:
-            1. Identify the item name mentioned in the history.
-            2. Use your 'search_items' tool to find this item in the database.
-            3. Return ONLY the UUID string of the matched item.
-            4. If multiple items match, choose the one with the closest name.
-            5. If not found in database, return 'NOT_FOUND'.
-            """
-
-            resolution_response = await item_agent.ainvoke({"messages": [HumanMessage(content=resolution_query)]})
-            resolution_content = resolution_response["messages"][-1].content
-            if isinstance(resolution_content, list):
-                # Join text parts if it's a list (e.g. from Gemini)
-                text_parts = []
-                for part in resolution_content:
-                    if isinstance(part, str):
-                        text_parts.append(part)
-                    elif isinstance(part, dict) and "text" in part:
-                        text_parts.append(part["text"])
-                resolved_id = "".join(text_parts).strip()
-            else:
-                resolved_id = str(resolution_content).strip()
-
-            # Clean up response (remove markdown code blocks if any)
-            resolved_id = resolved_id.replace("```", "").strip()
-
-            if resolved_id and resolved_id != "NOT_FOUND" and len(resolved_id) > 10:  # Basic UUID sanity check
-                logger.info(f"✅ Resolved missing item_id to: {resolved_id}")
-                # Update request-scoped context so downstream tools see the resolved id
-                current_item_id.set(resolved_id)
-            else:
-                logger.info("❌ Could not resolve item_id from history.")
-
-    response = await stripe_agent.ainvoke({"messages": [HumanMessage(content=request)]})
-    return response["messages"][-1].content
-
 
 # SPEC-086. SPEC-055 requires BOTH halves of the COD answer: Terry will arrange
 # it, and items are first come first served so only a paid order holds one. The
@@ -827,7 +735,6 @@ async def chat(
 
 
 TOOL_STATUS_TEXT = {
-    "call_item_agent": "Understanding the item...",
     "get_item_info": "Understanding the item...",
     "search_items": "Understanding the item...",
     "list_all_items": "Understanding the item...",
@@ -845,25 +752,6 @@ TOOL_STATUS_TEXT = {
 def tool_status_text(tool_name: str) -> str:
     """The SSE status frame for a tool call, shared by both turn architectures."""
     return TOOL_STATUS_TEXT.get(tool_name, "Cooking...")
-
-
-def _classify_stripe_request(request_text: str) -> str:
-    """What is the Stripe sub-agent actually being asked to do?
-
-    `call_stripe_agent` is one wrapper tool fronting three very different
-    jobs (create a checkout link, cancel one, save shipping info), and the
-    top-level stream never sees inside it — sub-agent tokens don't leak into
-    this stream (see the module docstring). The `request` argument the
-    supervisor writes when it decides to call it is the only signal
-    available, so the SSE status is picked from that text instead of being
-    hardcoded to the payment-link case (SPEC-078).
-    """
-    lowered = (request_text or "").lower()
-    if "cancel" in lowered:
-        return "Cancelling your payment link..."
-    if any(kw in lowered for kw in ("ship", "address", "phone", "recipient", "deliver")):
-        return "Saving your shipping details..."
-    return "Generating payment link..."
 
 
 async def _persist_stream(user_id, item_id, collected, streamed_calls, streamed_results):
@@ -915,10 +803,9 @@ async def chat_stream(
     the LLM's network I/O never blocks the event loop.
 
     Uses LangGraph's token-level streaming (stream_mode="messages"). Only text
-    from the supervisor's own LLM turns is forwarded - tool-call decision chunks
-    (empty content) are skipped, and sub-agents run inside tool calls so their
-    tokens do not leak into this stream. The full response is persisted to memory
-    once streaming completes.
+    from the agent's own LLM turns is forwarded - tool-call decision chunks
+    (empty content) are skipped. The full response is persisted to memory once
+    streaming completes.
 
     Args:
         user_id: Unique identifier for the buyer
@@ -953,11 +840,6 @@ async def chat_stream(
     # meet again.
     streamed_calls: dict[str, dict] = {}
     streamed_results: dict[str, str] = {}
-    # call_stripe_agent's args ("request": "...") stream in piecemeal across
-    # several tool_call_chunks, keyed by tool-call id. Buffered here until they
-    # parse as complete JSON, at which point _classify_stripe_request picks the
-    # status from what the request actually says (SPEC-078).
-    pending_stripe_args: dict[str, str] = {}
 
     # The lease is held for the whole generator body and released in the context
     # manager's `finally` — including when the buyer disconnects mid-stream and
@@ -1028,28 +910,10 @@ async def chat_stream(
                         entry["name"] = tool_name
                     entry["args"] += tc.get("args") or ""
 
-                    # The tool name usually arrives in the very first chunk of the tool call stream
-                    if tool_name and tool_name != "call_stripe_agent":
+                    # The name arrives on the first fragment of a call only, so
+                    # this is one status per call.
+                    if tool_name:
                         yield {"status": tool_status_text(tool_name)}
-                        continue
-
-                    # call_stripe_agent (or one of its continuation chunks): don't
-                    # guess yet — buffer the `request` argument until it parses as
-                    # complete JSON, then pick the status from what it actually says.
-                    if tool_name == "call_stripe_agent":
-                        pending_stripe_args[tc_id] = tc.get("args") or ""
-                    elif tc_id in pending_stripe_args:
-                        pending_stripe_args[tc_id] += tc.get("args") or ""
-                    else:
-                        continue  # not a call_stripe_agent we're tracking
-
-                    try:
-                        parsed_args = json.loads(pending_stripe_args[tc_id])
-                    except ValueError:
-                        continue  # still incomplete — keep buffering
-                    del pending_stripe_args[tc_id]
-                    request_text = parsed_args.get("request", "") if isinstance(parsed_args, dict) else ""
-                    yield {"status": _classify_stripe_request(request_text)}
 
             text = _extract_text_from_content(chunk.content)
             if text:

@@ -210,10 +210,10 @@ def test_clear_history_swallows_exception_and_logs(mem_supabase, monkeypatch):
     assert "Error clearing history" in logged["msg"]
 
 
-def test_broadcast_message_is_a_noop():
-    """Realtime delivery is handled elsewhere; this exists so callers that
-    expect the hook don't have to care."""
-    assert conversation_memory.broadcast_message("u", "ai", "hi", "ai") is None
+def test_the_realtime_broadcast_stub_is_gone():
+    """SPEC-111: delivery is the SSE broker's job (SPEC-094); a no-op that
+    claimed Supabase Realtime did it only misled the next reader."""
+    assert not hasattr(conversation_memory, "broadcast_message")
 
 
 # ---------------------------------------------------------------------------

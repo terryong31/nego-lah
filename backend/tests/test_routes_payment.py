@@ -149,7 +149,9 @@ async def test_checkout_generic_exception_returns_500(client, auth_user, patch_s
     response = await client.post("/payment/checkout", json={"item_id": "item-1"})
 
     assert response.status_code == 500
-    assert "Checkout failed" in response.json()["detail"]
+    # The exception's own text is for the log, not the client.
+    assert response.json()["detail"] == "Checkout failed. Please try again."
+    assert "not-a-number" not in response.text
 
 
 async def test_checkout_price_cents_rounds_to_nearest_cent(
@@ -307,7 +309,8 @@ async def test_get_active_payments_exception_returns_500(client, auth_user, monk
     response = await client.get("/payment/active/buyer-1")
 
     assert response.status_code == 500
-    assert "Failed to fetch active payments" in response.json()["detail"]
+    assert response.json()["detail"] == "Failed to fetch active payments."
+    assert "redis down" not in response.text
 
 
 # ---------------------------------------------------------------------------

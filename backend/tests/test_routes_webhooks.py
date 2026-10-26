@@ -300,7 +300,9 @@ async def test_happy_path_forwarding_no_attachments(client, monkeypatch):
 async def test_happy_path_falls_back_to_pre_wrapped_text_when_no_html(client, monkeypatch):
     _install_fake_webhook(monkeypatch)
 
-    fetch_resp = _make_response(json_data={"html": None, "text": "just plain text", "attachments": [], "raw": {}})
+    fetch_resp = _make_response(
+        json_data={"html": None, "text": "just <b>plain</b> text & <script>x</script>", "attachments": [], "raw": {}}
+    )
     send_resp = _make_response(json_data={"id": "sent_2"})
 
     client_instance = _install_fake_async_client(monkeypatch, get_effect=[fetch_resp], post_effect=[send_resp])
@@ -323,7 +325,8 @@ async def test_happy_path_falls_back_to_pre_wrapped_text_when_no_html(client, mo
 
     assert response.status_code == 200
     sent_json = client_instance.post.await_args_list[0].kwargs["json"]
-    assert sent_json["html"] == "<pre>just plain text</pre>"
+    # The sender's text is text: it is escaped, never rendered as markup.
+    assert sent_json["html"] == "<pre>just &lt;b&gt;plain&lt;/b&gt; text &amp; &lt;script&gt;x&lt;/script&gt;</pre>"
 
 
 async def test_happy_path_multiple_allowed_recipients_tagged_together(client, monkeypatch):

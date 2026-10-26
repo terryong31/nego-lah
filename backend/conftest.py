@@ -43,14 +43,14 @@ READ THIS BEFORE WRITING TESTS.
      via `Depends(...)` — `dependency_overrides` has no effect there. For
      that endpoint, monkeypatch the name where it's *called* instead:
      `monkeypatch.setattr("routes.chat.verify_user_token", fake_async_fn)`.
-   - LLM / LangChain agents (`agent/bot.py`, `agent/sub_agents/*`,
+   - LLM / LangChain agents (`agent/bot.py`,
      `agent/tools/image_analyzer.py`, `agent/tools/market_price.py`): there is
      no single seam because each module constructs its own
      `ChatGoogleGenerativeAI` differently (lazy singleton in `bot.py`, eager
      module-level singleton elsewhere). Monkeypatch the specific
      `_get_model` / `_get_customer_agent` functions in `bot.py`, or the
      `.ainvoke` / `.invoke` / `.astream` method on the already-constructed
-     singleton object in the sub-agent/tool modules. Don't try to mock the
+     singleton object in the tool modules. Don't try to mock the
      `ChatGoogleGenerativeAI` class globally — patch call sites.
    - Rate limiting: `cache.check_rate_limit` is the real gate on
      `/chat/stream` and admin login/OTP. Give each test a distinct

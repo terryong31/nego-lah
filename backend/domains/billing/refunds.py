@@ -24,16 +24,19 @@ def process_refund(item_id: str, reason: str = None) -> dict:
     Returns:
         Dict with success status and refund_id or error message
     """
-    # Get the transaction
-    response = admin_supabase.table("transactions").select("*").eq("item_id", item_id).execute()
+    # An item that was refunded is relisted and can sell again, so it can have
+    # one transaction per sale. The one to refund is the newest that is not
+    # refunded yet; taking whichever row came back first could pick the old,
+    # refunded sale and refuse the new buyer (SPEC-111).
+    response = (
+        admin_supabase.table("transactions").select("*").eq("item_id", item_id).order("created_at", desc=True).execute()
+    )
 
     if not response.data:
         return {"success": False, "error": "Transaction not found for this item"}
 
-    transaction = response.data[0]
-
-    # Check if already refunded
-    if transaction.get("status") == "refunded":
+    transaction = next((row for row in response.data if row.get("status") != "refunded"), None)
+    if transaction is None:
         return {"success": False, "error": "This item has already been refunded"}
 
     payment_id = transaction.get("stripe_payment_id")
@@ -81,17 +84,19 @@ def process_refund(item_id: str, reason: str = None) -> dict:
     except Exception as e:
         logger.warning(f"⚠️ Could not invalidate cache for item {item_id}: {e}")
 
-    # Update the order tied to this exact payment so buyer order history is
-    # accurate (the legacy transactions row is updated for completeness too).
+    # Update the order and the transaction tied to this exact payment — by
+    # item they would also catch an earlier sale of the same item.
     try:
         admin_supabase.table("orders").update({"status": "refunded"}).eq("stripe_payment_id", payment_id).execute()
     except Exception as e:
         db_errors.append(f"orders(pi={payment_id}): {e}")
 
     try:
-        admin_supabase.table("transactions").update({"status": "refunded"}).eq("item_id", item_id).execute()
+        admin_supabase.table("transactions").update({"status": "refunded"}).eq(
+            "stripe_payment_id", payment_id
+        ).execute()
     except Exception as e:
-        db_errors.append(f"transactions({item_id}): {e}")
+        db_errors.append(f"transactions(pi={payment_id}): {e}")
 
     result = {"success": True, "refund_id": refund.id, "amount_refunded": transaction.get("amount")}
 

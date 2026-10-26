@@ -41,7 +41,7 @@ def _notify_buyer_of_shipment(order: dict, delivered: bool = False) -> dict:
 
     try:
         # SPEC-078: persist FIRST. broadcast_to_chat below is a live,
-        # fire-and-forget push (Supabase Realtime + the SSE broker) that
+        # fire-and-forget push (the SSE broker, SPEC-094) that
         # reaches nobody unless the buyer's browser is on the chat page at
         # this exact instant — without a row in `messages` the notice is not
         # delayed, it is simply gone, even though `notified.chat` below still

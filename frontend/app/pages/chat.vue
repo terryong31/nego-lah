@@ -69,10 +69,10 @@ const offset = ref(0)
 const scroller = ref<HTMLElement | null>(null)
 const buyLoading = ref(false)
 
-// --- Live typing presence (Supabase Realtime broadcast) -------------------
-// The seller (admin console) broadcasts `typing` events on a per-conversation
-// channel during a human takeover; we surface that as the chat's typing
-// indicator, and broadcast the customer's own typing back the other way.
+// --- Live typing presence (authenticated SSE stream, SPEC-094) -------------
+// The seller (admin console) sends `typing` events during a human takeover; they
+// arrive on the buyer's own notification stream and drive the chat's typing
+// indicator. The customer's own typing goes back as a `POST /chat/typing` ping.
 const { remoteTyping: sellerTyping, join: joinTyping, ping: pingTyping } = useTypingChannel()
 
 // SPEC-043: the three "please wait" states — a hard cooldown the input gates

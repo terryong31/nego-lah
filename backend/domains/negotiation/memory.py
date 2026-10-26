@@ -326,10 +326,6 @@ class ConversationMemory:
         except Exception as e:
             logger.info(f"[ConversationMemory] Error clearing history: {e}")
 
-    def broadcast_message(self, user_id: str, role: str, message: str, source: str):
-        """Broadcast is handled by Supabase Realtime automatically."""
-        pass  # Frontend subscribes to DB changes via Supabase Realtime
-
 
 # Singleton instance
 conversation_memory = ConversationMemory()

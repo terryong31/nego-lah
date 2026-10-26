@@ -500,13 +500,3 @@ def test_bot_has_no_frozen_model_singleton():
     import domains.negotiation.bot as bot
 
     assert not hasattr(bot, "_model"), "agent.bot._model singleton should be gone"
-
-
-def test_sub_agents_have_no_import_time_model():
-    """The sub-agents used to construct a model (and fire a health probe) at
-    import time, freezing the provider for the life of the process."""
-    from domains.negotiation.sub_agents import item_agent as item_mod
-    from domains.negotiation.sub_agents import stripe_agent as stripe_mod
-
-    assert not hasattr(item_mod, "model"), "item_agent.model singleton should be gone"
-    assert not hasattr(stripe_mod, "model"), "stripe_agent.model singleton should be gone"

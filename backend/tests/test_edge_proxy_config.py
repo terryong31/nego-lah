@@ -87,6 +87,11 @@ class TestOriginAuth:
     def test_secret_is_not_written_into_the_caddyfile(self):
         assert "{$ORIGIN_AUTH_SECRET" not in CADDYFILE
 
+    def test_request_body_max_size_matches_defense_middleware_upload_ceiling(self):
+        """SPEC-112: RequestDefenseMiddleware allows 15MB multipart uploads; Caddy
+        must not reject them earlier at 10MB."""
+        assert re.search(r"request_body\s*\{\s*max_size\s+15MB\b", _site_block())
+
 
 class TestSecretDelivery:
     @pytest.fixture(scope="class")

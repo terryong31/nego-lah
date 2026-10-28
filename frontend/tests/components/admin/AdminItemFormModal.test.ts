@@ -832,6 +832,50 @@ describe('components/admin/AdminItemFormModal.vue', () => {
         expect((body.getAll('images') as File[]).map(f => f.name)).toEqual(['c.png', 'a.png', 'b.png'])
       })
 
+      it('downscales new photos in the browser before appending them to FormData (SPEC-112)', async () => {
+        const wrapper = await mountSuspended(AdminItemFormModal)
+        const vm = wrapper.vm as unknown as VmAny
+        vm.openCreate()
+        vm.startManual()
+        const bigPhoto = new File([new Uint8Array(3_000_000)], 'guitar.png', { type: 'image/png' })
+        vm.images = [makePendingImage(bigPhoto)]
+        vm.form.name = 'Hello Kitty Stratocaster'
+        vm.form.price = 2499
+
+        const closeSpy = vi.fn()
+        vi.stubGlobal('createImageBitmap', vi.fn().mockResolvedValue({
+          width: 4032,
+          height: 3024,
+          close: closeSpy
+        }))
+        const origCreateElement = document.createElement.bind(document)
+        vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
+          if (tag === 'canvas') {
+            return {
+              width: 0,
+              height: 0,
+              getContext: () => ({ drawImage: vi.fn() }),
+              toBlob: (cb: (b: Blob | null) => void) =>
+                cb(new Blob([new Uint8Array(120_000)], { type: 'image/jpeg' }))
+            } as unknown as HTMLCanvasElement
+          }
+          return origCreateElement(tag)
+        })
+
+        callMock.mockResolvedValueOnce({ id: 'new-1' })
+
+        await vm.submitItem()
+
+        const createCall = callMock.mock.calls.find(([path, opts]) => path === '/items' && opts?.method === 'POST')
+        const body = createCall![1].body as FormData
+        const uploaded = body.getAll('images') as File[]
+        expect(uploaded).toHaveLength(1)
+        expect(uploaded[0]!.size).toBe(120_000)
+        expect(uploaded[0]!.name).toBe('guitar.jpg')
+        expect(closeSpy).toHaveBeenCalledOnce()
+        vi.unstubAllGlobals()
+      })
+
       it('shows a "Create failed" toast with the API detail and keeps the modal open on failure', async () => {
         const wrapper = await mountSuspended(AdminItemFormModal)
         const vm = wrapper.vm as unknown as VmAny

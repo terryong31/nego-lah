@@ -71,3 +71,4 @@ Root causes:
 - `frontend/tests/utils/downscaleImage.test.ts`
 - `frontend/tests/components/admin/AdminItemFormModal.test.ts`
 - `backend/tests/test_edge_proxy_config.py`
+- `backend/uv.lock`, `frontend/package.json`, `frontend/bun.lock` (patch newly published `pip-audit` and `bun audit` advisories)

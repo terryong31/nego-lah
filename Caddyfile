@@ -31,7 +31,7 @@ api.negolah.my {
     respond @not_via_our_zone "Forbidden" 403
 
     request_body {
-        max_size 10MB
+        max_size 15MB
     }
 
     reverse_proxy backend:8000 {

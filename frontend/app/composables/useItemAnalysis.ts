@@ -9,6 +9,8 @@
 //   3. The backend streams progress over SSE as each stage actually lands, so
 //      the bar reports real state instead of animating a guess.
 
+import { downscaleImage } from '~/utils/downscaleImage'
+
 export interface AnalyzeResult {
   name?: string
   description?: string
@@ -38,9 +40,6 @@ interface AnalyzeEvent {
 
 // Longest edge (px) any photo is scaled to before being sent for analysis.
 const MAX_ANALYSIS_EDGE = 1024
-// Photos already smaller than this are sent untouched — re-encoding them costs
-// more than it saves.
-const DOWNSCALE_SIZE_FLOOR = 400_000
 
 // How much headroom the bar may creep through while a stage is still running,
 // keyed by the stage that just finished. The bar never reaches the next
@@ -54,32 +53,8 @@ const STAGE_HEADROOM: Record<string, number> = {
 }
 
 /** Shrink an image so the analysis upload stays small. Falls back to the original. */
-async function downscale(file: File): Promise<Blob> {
-  if (typeof createImageBitmap !== 'function' || typeof document === 'undefined') return file
-
-  let bitmap: ImageBitmap | undefined
-  try {
-    bitmap = await createImageBitmap(file)
-    const longest = Math.max(bitmap.width, bitmap.height)
-    const scale = Math.min(1, MAX_ANALYSIS_EDGE / longest)
-    if (scale === 1 && file.size < DOWNSCALE_SIZE_FLOOR) return file
-
-    const canvas = document.createElement('canvas')
-    canvas.width = Math.round(bitmap.width * scale)
-    canvas.height = Math.round(bitmap.height * scale)
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return file
-    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
-
-    const blob = await new Promise<Blob | null>(resolve =>
-      canvas.toBlob(resolve, 'image/jpeg', 0.82)
-    )
-    return blob && blob.size < file.size ? blob : file
-  } catch {
-    return file
-  } finally {
-    bitmap?.close()
-  }
+function downscale(file: File): Promise<File> {
+  return downscaleImage(file, { maxEdge: MAX_ANALYSIS_EDGE })
 }
 
 export const useItemAnalysis = () => {

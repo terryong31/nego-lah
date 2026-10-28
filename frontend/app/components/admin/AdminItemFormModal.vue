@@ -3,6 +3,7 @@ import type { AnalyzePatch, AnalyzeResult } from '~/composables/useItemAnalysis'
 import type { AdminItem } from '~/utils/adminItem'
 import { adminItemSchema } from '~/utils/schemas'
 import { itemImageUrls } from '~/utils/adminItem'
+import { downscaleImage } from '~/utils/downscaleImage'
 import { extractTrilingualData } from '~/utils/trilingual'
 
 // Create / edit a listing.
@@ -343,6 +344,12 @@ async function submitItem() {
     if (form.min_price != null) fd.append('min_price', String(form.min_price))
     fd.append('translations', JSON.stringify(form.translations))
 
+    // SPEC-112: downscale new photos in the browser (longest edge <= 2048px, JPEG 0.82)
+    // before building the multipart payload so multi-photo uploads stay well under the
+    // 15 MB edge/API body ceiling.
+    const newFiles = images.value.filter((img): img is Extract<typeof img, { kind: 'new' }> => img.kind === 'new')
+    const compressedFiles = await Promise.all(newFiles.map(img => downscaleImage(img.file)))
+
     if (isEditing.value) {
       // One token per photo in display order: a kept photo's stored URL, or
       // "new:<n>" pointing at the nth file appended below. Photos left out are
@@ -351,8 +358,9 @@ async function submitItem() {
       let added = 0
       for (const img of images.value) {
         if (img.kind === 'new') {
+          const compressed = compressedFiles[added]!
           order.push(`new:${added++}`)
-          fd.append('new_images', img.file)
+          fd.append('new_images', compressed)
         } else {
           order.push(img.url)
         }
@@ -364,8 +372,8 @@ async function submitItem() {
     } else {
       // Order matters: the backend keys images by position, and the storefront
       // shows the first one as the thumbnail.
-      for (const img of images.value) {
-        if (img.kind === 'new') fd.append('images', img.file)
+      for (const file of compressedFiles) {
+        fd.append('images', file)
       }
 
       await call('/items', { method: 'POST', body: fd })

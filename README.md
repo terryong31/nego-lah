@@ -96,6 +96,6 @@ Engineering docs live in [`docs/`](docs/README.md), which starts with a "which p
 
 ## License
 
-All rights reserved. See [LICENSE](LICENSE).
+MIT License. See [LICENSE](LICENSE).
 
 [Terry Ong](https://github.com/terryong31) © 2026

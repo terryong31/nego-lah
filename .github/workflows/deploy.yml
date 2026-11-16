@@ -438,7 +438,7 @@ jobs:
       # container's own healthcheck and, if the new image never comes up, puts
       # the previous one back and fails red (audit DEP-1).
       - name: Pull image, update env & restart on server
-        uses: appleboy/ssh-action@029f5b4aeeeb58fdfe1410a5d17f967dacf36262 # v1.0.3
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         env:
           GHCR_ACTOR: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}

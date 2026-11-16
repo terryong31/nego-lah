@@ -149,5 +149,6 @@ tests that prove it. No non-trivial change starts without one (see [`AGENTS.md`]
 | [SPEC-110](SPEC-110-white-box-audit-2026-10-27.md) | Password Changes End Other Sessions, Refunds Replay, Chat Attachments Are Bounded | complete |
 | [SPEC-111](SPEC-111-deep-inspection-followups.md) | Re-Sold Items Refund, Dead Sub-Agents Go, Errors Stop Leaking | complete |
 | [SPEC-112](SPEC-112-client-item-image-compression.md) | Client-Side Item Photo Downscaling & Caddy Upload Limit Alignment | complete |
+| [SPEC-113](SPEC-113-dependabot-security-and-ci-remediation.md) | Dependabot Security Advisory & CI Remediation | complete |
 <!-- END GENERATED -->
 <!-- vale on -->

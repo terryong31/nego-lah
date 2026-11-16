@@ -35,7 +35,12 @@ function stubLocation(replace = vi.fn()) {
   // @ts-expect-error - reassigning location is allowed in the test DOM
   delete window.location
   // @ts-expect-error - a partial Location is enough for these assertions
-  window.location = { ...original, replace }
+  window.location = {
+    ...original,
+    href: original.href || 'http://localhost:3000/confirm',
+    origin: original.origin || 'http://localhost:3000',
+    replace
+  }
   return { replace, restore: () => {
     // @ts-expect-error - restore the real Location object
     delete window.location

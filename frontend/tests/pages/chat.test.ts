@@ -1096,16 +1096,28 @@ describe('pages/chat.vue', () => {
 
       // jsdom/happy-dom throws "Not implemented: navigation" if we actually
       // assign location.href, so stub it out to observe the intent instead.
+      const originalLocation = window.location
       const hrefSetter = vi.fn()
       Object.defineProperty(window, 'location', {
         configurable: true,
-        value: { ...window.location, set href(v: string) { hrefSetter(v) } }
+        value: {
+          ...originalLocation,
+          get href() { return originalLocation.href || 'http://localhost:3000/' },
+          set href(v: string) { hrefSetter(v) }
+        }
       })
 
-      await vm(wrapper).handleBuyNow()
+      try {
+        await vm(wrapper).handleBuyNow()
 
-      expect(hrefSetter).toHaveBeenCalledWith('https://checkout.stripe.com/session-abc')
-      expect(vm(wrapper).buyLoading).toBe(false)
+        expect(hrefSetter).toHaveBeenCalledWith('https://checkout.stripe.com/session-abc')
+        expect(vm(wrapper).buyLoading).toBe(false)
+      } finally {
+        Object.defineProperty(window, 'location', {
+          configurable: true,
+          value: originalLocation
+        })
+      }
     })
 
     it('shows a "Checkout failed" toast when the response has no checkout_url', async () => {

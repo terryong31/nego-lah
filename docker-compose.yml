@@ -13,7 +13,7 @@ x-logging: &default-logging
 
 services:
   caddy:
-    image: caddy:2.7
+    image: caddy:2.10
     container_name: nego-lah-caddy
     restart: always
     ports:

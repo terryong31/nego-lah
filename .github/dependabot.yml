@@ -18,6 +18,10 @@ updates:
     groups:
       web-minor-patch:
         update-types: [minor, patch]
+    ignore:
+      # @typescript-eslint requires typescript <6.1.0; TypeScript 7 removes ts.Extension.Cjs.
+      - dependency-name: typescript
+        update-types: [version-update:semver-major]
 
   - package-ecosystem: uv
     directory: /backend
@@ -75,6 +79,10 @@ updates:
     groups:
       api-image-minor-patch:
         update-types: [minor, patch]
+    ignore:
+      # CI and pyproject.toml target Python 3.12; 3.15 lacks manylinux wheels for Rust extensions.
+      - dependency-name: python
+        update-types: [version-update:semver-minor, version-update:semver-major]
 
   - package-ecosystem: docker-compose
     directory: /

@@ -524,7 +524,7 @@ const columns = computed<TableColumn<Order>[]>(() => [
               </UTooltip>
             </template>
             <UInput
-              v-model="shipmentDraft(shippingOrder).trackingUrl"
+              v-model="shipmentDraft(shippingOrder!).trackingUrl"
               type="url"
               placeholder="https://"
               class="w-full"
@@ -532,8 +532,8 @@ const columns = computed<TableColumn<Order>[]>(() => [
           </UFormField>
 
           <UCheckbox
-            v-model="shipmentDraft(shippingOrder).notify"
-            :label="shippingOrder.shipped_at
+            v-model="shipmentDraft(shippingOrder!).notify"
+            :label="shippingOrder?.shipped_at
               ? $t('admin.ordersSection.notifyBuyerAgain')
               : $t('admin.ordersSection.notifyBuyer')"
           />

@@ -74,8 +74,6 @@ if (!import.meta.test && isProd) {
     dsn,
     environment: isProd ? 'production' : 'development',
     release: process.env.SENTRY_RELEASE || 'latest',
-    sendDefaultPii: true,
-    enableLogs: true,
     // Traces: 20% in production to conserve quota, 100% in development
     tracesSampleRate: isProd ? 0.2 : 1.0,
     tracePropagationTargets: [

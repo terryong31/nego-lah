@@ -17,8 +17,6 @@ if (!import.meta.test && isProd) {
     environment: 'production',
     release: process.env.SENTRY_RELEASE || 'latest',
     // Mirrors the backend's Sentry config (see backend/main.py).
-    sendDefaultPii: true,
-    enableLogs: true,
     tracesSampleRate: 0.2
   })
 }

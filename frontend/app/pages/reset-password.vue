@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { FormSubmitEvent } from '@nuxt/ui'
 import { resetPasswordSchema, type ResetPasswordForm } from '~/utils/schemas'
+import { getErrorMessage } from '~/utils/error'
 
 const { t } = useI18n()
 const { user, resetPassword, logout } = useAuth()
@@ -44,10 +45,9 @@ async function onSubmit(payload: FormSubmitEvent<ResetPasswordForm>) {
     })
     router.push('/login')
   } catch (err) {
-    const detail = (err as { data?: { detail?: string } })?.data?.detail
     toast.add({
       title: 'Update failed',
-      description: detail || (err instanceof Error ? err.message : 'Something went wrong'),
+      description: getErrorMessage(err, t('common.unexpectedError')),
       color: 'error'
     })
   } finally {

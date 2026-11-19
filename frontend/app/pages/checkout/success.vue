@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { resolveUserId } from '~/utils/auth'
+import { getErrorMessage } from '~/utils/error'
 
 const { call } = useApi()
 const route = useRoute()
@@ -74,7 +75,7 @@ onMounted(async () => {
       if (e?.data?.detail?.includes?.('already_sold') || e?.data?.status === 'already_sold') {
         applyOutcome('already_sold')
       } else {
-        errorMessage.value = e?.data?.detail || e?.message || t('checkout.confirmFailed')
+        errorMessage.value = getErrorMessage(err, t('checkout.confirmFailed'))
         toast.add({ title: t('checkout.confirmFailedTitle'), description: errorMessage.value, color: 'error' })
       }
     } finally {

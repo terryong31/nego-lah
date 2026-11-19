@@ -2,6 +2,7 @@
 import { useChat } from '@ai-sdk/vue'
 import { DefaultChatTransport } from 'ai'
 import { getUserCsrfToken, loginRedirect, resolveUserId } from '~/utils/auth'
+import { getErrorMessage } from '~/utils/error'
 import { useItemStore } from '~/stores/item'
 
 definePageMeta({
@@ -385,7 +386,7 @@ async function loadMore() {
       if (scroller.value) scroller.value.scrollTop = scroller.value.scrollHeight - prevHeight
     })
   } catch (err) {
-    toast.add({ title: 'Failed to load older messages', description: err instanceof Error ? err.message : 'Something went wrong', color: 'error' })
+    toast.add({ title: 'Failed to load older messages', description: getErrorMessage(err, t('common.unexpectedError')), color: 'error' })
   } finally {
     loadingMore.value = false
   }
@@ -715,7 +716,7 @@ async function handleBuyNow() {
       throw new Error('No checkout URL returned')
     }
   } catch (err) {
-    toast.add({ title: 'Checkout failed', description: err instanceof Error ? err.message : 'Unable to start transaction', color: 'error' })
+    toast.add({ title: t('items.checkoutFailed'), description: getErrorMessage(err, t('items.unableToStart')), color: 'error' })
   } finally {
     buyLoading.value = false
   }

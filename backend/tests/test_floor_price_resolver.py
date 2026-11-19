@@ -75,4 +75,4 @@ def test_checkout_reads_an_unset_floor_the_same_way(fake_supabase, patch_supabas
     result = create_checkout_link.func(item_id="item-1", agreed_price=75.0)
 
     assert "PRICE VALIDATION FAILED" in result
-    fake_stripe.PaymentLink.create.assert_not_called()
+    fake_stripe.v1.payment_links.create.assert_not_called()

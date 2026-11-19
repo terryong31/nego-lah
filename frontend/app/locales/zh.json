@@ -27,7 +27,8 @@
     "actions": "操作",
     "all": "全部",
     "na": "-",
-    "selectLanguage": "选择语言"
+    "selectLanguage": "选择语言",
+    "unexpectedError": "出了点问题，请稍后再试。"
   },
   "nav": {
     "home": "首页",

@@ -27,7 +27,8 @@
     "actions": "Tindakan",
     "all": "Semua",
     "na": "-",
-    "selectLanguage": "Pilih bahasa"
+    "selectLanguage": "Pilih bahasa",
+    "unexpectedError": "Sesuatu telah berlaku masalah. Sila cuba lagi."
   },
   "nav": {
     "home": "Laman Utama",

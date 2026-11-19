@@ -138,7 +138,7 @@ describe('pages/register.vue', () => {
 
       expect(toastAddMock).toHaveBeenCalledWith({
         title: 'Registration failed',
-        description: 'Something went wrong',
+        description: 'Something went wrong. Please try again.',
         color: 'error'
       })
     })

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, h, reactive, ref, resolveComponent } from 'vue'
 import type { DropdownMenuItem, TableColumn } from '@nuxt/ui'
+import { getErrorMessage } from '~/utils/error'
 
 const UButton = resolveComponent('UButton')
 
@@ -156,8 +157,7 @@ async function recordShipment(o: Order) {
       toast.add({ title: t('admin.ordersSection.shipmentRecorded'), description: t('admin.ordersSection.shipmentPartial'), color: 'warning' })
     }
   } catch (err) {
-    const e = err as { data?: { detail?: string }, message?: string }
-    toast.add({ title: t('admin.ordersSection.shipmentFailed'), description: e.data?.detail || e.message, color: 'error' })
+    toast.add({ title: t('admin.ordersSection.shipmentFailed'), description: getErrorMessage(err, t('common.unexpectedError')), color: 'error' })
   } finally {
     busy.value = null
   }
@@ -179,8 +179,7 @@ async function changeStatus(o: Order, status: string) {
     o.status = status
     toast.add({ title: t('admin.ordersSection.markedSuccess', { status: status.replace('_', ' ') }), color: 'success' })
   } catch (err) {
-    const e = err as { data?: { detail?: string }, message?: string }
-    toast.add({ title: t('admin.ordersSection.updateFailed'), description: e.data?.detail || e.message, color: 'error' })
+    toast.add({ title: t('admin.ordersSection.updateFailed'), description: getErrorMessage(err, t('common.unexpectedError')), color: 'error' })
   } finally {
     busy.value = null
   }
@@ -194,8 +193,7 @@ async function remove(o: Order) {
     toast.add({ title: t('admin.ordersSection.deletedSuccess'), color: 'success' })
     await refresh()
   } catch (err) {
-    const e = err as { data?: { detail?: string }, message?: string }
-    toast.add({ title: t('admin.ordersSection.deleteFailed'), description: e.data?.detail || e.message, color: 'error' })
+    toast.add({ title: t('admin.ordersSection.deleteFailed'), description: getErrorMessage(err, t('common.unexpectedError')), color: 'error' })
   } finally {
     busy.value = null
   }

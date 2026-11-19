@@ -8,13 +8,9 @@ Stores Stripe IDs for cleanup when links expire or are cancelled.
 import json
 from datetime import UTC, datetime
 
-import stripe
-
 from core.cache import redis_client
-from core.env import STRIPE_API_KEY
 from core.logger import logger
-
-stripe.api_key = STRIPE_API_KEY
+from core.stripe_client import get_stripe_client
 
 # 3 days in seconds
 PAYMENT_TTL = 3 * 24 * 60 * 60
@@ -131,14 +127,15 @@ def delete_pending_payment(user_id: str, item_id: str, cleanup_stripe: bool = Tr
 
     if payment and cleanup_stripe:
         try:
+            client = get_stripe_client()
             # Deactivate payment link
             if payment.get("payment_link_id"):
-                stripe.PaymentLink.modify(payment["payment_link_id"], active=False)
+                client.v1.payment_links.update(payment["payment_link_id"], params={"active": False})
                 logger.info(f"✅ Deactivated PaymentLink: {payment['payment_link_id']}")
 
             # Archive product
             if payment.get("product_id"):
-                stripe.Product.modify(payment["product_id"], active=False)
+                client.v1.products.update(payment["product_id"], params={"active": False})
                 logger.info(f"✅ Archived Product: {payment['product_id']}")
 
         except Exception as e:
@@ -179,14 +176,15 @@ def cleanup_expired_payments() -> int:
             payment = json.loads(data)
 
             try:
+                client = get_stripe_client()
                 # Deactivate payment link
                 if payment.get("payment_link_id"):
-                    stripe.PaymentLink.modify(payment["payment_link_id"], active=False)
+                    client.v1.payment_links.update(payment["payment_link_id"], params={"active": False})
                     logger.info(f"🧹 Cleaned up expired PaymentLink: {payment['payment_link_id']}")
 
                 # Archive product
                 if payment.get("product_id"):
-                    stripe.Product.modify(payment["product_id"], active=False)
+                    client.v1.products.update(payment["product_id"], params={"active": False})
                     logger.info(f"🧹 Archived expired Product: {payment['product_id']}")
 
                 cleaned += 1

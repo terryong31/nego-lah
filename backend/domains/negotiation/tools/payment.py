@@ -22,20 +22,17 @@ def create_checkout_link(item_id: str, agreed_price: float) -> str:
     Returns:
         Checkout URL or error message
     """
-    import stripe
-
     # Service role, not the anon key: the floor check below reads
     # `min_price`, which anon / authenticated cannot select (SPEC-036).
     from core.connector import admin_supabase
-    from core.env import FRONTEND_URL, STRIPE_API_KEY
+    from core.env import FRONTEND_URL
+    from core.stripe_client import get_stripe_client
 
     logger.info(f"\n{'=' * 50}")
     logger.info("💳 CREATE_CHECKOUT_LINK CALLED")
     logger.info(f"📦 Item ID: {item_id}")
     logger.info(f"💰 Agreed Price: RM{agreed_price}")
     logger.info(f"{'=' * 50}")
-
-    stripe.api_key = STRIPE_API_KEY
 
     # Get current user_id from request-scoped context
     from domains.negotiation.context import get_item_id, get_user_id
@@ -152,37 +149,46 @@ Please continue negotiating with the seller for a fair price."""
     logger.info(f"✅ SECURITY: Price {agreed_price} >= min {min_price} and >= standing {standing_price} - APPROVED")
 
     try:
+        client = get_stripe_client()
+
         # Create Stripe Product (so we can archive it later)
         logger.info("🔄 Creating Stripe Product...")
-        product = stripe.Product.create(
-            name=item_name, metadata={"item_id": item_id, "user_id": user_id, "source": "nego_lah_ai"}
+        product = client.v1.products.create(
+            params={
+                "name": item_name,
+                "metadata": {"item_id": item_id, "user_id": user_id, "source": "nego_lah_ai"},
+            }
         )
         logger.info(f"✅ Product created: {product.id}")
 
         # Create Stripe Price
         logger.info("🔄 Creating Stripe Price...")
-        price = stripe.Price.create(
-            product=product.id,
-            unit_amount=int(agreed_price * 100),  # Convert to cents
-            currency="myr",
+        price = client.v1.prices.create(
+            params={
+                "product": product.id,
+                "unit_amount": int(agreed_price * 100),  # Convert to cents
+                "currency": "myr",
+            }
         )
         logger.info(f"✅ Price created: {price.id}")
 
         # Create Payment Link with user_id in metadata (for webhook to identify buyer)
         logger.info("🔄 Creating Stripe PaymentLink...")
-        payment_link = stripe.PaymentLink.create(
-            line_items=[{"price": price.id, "quantity": 1}],
-            metadata={
-                "item_id": item_id,
-                "user_id": user_id,
-                "item_name": item_name,
-            },
-            after_completion={
-                "type": "redirect",
-                "redirect": {
-                    "url": f"{FRONTEND_URL}/checkout/success?payment=success&item_id={item_id}&session_id={{CHECKOUT_SESSION_ID}}"
+        payment_link = client.v1.payment_links.create(
+            params={
+                "line_items": [{"price": price.id, "quantity": 1}],
+                "metadata": {
+                    "item_id": item_id,
+                    "user_id": user_id,
+                    "item_name": item_name,
                 },
-            },
+                "after_completion": {
+                    "type": "redirect",
+                    "redirect": {
+                        "url": f"{FRONTEND_URL}/checkout/success?payment=success&item_id={item_id}&session_id={{CHECKOUT_SESSION_ID}}"
+                    },
+                },
+            }
         )
         logger.info(f"✅ Payment Link created: {payment_link.url}")
 

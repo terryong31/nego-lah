@@ -2,6 +2,7 @@
 import type { FormSubmitEvent } from '@nuxt/ui'
 import { registerSchema, type RegisterForm } from '~/utils/schemas'
 import { loginRedirect } from '~/utils/auth'
+import { getErrorMessage } from '~/utils/error'
 
 const { t } = useI18n()
 const { register } = useAuth()
@@ -68,10 +69,9 @@ async function onSubmit(payload: FormSubmitEvent<RegisterForm>) {
     })
     goToLogin()
   } catch (err) {
-    const detail = (err as { data?: { detail?: string } })?.data?.detail
     toast.add({
       title: 'Registration failed',
-      description: detail || (err instanceof Error ? err.message : 'Something went wrong'),
+      description: getErrorMessage(err, t('common.unexpectedError')),
       color: 'error'
     })
   } finally {

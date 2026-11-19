@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { FormSubmitEvent } from '@nuxt/ui'
 import { forgotPasswordSchema, type ForgotPasswordForm } from '~/utils/schemas'
+import { getErrorMessage } from '~/utils/error'
 
 const { t } = useI18n()
 const { forgotPassword } = useAuth()
@@ -51,7 +52,7 @@ async function onSubmit(payload: FormSubmitEvent<ForgotPasswordForm>) {
   } catch (err) {
     toast.add({
       title: t('auth.requestFailed'),
-      description: err instanceof Error ? err.message : t('profile.somethingWentWrong'),
+      description: getErrorMessage(err, t('common.unexpectedError')),
       color: 'error'
     })
   } finally {

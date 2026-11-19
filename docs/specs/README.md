@@ -150,5 +150,6 @@ tests that prove it. No non-trivial change starts without one (see [`AGENTS.md`]
 | [SPEC-111](SPEC-111-deep-inspection-followups.md) | Re-Sold Items Refund, Dead Sub-Agents Go, Errors Stop Leaking | complete |
 | [SPEC-112](SPEC-112-client-item-image-compression.md) | Client-Side Item Photo Downscaling & Caddy Upload Limit Alignment | complete |
 | [SPEC-113](SPEC-113-dependabot-security-and-ci-remediation.md) | Dependabot Security Advisory & CI Remediation | complete |
+| [SPEC-114](SPEC-114-stripe-v1-client-and-generic-error-toasts.md) | StripeClient v1 Checkout Fix & Generic Frontend Error Toasts | complete |
 <!-- END GENERATED -->
 <!-- vale on -->

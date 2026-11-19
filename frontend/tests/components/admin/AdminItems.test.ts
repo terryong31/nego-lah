@@ -189,7 +189,7 @@ describe('components/admin/AdminItems.vue', () => {
       expect(vm.busy).toBeNull()
     })
 
-    it('falls back to err.message when the delete error has no API detail', async () => {
+    it('falls back to a generic message when the delete error has no API detail', async () => {
       const item = makeItem({ id: 'i23' })
       callMock.mockResolvedValueOnce([item])
       const wrapper = await mountSuspended(AdminItems)
@@ -201,7 +201,7 @@ describe('components/admin/AdminItems.vue', () => {
 
       expect(toastAddMock).toHaveBeenCalledWith({
         title: 'Delete failed',
-        description: 'server exploded',
+        description: 'Something went wrong. Please try again.',
         color: 'error'
       })
     })

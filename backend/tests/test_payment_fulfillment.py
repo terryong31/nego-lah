@@ -146,17 +146,16 @@ def test_refund_success(fake_stripe):
     result = fulfillment._refund("pi_123", reason="duplicate")
 
     assert result is True
-    fake_stripe.Refund.create.assert_called_once_with(
-        payment_intent="pi_123",
-        reason="duplicate",
-        idempotency_key="auto_refund_pi_123",
+    fake_stripe.v1.refunds.create.assert_called_once_with(
+        params={"payment_intent": "pi_123", "reason": "duplicate"},
+        options={"idempotency_key": "auto_refund_pi_123"},
     )
 
 
 def test_refund_treats_invalid_request_error_as_success(fake_stripe):
     # e.g. "charge already refunded" -- Stripe rejects a second refund attempt
     # with InvalidRequestError; fulfillment.py treats that as already-done.
-    fake_stripe.Refund.create.side_effect = stripe.error.InvalidRequestError(
+    fake_stripe.v1.refunds.create.side_effect = stripe.InvalidRequestError(
         "Charge already refunded", param="payment_intent"
     )
 
@@ -166,7 +165,7 @@ def test_refund_treats_invalid_request_error_as_success(fake_stripe):
 
 
 def test_refund_generic_exception_returns_false(fake_stripe):
-    fake_stripe.Refund.create.side_effect = RuntimeError("network blip")
+    fake_stripe.v1.refunds.create.side_effect = RuntimeError("network blip")
 
     result = fulfillment._refund("pi_999")
 
@@ -638,10 +637,9 @@ def test_fulfill_purchase_race_lost_refunds_loser(fake_stripe, patch_supabase, f
     result = fulfillment.fulfill_purchase(item_id="item-1", user_id="user-1", payment_intent="pi_1", amount=10.0)
 
     assert result == {"status": "race_lost", "refunded": True, "order_id": "order-1"}
-    fake_stripe.Refund.create.assert_called_once_with(
-        payment_intent="pi_1",
-        reason="duplicate",
-        idempotency_key="auto_refund_pi_1",
+    fake_stripe.v1.refunds.create.assert_called_once_with(
+        params={"payment_intent": "pi_1", "reason": "duplicate"},
+        options={"idempotency_key": "auto_refund_pi_1"},
     )
     # Losing order gets marked refunded.
     fake_supabase.table.return_value.update.return_value.eq.return_value.execute.assert_any_call()
@@ -661,7 +659,7 @@ def test_fulfill_purchase_race_lost_item_gone_entirely(
     result = fulfillment.fulfill_purchase(item_id="item-1", user_id="user-1", payment_intent="pi_1", amount=10.0)
 
     assert result == {"status": "race_lost", "refunded": True, "order_id": "order-1"}
-    fake_stripe.Refund.create.assert_called_once()
+    fake_stripe.v1.refunds.create.assert_called_once()
 
 
 def test_fulfill_purchase_refund_failed_reports_sentry_and_returns_error(
@@ -671,7 +669,7 @@ def test_fulfill_purchase_refund_failed_reports_sentry_and_returns_error(
     _order_insert_result(fake_supabase, {"id": "order-1"})
     _items_claim_result(fake_supabase, [])
     _items_select_result(fake_supabase, [{"status": "sold", "buyer_id": "other-user"}])
-    fake_stripe.Refund.create.side_effect = RuntimeError("stripe outage")
+    fake_stripe.v1.refunds.create.side_effect = RuntimeError("stripe outage")
     fake_capture = MagicMock()
     monkeypatch.setattr(fulfillment.sentry_sdk, "capture_message", fake_capture)
 

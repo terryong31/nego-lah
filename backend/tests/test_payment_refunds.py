@@ -58,7 +58,7 @@ def test_no_transaction_found_returns_error_without_calling_stripe(patch_supabas
     result = process_refund("item-1")
 
     assert result == {"success": False, "error": "Transaction not found for this item"}
-    fake_stripe.Refund.create.assert_not_called()
+    fake_stripe.v1.refunds.create.assert_not_called()
 
 
 def test_transaction_already_refunded_returns_error_without_calling_stripe(patch_supabase, fake_supabase, fake_stripe):
@@ -70,7 +70,7 @@ def test_transaction_already_refunded_returns_error_without_calling_stripe(patch
     result = process_refund("item-1")
 
     assert result == {"success": False, "error": "This item has already been refunded"}
-    fake_stripe.Refund.create.assert_not_called()
+    fake_stripe.v1.refunds.create.assert_not_called()
 
 
 def test_a_refunded_and_resold_item_refunds_the_second_sale(patch_supabase, fake_supabase, fake_stripe, monkeypatch):
@@ -84,13 +84,13 @@ def test_a_refunded_and_resold_item_refunds_the_second_sale(patch_supabase, fake
             ]
         )
     )
-    fake_stripe.Refund.create.return_value = type("FakeRefund", (), {"id": "re_second"})()
+    fake_stripe.v1.refunds.create.return_value = type("FakeRefund", (), {"id": "re_second"})()
     monkeypatch.setattr("core.cache.invalidate_item_cache", lambda item_id=None: None)
 
     result = process_refund("item-1")
 
     assert result == {"success": True, "refund_id": "re_second", "amount_refunded": 45}
-    assert fake_stripe.Refund.create.call_args.kwargs["payment_intent"] == "pi_second"
+    assert fake_stripe.v1.refunds.create.call_args.kwargs["params"]["payment_intent"] == "pi_second"
     fake_supabase.table.return_value.select.return_value.eq.return_value.order.assert_called_once_with(
         "created_at", desc=True
     )
@@ -107,7 +107,7 @@ def test_missing_stripe_payment_id_returns_error_without_calling_stripe(patch_su
     result = process_refund("item-1")
 
     assert result == {"success": False, "error": "No Stripe payment ID found"}
-    fake_stripe.Refund.create.assert_not_called()
+    fake_stripe.v1.refunds.create.assert_not_called()
 
 
 def test_missing_stripe_payment_id_when_value_is_falsy(patch_supabase, fake_supabase, fake_stripe):
@@ -120,7 +120,7 @@ def test_missing_stripe_payment_id_when_value_is_falsy(patch_supabase, fake_supa
     result = process_refund("item-1")
 
     assert result == {"success": False, "error": "No Stripe payment ID found"}
-    fake_stripe.Refund.create.assert_not_called()
+    fake_stripe.v1.refunds.create.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -135,7 +135,7 @@ def test_success_path_updates_tables_and_invalidates_cache(patch_supabase, fake_
     )
 
     fake_refund = type("FakeRefund", (), {"id": "re_abc123"})()
-    fake_stripe.Refund.create.return_value = fake_refund
+    fake_stripe.v1.refunds.create.return_value = fake_refund
 
     invalidate_calls = []
     monkeypatch.setattr(
@@ -148,8 +148,9 @@ def test_success_path_updates_tables_and_invalidates_cache(patch_supabase, fake_
     assert result == {"success": True, "refund_id": "re_abc123", "amount_refunded": 4999}
 
     # Stripe was called with the payment intent and reason.
-    fake_stripe.Refund.create.assert_called_once_with(
-        payment_intent="pi_123", reason="duplicate", idempotency_key="admin_refund_pi_123"
+    fake_stripe.v1.refunds.create.assert_called_once_with(
+        params={"payment_intent": "pi_123", "reason": "duplicate"},
+        options={"idempotency_key": "admin_refund_pi_123"},
     )
 
     # Cache was invalidated for this item.
@@ -188,14 +189,15 @@ def test_success_path_defaults_reason_to_requested_by_customer(patch_supabase, f
     fake_supabase.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
         _txn_result([{"status": "completed", "stripe_payment_id": "pi_999", "amount": 100}])
     )
-    fake_stripe.Refund.create.return_value = type("FakeRefund", (), {"id": "re_default"})()
+    fake_stripe.v1.refunds.create.return_value = type("FakeRefund", (), {"id": "re_default"})()
     monkeypatch.setattr("core.cache.invalidate_item_cache", lambda item_id=None: None)
 
     result = process_refund("item-7")  # no reason passed
 
     assert result["success"] is True
-    fake_stripe.Refund.create.assert_called_once_with(
-        payment_intent="pi_999", reason="requested_by_customer", idempotency_key="admin_refund_pi_999"
+    fake_stripe.v1.refunds.create.assert_called_once_with(
+        params={"payment_intent": "pi_999", "reason": "requested_by_customer"},
+        options={"idempotency_key": "admin_refund_pi_999"},
     )
 
 
@@ -206,7 +208,7 @@ def test_success_path_survives_cache_invalidation_failure(patch_supabase, fake_s
     fake_supabase.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
         _txn_result([{"status": "completed", "stripe_payment_id": "pi_555", "amount": 250}])
     )
-    fake_stripe.Refund.create.return_value = type("FakeRefund", (), {"id": "re_555"})()
+    fake_stripe.v1.refunds.create.return_value = type("FakeRefund", (), {"id": "re_555"})()
 
     def _boom(item_id=None):
         raise RuntimeError("cache backend down")
@@ -232,7 +234,7 @@ def test_db_write_failure_after_stripe_refund_returns_success_with_warning(
     fake_supabase.table.return_value.update.return_value.eq.return_value.execute.side_effect = RuntimeError(
         "supabase unreachable"
     )
-    fake_stripe.Refund.create.return_value = type("FakeRefund", (), {"id": "re_777"})()
+    fake_stripe.v1.refunds.create.return_value = type("FakeRefund", (), {"id": "re_777"})()
     monkeypatch.setattr("core.cache.invalidate_item_cache", lambda item_id=None: None)
 
     result = process_refund("item-777")
@@ -242,7 +244,7 @@ def test_db_write_failure_after_stripe_refund_returns_success_with_warning(
     assert result["amount_refunded"] == 1500
     assert "db_sync_warning" in result
     # Stripe refund happened exactly once -- no retry, no double refund.
-    fake_stripe.Refund.create.assert_called_once()
+    fake_stripe.v1.refunds.create.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -257,7 +259,7 @@ def test_stripe_error_is_caught_and_returns_failure_dict(patch_supabase, fake_su
     fake_supabase.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
         _txn_result([{"status": "completed", "stripe_payment_id": "pi_bad", "amount": 10}])
     )
-    fake_stripe.Refund.create.side_effect = stripe.error.StripeError("card issuer declined the refund")
+    fake_stripe.v1.refunds.create.side_effect = stripe.StripeError("card issuer declined the refund")
 
     result = process_refund("item-err")
 
@@ -274,7 +276,7 @@ def test_non_stripe_exception_propagates_uncaught(patch_supabase, fake_supabase,
     fake_supabase.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
         _txn_result([{"status": "completed", "stripe_payment_id": "pi_weird", "amount": 10}])
     )
-    fake_stripe.Refund.create.side_effect = ValueError("totally unexpected")
+    fake_stripe.v1.refunds.create.side_effect = ValueError("totally unexpected")
 
     with pytest.raises(ValueError, match="totally unexpected"):
         process_refund("item-weird")

@@ -23,11 +23,8 @@ import stripe
 from core import bus
 from core.broadcast import broadcast_to_chat
 from core.connector import admin_supabase
-from core.env import STRIPE_API_KEY
 from core.logger import logger
-
-stripe.api_key = STRIPE_API_KEY
-
+from core.stripe_client import get_stripe_client
 
 # Postgres SQLSTATE for unique_violation. This is the idempotency anchor for the
 # whole payment webhook: orders.stripe_payment_id is UNIQUE, so a duplicate
@@ -73,14 +70,13 @@ def _refund(payment_intent: str, reason: str = "duplicate") -> bool:
     if not payment_intent or payment_intent.startswith("nopi_"):
         return False
     try:
-        stripe.Refund.create(
-            payment_intent=payment_intent,
-            reason=reason,
-            idempotency_key=f"auto_refund_{payment_intent}",
+        get_stripe_client().v1.refunds.create(
+            params={"payment_intent": payment_intent, "reason": reason},
+            options={"idempotency_key": f"auto_refund_{payment_intent}"},
         )
         logger.info(f"💸 Auto-refunded payment {payment_intent} ({reason})")
         return True
-    except stripe.error.InvalidRequestError as e:
+    except stripe.InvalidRequestError as e:
         # e.g. charge already refunded — treat as already-done, not a failure.
         logger.warning(f"↩️ Refund for {payment_intent} not needed/possible: {e}")
         return True

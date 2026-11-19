@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { loginRedirect, resolveUserId } from '~/utils/auth'
+import { getErrorMessage } from '~/utils/error'
 import { useItemStore } from '~/stores/item'
 
 interface Item {
@@ -115,7 +116,7 @@ async function handleBuyNow() {
       toast.add({ title: t('items.noLongerAvailable'), description: t('items.justSold'), color: 'warning' })
       await refresh()
     } else {
-      toast.add({ title: t('items.checkoutFailed'), description: err instanceof Error ? err.message : t('items.unableToStart'), color: 'error' })
+      toast.add({ title: t('items.checkoutFailed'), description: getErrorMessage(err, t('items.unableToStart')), color: 'error' })
     }
   } finally {
     buyLoading.value = false

@@ -2,6 +2,7 @@
 import type { TableColumn } from '@nuxt/ui'
 import type { AdminItem } from '~/utils/adminItem'
 import { itemThumbnail } from '~/utils/adminItem'
+import { getErrorMessage } from '~/utils/error'
 
 // The listings table. Creating and editing live in <AdminItemFormModal>, which
 // owns all of that form state; this component only lists, deletes, and tells
@@ -35,8 +36,7 @@ async function remove(item: AdminItem) {
     toast.add({ title: 'Item deleted', color: 'success' })
     await refresh()
   } catch (err) {
-    const e = err as { data?: { detail?: string }, message?: string }
-    toast.add({ title: 'Delete failed', description: e.data?.detail || e.message, color: 'error' })
+    toast.add({ title: 'Delete failed', description: getErrorMessage(err, t('common.unexpectedError')), color: 'error' })
   } finally {
     busy.value = null
   }

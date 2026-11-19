@@ -2,6 +2,7 @@
 import type { FormSubmitEvent } from '@nuxt/ui'
 import { loginSchema, type LoginForm } from '~/utils/schemas'
 import { safeRedirectPath } from '~/utils/auth'
+import { getErrorMessage } from '~/utils/error'
 
 const { t } = useI18n()
 const router = useRouter()
@@ -103,12 +104,11 @@ async function onSubmit(payload: FormSubmitEvent<LoginForm>) {
     toast.add({ title: t('auth.loginSuccess'), description: t('auth.loginSuccessDesc'), color: 'success' })
     router.push(getSafeRedirect())
   } catch (err) {
-    // The server answers every bad credential the same way, on purpose, so the
-    // detail is safe to surface as-is.
-    const detail = (err as { data?: { detail?: string } })?.data?.detail
+    // The server answers every bad credential the same way, on purpose, so a
+    // 4xx detail is safe to surface as-is while 5xx/network errors stay generic.
     toast.add({
       title: 'Login failed',
-      description: detail || (err instanceof Error ? err.message : 'Something went wrong'),
+      description: getErrorMessage(err, t('common.unexpectedError')),
       color: 'error'
     })
   } finally {

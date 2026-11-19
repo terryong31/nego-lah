@@ -196,7 +196,10 @@ export const useItemAnalysis = () => {
 
       if (!res.ok) {
         const detail = await res.json().catch(() => null)
-        throw new Error(detail?.detail || `Analysis failed (${res.status})`)
+        throw Object.assign(new Error(detail?.detail || `Analysis failed (${res.status})`), {
+          statusCode: res.status,
+          data: detail
+        })
       }
 
       // Any environment that can't hand us a readable body (an old proxy that

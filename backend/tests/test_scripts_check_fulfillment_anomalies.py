@@ -134,10 +134,10 @@ def _patch_stripe_pi_charge(
     mock_pi = MagicMock(status=pi_status, latest_charge=latest_charge)
     mock_charge = MagicMock(refunded=charge_refunded)
     if pi_side_effect is not None:
-        monkeypatch.setattr(fake_stripe.PaymentIntent, "retrieve", MagicMock(side_effect=pi_side_effect))
+        monkeypatch.setattr(fake_stripe.v1.payment_intents, "retrieve", MagicMock(side_effect=pi_side_effect))
     else:
-        monkeypatch.setattr(fake_stripe.PaymentIntent, "retrieve", MagicMock(return_value=mock_pi))
-    monkeypatch.setattr(fake_stripe.Charge, "retrieve", MagicMock(return_value=mock_charge))
+        monkeypatch.setattr(fake_stripe.v1.payment_intents, "retrieve", MagicMock(return_value=mock_pi))
+    monkeypatch.setattr(fake_stripe.v1.charges, "retrieve", MagicMock(return_value=mock_charge))
     return mock_pi, mock_charge
 
 
@@ -231,8 +231,8 @@ def test_stuck_refund_uses_charge_retrieve_with_latest_charge_id(monkeypatch, fa
 
     cfa.check_anomalies()
 
-    fake_stripe.PaymentIntent.retrieve.assert_called_once_with("pi_555")
-    fake_stripe.Charge.retrieve.assert_called_once_with("ch_specific")
+    fake_stripe.v1.payment_intents.retrieve.assert_called_once_with("pi_555")
+    fake_stripe.v1.charges.retrieve.assert_called_once_with("ch_specific")
     _capture_message.assert_called_once()
     assert _capture_message.call_args.kwargs["level"] == "fatal"
 
@@ -247,11 +247,11 @@ def test_general_warning_when_no_payment_intent_id(monkeypatch, fake_stripe, _ca
     order = _order(item_id="item-1", stripe_payment_id=None)
     item = {"status": "sold", "buyer_id": "someone-else"}
     _patch_admin(monkeypatch, orders_data=[order], items_by_id={"item-1": item})
-    monkeypatch.setattr(fake_stripe.PaymentIntent, "retrieve", MagicMock())
+    monkeypatch.setattr(fake_stripe.v1.payment_intents, "retrieve", MagicMock())
 
     cfa.check_anomalies()
 
-    fake_stripe.PaymentIntent.retrieve.assert_not_called()
+    fake_stripe.v1.payment_intents.retrieve.assert_not_called()
     _capture_message.assert_called_once()
     kwargs = _capture_message.call_args.kwargs
     assert kwargs["level"] == "warning"
@@ -262,11 +262,11 @@ def test_general_warning_when_payment_intent_id_not_pi_prefixed(monkeypatch, fak
     order = _order(item_id="item-1", stripe_payment_id="ch_not_a_payment_intent")
     item = {"status": "sold", "buyer_id": "someone-else"}
     _patch_admin(monkeypatch, orders_data=[order], items_by_id={"item-1": item})
-    monkeypatch.setattr(fake_stripe.PaymentIntent, "retrieve", MagicMock())
+    monkeypatch.setattr(fake_stripe.v1.payment_intents, "retrieve", MagicMock())
 
     cfa.check_anomalies()
 
-    fake_stripe.PaymentIntent.retrieve.assert_not_called()
+    fake_stripe.v1.payment_intents.retrieve.assert_not_called()
     _capture_message.assert_called_once()
     assert _capture_message.call_args.kwargs["level"] == "warning"
 
@@ -279,7 +279,7 @@ def test_general_warning_when_payment_intent_not_succeeded(monkeypatch, fake_str
 
     cfa.check_anomalies()
 
-    fake_stripe.Charge.retrieve.assert_not_called()
+    fake_stripe.v1.charges.retrieve.assert_not_called()
     _capture_message.assert_called_once()
     kwargs = _capture_message.call_args.kwargs
     assert kwargs["level"] == "warning"
@@ -294,7 +294,7 @@ def test_general_warning_when_no_latest_charge(monkeypatch, fake_stripe, _captur
 
     cfa.check_anomalies()
 
-    fake_stripe.Charge.retrieve.assert_not_called()
+    fake_stripe.v1.charges.retrieve.assert_not_called()
     _capture_message.assert_called_once()
     assert _capture_message.call_args.kwargs["level"] == "warning"
 
@@ -370,11 +370,11 @@ def test_created_at_unparseable_falls_back_to_now_and_suppresses_alert(monkeypat
     order["created_at"] = "not-a-real-timestamp"
     item = {"status": "sold", "buyer_id": "someone-else"}
     _patch_admin(monkeypatch, orders_data=[order], items_by_id={"item-1": item})
-    monkeypatch.setattr(fake_stripe.PaymentIntent, "retrieve", MagicMock())
+    monkeypatch.setattr(fake_stripe.v1.payment_intents, "retrieve", MagicMock())
 
     cfa.check_anomalies()
 
-    fake_stripe.PaymentIntent.retrieve.assert_not_called()
+    fake_stripe.v1.payment_intents.retrieve.assert_not_called()
     _capture_message.assert_not_called()
 
 
@@ -450,8 +450,8 @@ def test_multiple_orders_mixed_outcomes(monkeypatch, fake_stripe, _capture_messa
     assert levels == {"fatal", "warning"}
     order_ids_alerted = {call.kwargs["tags"]["order_id"] for call in _capture_message.call_args_list}
     assert order_ids_alerted == {"order-fatal", "order-warn"}
-    # stripe.PaymentIntent.retrieve should only ever be called for the order
+    # stripe.v1.payment_intents.retrieve should only ever be called for the order
     # that actually has a "pi_"-prefixed payment id (fatal_order); the
     # warning_order (no payment id) and clean_order (not anomalous, so the
     # SLA branch is never entered) must not trigger a Stripe call.
-    fake_stripe.PaymentIntent.retrieve.assert_called_once_with("pi_fatal")
+    fake_stripe.v1.payment_intents.retrieve.assert_called_once_with("pi_fatal")

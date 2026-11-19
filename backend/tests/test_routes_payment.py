@@ -813,7 +813,7 @@ async def test_confirm_payment_no_session_item_lookup_empty_is_pending(
 
 async def test_confirm_payment_invalid_stripe_session_400(client, auth_user, fake_stripe):
     auth_user("buyer-1")
-    fake_stripe.checkout.Session.retrieve.side_effect = real_stripe.error.InvalidRequestError(
+    fake_stripe.v1.checkout.sessions.retrieve.side_effect = real_stripe.InvalidRequestError(
         "No such checkout session", None
     )
 
@@ -826,7 +826,7 @@ async def test_confirm_payment_invalid_stripe_session_400(client, auth_user, fak
 async def test_confirm_payment_not_paid_400(client, auth_user, fake_stripe):
     auth_user("buyer-1")
     session = _make_stripe_session(payment_status="unpaid")
-    fake_stripe.checkout.Session.retrieve.return_value = session
+    fake_stripe.v1.checkout.sessions.retrieve.return_value = session
 
     response = await client.post("/payment/confirm-payment", params={"session_id": "cs_1"})
 
@@ -837,7 +837,7 @@ async def test_confirm_payment_not_paid_400(client, auth_user, fake_stripe):
 async def test_confirm_payment_buyer_mismatch_403(client, auth_user, fake_stripe):
     auth_user("buyer-1")
     session = _make_stripe_session(payment_status="paid", metadata={"item_id": "item-1", "user_id": "someone-else"})
-    fake_stripe.checkout.Session.retrieve.return_value = session
+    fake_stripe.v1.checkout.sessions.retrieve.return_value = session
 
     response = await client.post("/payment/confirm-payment", params={"session_id": "cs_1"})
 
@@ -848,7 +848,7 @@ async def test_confirm_payment_buyer_mismatch_403(client, auth_user, fake_stripe
 async def test_confirm_payment_missing_item_id_after_metadata_400(client, auth_user, fake_stripe):
     auth_user("buyer-1")
     session = _make_stripe_session(payment_status="paid", metadata={})
-    fake_stripe.checkout.Session.retrieve.return_value = session
+    fake_stripe.v1.checkout.sessions.retrieve.return_value = session
 
     response = await client.post("/payment/confirm-payment", params={"session_id": "cs_1"})
 
@@ -865,7 +865,7 @@ async def test_confirm_payment_fulfilled_returns_success(client, auth_user, fake
         amount_total=10000,
         customer_details={"email": "buyer@example.com"},
     )
-    fake_stripe.checkout.Session.retrieve.return_value = session
+    fake_stripe.v1.checkout.sessions.retrieve.return_value = session
 
     captured = {}
 
@@ -894,7 +894,7 @@ async def test_confirm_payment_fulfilled_returns_success(client, auth_user, fake
 async def test_confirm_payment_duplicate_returns_already_sold(client, auth_user, fake_stripe, monkeypatch):
     auth_user("buyer-1")
     session = _make_stripe_session(payment_status="paid", metadata={"item_id": "item-1", "user_id": "buyer-1"})
-    fake_stripe.checkout.Session.retrieve.return_value = session
+    fake_stripe.v1.checkout.sessions.retrieve.return_value = session
     monkeypatch.setattr(
         fulfillment,
         "fulfill_purchase",
@@ -910,7 +910,7 @@ async def test_confirm_payment_duplicate_returns_already_sold(client, auth_user,
 async def test_confirm_payment_race_lost_returns_refunded(client, auth_user, fake_stripe, monkeypatch):
     auth_user("buyer-1")
     session = _make_stripe_session(payment_status="paid", metadata={"item_id": "item-1", "user_id": "buyer-1"})
-    fake_stripe.checkout.Session.retrieve.return_value = session
+    fake_stripe.v1.checkout.sessions.retrieve.return_value = session
     monkeypatch.setattr(
         fulfillment,
         "fulfill_purchase",
@@ -926,7 +926,7 @@ async def test_confirm_payment_race_lost_returns_refunded(client, auth_user, fak
 async def test_confirm_payment_unknown_fulfillment_status_500(client, auth_user, fake_stripe, monkeypatch):
     auth_user("buyer-1")
     session = _make_stripe_session(payment_status="paid", metadata={"item_id": "item-1", "user_id": "buyer-1"})
-    fake_stripe.checkout.Session.retrieve.return_value = session
+    fake_stripe.v1.checkout.sessions.retrieve.return_value = session
     monkeypatch.setattr(
         fulfillment,
         "fulfill_purchase",
@@ -944,7 +944,7 @@ async def test_confirm_payment_item_id_falls_back_to_query_param(client, auth_us
     `metadata.get('item_id') or item_id` fallback branch."""
     auth_user("buyer-1")
     session = _make_stripe_session(payment_status="paid", metadata={"user_id": "buyer-1"})
-    fake_stripe.checkout.Session.retrieve.return_value = session
+    fake_stripe.v1.checkout.sessions.retrieve.return_value = session
 
     captured = {}
 

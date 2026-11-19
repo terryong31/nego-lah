@@ -694,7 +694,7 @@ describe('components/admin/AdminItemFormModal.vue', () => {
       expect(vm.form.name).toBe('')
     })
 
-    it('falls back to err.message when the rejection has no API detail', async () => {
+    it('falls back to a generic message when the rejection has no API detail', async () => {
       const wrapper = await mountSuspended(AdminItemFormModal)
       const vm = wrapper.vm as unknown as VmAny
       vm.openCreate()
@@ -707,7 +707,7 @@ describe('components/admin/AdminItemFormModal.vue', () => {
 
       expect(toastAddMock).toHaveBeenCalledWith({
         title: 'Analysis failed',
-        description: 'boom',
+        description: 'Something went wrong. Please try again.',
         color: 'warning'
       })
     })
@@ -894,7 +894,7 @@ describe('components/admin/AdminItemFormModal.vue', () => {
         expect(vm.saving).toBe(false)
       })
 
-      it('falls back to err.message on create failure when there is no API detail', async () => {
+      it('falls back to a generic message on create failure when there is no API detail', async () => {
         const wrapper = await mountSuspended(AdminItemFormModal)
         const vm = wrapper.vm as unknown as VmAny
         await setupCreatable(vm)
@@ -905,7 +905,7 @@ describe('components/admin/AdminItemFormModal.vue', () => {
 
         expect(toastAddMock).toHaveBeenCalledWith({
           title: 'Create failed',
-          description: 'upload timed out',
+          description: 'Something went wrong. Please try again.',
           color: 'error'
         })
       })
@@ -1051,7 +1051,7 @@ describe('components/admin/AdminItemFormModal.vue', () => {
         expect(vm.saving).toBe(false)
       })
 
-      it('falls back to err.message on update failure when there is no API detail', async () => {
+      it('falls back to a generic message on update failure when there is no API detail', async () => {
         const original = makeItem({ id: 'i9' })
         const wrapper = await mountSuspended(AdminItemFormModal)
         const vm = wrapper.vm as unknown as VmAny
@@ -1065,7 +1065,7 @@ describe('components/admin/AdminItemFormModal.vue', () => {
 
         expect(toastAddMock).toHaveBeenCalledWith({
           title: 'Update failed',
-          description: 'server exploded',
+          description: 'Something went wrong. Please try again.',
           color: 'error'
         })
       })

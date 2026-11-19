@@ -198,7 +198,7 @@ describe('components/admin/AdminUsers.vue', () => {
       expect(vm.busy).toBeNull()
     })
 
-    it('falls back to err.message when the failed request has no detail', async () => {
+    it('falls back to a generic message when the failed request has no detail', async () => {
       const user = makeUser()
       callMock.mockResolvedValueOnce([user])
       wrapper = await mountSuspended(AdminUsers)
@@ -210,7 +210,7 @@ describe('components/admin/AdminUsers.vue', () => {
 
       expect(toastAddMock).toHaveBeenCalledWith({
         title: 'Action failed',
-        description: 'server exploded',
+        description: 'Something went wrong. Please try again.',
         color: 'error'
       })
     })
@@ -277,7 +277,7 @@ describe('components/admin/AdminUsers.vue', () => {
       })
     })
 
-    it('falls back to err.message on failure when there is no API detail', async () => {
+    it('falls back to a generic message on failure when there is no API detail', async () => {
       const user = makeUser({ ai_enabled: true })
       callMock.mockResolvedValueOnce([user])
       wrapper = await mountSuspended(AdminUsers)
@@ -290,7 +290,7 @@ describe('components/admin/AdminUsers.vue', () => {
       expect(target.ai_enabled).toBe(true)
       expect(toastAddMock).toHaveBeenCalledWith({
         title: 'Action failed',
-        description: 'timeout',
+        description: 'Something went wrong. Please try again.',
         color: 'error'
       })
     })
@@ -419,7 +419,7 @@ describe('components/admin/AdminUsers.vue', () => {
       expect(vm.saving).toBe(false)
     })
 
-    it('falls back to err.message on failure when there is no API detail', async () => {
+    it('falls back to a generic message on failure when there is no API detail', async () => {
       const user = makeUser()
       callMock.mockResolvedValueOnce([user])
       wrapper = await mountSuspended(AdminUsers)
@@ -431,7 +431,7 @@ describe('components/admin/AdminUsers.vue', () => {
 
       expect(toastAddMock).toHaveBeenCalledWith({
         title: 'Update failed',
-        description: 'boom',
+        description: 'Something went wrong. Please try again.',
         color: 'error'
       })
     })
@@ -521,7 +521,7 @@ describe('components/admin/AdminUsers.vue', () => {
       expect(vm.busy).toBeNull()
     })
 
-    it('falls back to err.message when the DELETE error has no detail', async () => {
+    it('falls back to a generic message when the DELETE error has no detail', async () => {
       vi.spyOn(window, 'confirm').mockReturnValueOnce(true)
       const user = makeUser()
       callMock.mockResolvedValueOnce([user])
@@ -533,7 +533,7 @@ describe('components/admin/AdminUsers.vue', () => {
 
       expect(toastAddMock).toHaveBeenCalledWith({
         title: 'Delete failed',
-        description: 'server exploded',
+        description: 'Something went wrong. Please try again.',
         color: 'error'
       })
     })

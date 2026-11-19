@@ -168,7 +168,7 @@ describe('components/AppHeader.vue', () => {
 
       expect(toastAddMock).toHaveBeenCalledWith({
         title: 'Logout failed',
-        description: 'network down',
+        description: 'Something went wrong. Please try again.',
         color: 'error'
       })
       expect(pushSpy).toHaveBeenCalledWith('/')

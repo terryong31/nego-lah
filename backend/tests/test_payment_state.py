@@ -128,8 +128,8 @@ def test_delete_pending_payment_with_cleanup_calls_stripe(fake_stripe):
     result = payment_state.delete_pending_payment("user-d", "item-d", cleanup_stripe=True)
 
     assert result is True
-    fake_stripe.PaymentLink.modify.assert_called_once_with("plink_123", active=False)
-    fake_stripe.Product.modify.assert_called_once_with("prod_123", active=False)
+    fake_stripe.v1.payment_links.update.assert_called_once_with("plink_123", params={"active": False})
+    fake_stripe.v1.products.update.assert_called_once_with("prod_123", params={"active": False})
 
     # Redis state cleaned up.
     assert payment_state.get_pending_payment("user-d", "item-d") is None
@@ -144,8 +144,8 @@ def test_delete_pending_payment_without_cleanup_skips_stripe(fake_stripe):
     result = payment_state.delete_pending_payment("user-e", "item-e", cleanup_stripe=False)
 
     assert result is True
-    fake_stripe.PaymentLink.modify.assert_not_called()
-    fake_stripe.Product.modify.assert_not_called()
+    fake_stripe.v1.payment_links.update.assert_not_called()
+    fake_stripe.v1.products.update.assert_not_called()
     assert payment_state.get_pending_payment("user-e", "item-e") is None
 
 
@@ -153,8 +153,8 @@ def test_delete_pending_payment_missing_key_is_noop_true(fake_stripe):
     # No payment was ever stored for this user/item.
     result = payment_state.delete_pending_payment("ghost", "ghost-item", cleanup_stripe=True)
     assert result is True
-    fake_stripe.PaymentLink.modify.assert_not_called()
-    fake_stripe.Product.modify.assert_not_called()
+    fake_stripe.v1.payment_links.update.assert_not_called()
+    fake_stripe.v1.products.update.assert_not_called()
 
 
 def test_delete_pending_payment_skips_stripe_calls_for_falsy_ids(fake_stripe):
@@ -163,14 +163,14 @@ def test_delete_pending_payment_skips_stripe_calls_for_falsy_ids(fake_stripe):
     result = payment_state.delete_pending_payment("user-f", "item-f", cleanup_stripe=True)
 
     assert result is True
-    fake_stripe.PaymentLink.modify.assert_not_called()
-    fake_stripe.Product.modify.assert_not_called()
+    fake_stripe.v1.payment_links.update.assert_not_called()
+    fake_stripe.v1.products.update.assert_not_called()
     assert payment_state.get_pending_payment("user-f", "item-f") is None
 
 
 def test_delete_pending_payment_stripe_error_is_caught_not_raised(fake_stripe):
     _store(user_id="user-g", item_id="item-g")
-    fake_stripe.PaymentLink.modify.side_effect = RuntimeError("stripe exploded")
+    fake_stripe.v1.payment_links.update.side_effect = RuntimeError("stripe exploded")
 
     # Should not raise despite the Stripe error.
     result = payment_state.delete_pending_payment("user-g", "item-g", cleanup_stripe=True)
@@ -199,8 +199,8 @@ def test_cleanup_expired_payments_no_expired_entries_returns_zero(fake_stripe):
     cleaned = payment_state.cleanup_expired_payments()
 
     assert cleaned == 0
-    fake_stripe.PaymentLink.modify.assert_not_called()
-    fake_stripe.Product.modify.assert_not_called()
+    fake_stripe.v1.payment_links.update.assert_not_called()
+    fake_stripe.v1.products.update.assert_not_called()
     # Still active since it wasn't touched.
     assert payment_state.get_pending_payment("user-h", "item-h") is not None
 
@@ -211,8 +211,8 @@ def test_cleanup_expired_payments_cleans_up_expired_and_calls_stripe(fake_stripe
     cleaned = payment_state.cleanup_expired_payments()
 
     assert cleaned == 1
-    fake_stripe.PaymentLink.modify.assert_called_once_with("plink_123", active=False)
-    fake_stripe.Product.modify.assert_called_once_with("prod_123", active=False)
+    fake_stripe.v1.payment_links.update.assert_called_once_with("plink_123", params={"active": False})
+    fake_stripe.v1.products.update.assert_called_once_with("prod_123", params={"active": False})
 
     # Removed from both the data store and the cleanup queue.
     assert redis_client.get(key) is None
@@ -229,15 +229,15 @@ def test_cleanup_expired_payments_already_deleted_key_not_counted(fake_stripe):
     cleaned = payment_state.cleanup_expired_payments()
 
     assert cleaned == 0
-    fake_stripe.PaymentLink.modify.assert_not_called()
-    fake_stripe.Product.modify.assert_not_called()
+    fake_stripe.v1.payment_links.update.assert_not_called()
+    fake_stripe.v1.products.update.assert_not_called()
     # Removed from the queue regardless.
     assert key not in redis_client.zrangebyscore(CLEANUP_QUEUE_KEY, 0, time.time() + 10)
 
 
 def test_cleanup_expired_payments_stripe_error_caught_and_entry_still_removed(fake_stripe):
     key = _make_expired_entry("user-k", "item-k")
-    fake_stripe.PaymentLink.modify.side_effect = RuntimeError("stripe down")
+    fake_stripe.v1.payment_links.update.side_effect = RuntimeError("stripe down")
 
     cleaned = payment_state.cleanup_expired_payments()
 
@@ -260,8 +260,8 @@ def test_cleanup_expired_payments_processes_multiple_entries(fake_stripe):
     assert redis_client.get(key1) is None
     assert redis_client.get(key2) is None
     assert payment_state.get_pending_payment("user-l", "item-3") is not None
-    assert fake_stripe.PaymentLink.modify.call_count == 2
-    assert fake_stripe.Product.modify.call_count == 2
+    assert fake_stripe.v1.payment_links.update.call_count == 2
+    assert fake_stripe.v1.products.update.call_count == 2
 
 
 # ---------------------------------------------------------------------------

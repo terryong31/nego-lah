@@ -351,24 +351,27 @@ JPEG_BYTES = _encode_test_image("JPEG")
 # --- 5. Stripe mocking -------------------------------------------------------
 @pytest.fixture
 def fake_stripe(monkeypatch):
-    """Patches every Stripe SDK entry point this codebase actually calls with a MagicMock,
-    and returns the (patched) `stripe` module so tests can set .return_value/.side_effect."""
-    import stripe
+    """Patches `core.stripe_client` with a structured MagicMock client exposing
+    every `.v1.*` service and `construct_event` entry point this codebase calls."""
+    from core import stripe_client
 
-    for target, name in (
-        (stripe.checkout.Session, "create"),
-        (stripe.checkout.Session, "retrieve"),
-        (stripe.Refund, "create"),
-        (stripe.PaymentLink, "create"),
-        (stripe.PaymentLink, "modify"),
-        (stripe.PaymentLink, "retrieve"),
-        (stripe.Product, "create"),
-        (stripe.Product, "modify"),
-        (stripe.Price, "create"),
-        (stripe.Webhook, "construct_event"),
-    ):
-        monkeypatch.setattr(target, name, MagicMock())
-    return stripe
+    client = MagicMock()
+    client.v1.checkout.sessions.create = MagicMock()
+    client.v1.checkout.sessions.retrieve = MagicMock()
+    client.v1.refunds.create = MagicMock()
+    client.v1.payment_links.create = MagicMock()
+    client.v1.payment_links.update = MagicMock()
+    client.v1.payment_links.retrieve = MagicMock()
+    client.v1.products.create = MagicMock()
+    client.v1.products.update = MagicMock()
+    client.v1.prices.create = MagicMock()
+    client.v1.payment_intents.retrieve = MagicMock()
+    client.v1.charges.retrieve = MagicMock()
+    client.construct_event = MagicMock()
+
+    monkeypatch.setattr(stripe_client, "_client", client)
+    monkeypatch.setattr(stripe_client, "get_stripe_client", lambda: client)
+    return client
 
 
 @pytest.fixture

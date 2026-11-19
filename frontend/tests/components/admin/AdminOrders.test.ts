@@ -164,7 +164,7 @@ describe('components/admin/AdminOrders.vue', () => {
       expect((wrapper.vm as VmAny).busy).toBeNull()
     })
 
-    it('falls back to err.message when the API error has no detail', async () => {
+    it('falls back to a generic message when the API error has no detail', async () => {
       const order = makeOrder({ status: 'pending_info' })
       callMock.mockResolvedValueOnce(makeResponse([order]))
       const wrapper = await mountSuspended(AdminOrders)
@@ -174,7 +174,7 @@ describe('components/admin/AdminOrders.vue', () => {
 
       expect(toastAddMock).toHaveBeenCalledWith({
         title: 'Update failed',
-        description: 'boom',
+        description: 'Something went wrong. Please try again.',
         color: 'error'
       })
     })
@@ -239,7 +239,7 @@ describe('components/admin/AdminOrders.vue', () => {
       expect((wrapper.vm as VmAny).busy).toBeNull()
     })
 
-    it('falls back to err.message when the DELETE error has no detail', async () => {
+    it('falls back to a generic message when the DELETE error has no detail', async () => {
       vi.spyOn(window, 'confirm').mockReturnValueOnce(true)
       const order = makeOrder()
       callMock.mockResolvedValueOnce(makeResponse([order]))
@@ -250,7 +250,7 @@ describe('components/admin/AdminOrders.vue', () => {
 
       expect(toastAddMock).toHaveBeenCalledWith({
         title: 'Delete failed',
-        description: 'server exploded',
+        description: 'Something went wrong. Please try again.',
         color: 'error'
       })
     })

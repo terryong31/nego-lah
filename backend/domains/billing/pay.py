@@ -1,8 +1,5 @@
-import stripe
-
-from core.env import FRONTEND_URL, STRIPE_API_KEY
-
-stripe.api_key = STRIPE_API_KEY
+from core.env import FRONTEND_URL
+from core.stripe_client import get_stripe_client
 
 
 def create_checkout_session(
@@ -33,9 +30,8 @@ def create_checkout_session(
     if user_id:
         metadata["user_id"] = user_id
 
-    session = stripe.checkout.Session.create(
-        payment_method_types=["card"],
-        line_items=[
+    params: dict[str, object] = {
+        "line_items": [
             {
                 "price_data": {
                     "currency": "myr",
@@ -47,11 +43,16 @@ def create_checkout_session(
                 "quantity": 1,
             }
         ],
-        mode="payment",
-        success_url=f"{FRONTEND_URL}/checkout/success?payment=success&item_id={item_id}&session_id={{CHECKOUT_SESSION_ID}}",
-        cancel_url=f"{FRONTEND_URL}/checkout/cancel",
-        metadata=metadata,
-        customer_email=customer_email or None,
-    )
+        "mode": "payment",
+        "success_url": (
+            f"{FRONTEND_URL}/checkout/success?payment=success&item_id={item_id}&session_id={{CHECKOUT_SESSION_ID}}"
+        ),
+        "cancel_url": f"{FRONTEND_URL}/checkout/cancel",
+        "metadata": metadata,
+    }
+    if customer_email:
+        params["customer_email"] = customer_email
+
+    session = get_stripe_client().v1.checkout.sessions.create(params=params)
 
     return session.url

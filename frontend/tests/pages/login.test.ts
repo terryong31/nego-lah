@@ -199,6 +199,22 @@ describe('pages/login.vue', () => {
       expect(pushSpy).not.toHaveBeenCalled()
     })
 
+    it('falls back to a generic message when the thrown error has no 4xx detail or is a 500 FetchError', async () => {
+      authStub.login.mockRejectedValue(Object.assign(
+        new Error('[POST] "https://api.negolah.my/auth/login": 500 Internal Server Error'),
+        { statusCode: 500 }
+      ))
+      const wrapper = await mountSuspended(LoginPage)
+
+      await fillAndSubmit(wrapper)
+
+      expect(toastAddMock).toHaveBeenCalledWith({
+        title: 'Login failed',
+        description: 'Something went wrong. Please try again.',
+        color: 'error'
+      })
+    })
+
     it('falls back to a generic message when the thrown error is not an Error instance', async () => {
       authStub.login.mockRejectedValue('boom')
       const wrapper = await mountSuspended(LoginPage)
@@ -207,7 +223,7 @@ describe('pages/login.vue', () => {
 
       expect(toastAddMock).toHaveBeenCalledWith({
         title: 'Login failed',
-        description: 'Something went wrong',
+        description: 'Something went wrong. Please try again.',
         color: 'error'
       })
     })

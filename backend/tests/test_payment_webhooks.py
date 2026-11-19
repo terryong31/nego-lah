@@ -25,18 +25,18 @@ from domains.billing import webhooks
 
 def test_verify_webhook_success_returns_event(fake_stripe):
     fake_event = {"id": "evt_123", "type": "checkout.session.completed"}
-    fake_stripe.Webhook.construct_event.return_value = fake_event
+    fake_stripe.construct_event.return_value = fake_event
 
     result = webhooks.verify_webhook(b"payload-bytes", "sig-header-value")
 
     assert result == fake_event
-    fake_stripe.Webhook.construct_event.assert_called_once_with(
+    fake_stripe.construct_event.assert_called_once_with(
         b"payload-bytes", "sig-header-value", webhooks.STRIPE_WEBHOOK_SECRET
     )
 
 
 def test_verify_webhook_bad_payload_returns_none(fake_stripe):
-    fake_stripe.Webhook.construct_event.side_effect = ValueError("bad payload")
+    fake_stripe.construct_event.side_effect = ValueError("bad payload")
 
     result = webhooks.verify_webhook(b"not-json", "sig-header-value")
 
@@ -44,7 +44,7 @@ def test_verify_webhook_bad_payload_returns_none(fake_stripe):
 
 
 def test_verify_webhook_bad_signature_returns_none(fake_stripe):
-    fake_stripe.Webhook.construct_event.side_effect = stripe.error.SignatureVerificationError(
+    fake_stripe.construct_event.side_effect = stripe.SignatureVerificationError(
         "signature mismatch", "sig-header-value"
     )
 
@@ -124,7 +124,7 @@ def test_handle_checkout_completed_metadata_on_session(monkeypatch):
 
 def test_handle_checkout_completed_metadata_via_payment_link_fallback(monkeypatch, fake_stripe):
     """Metadata missing on session but session references a payment_link -> fetched from PaymentLink."""
-    fake_stripe.PaymentLink.retrieve.return_value = _payment_link(
+    fake_stripe.v1.payment_links.retrieve.return_value = _payment_link(
         {"item_id": "item-2", "user_id": "user-2", "item_name": "Gadget"}
     )
 
@@ -145,7 +145,7 @@ def test_handle_checkout_completed_metadata_via_payment_link_fallback(monkeypatc
 
     result = webhooks.handle_checkout_completed(event)
 
-    stripe.PaymentLink.retrieve.assert_called_once_with("plink_abc")
+    fake_stripe.v1.payment_links.retrieve.assert_called_once_with("plink_abc")
     assert result == {"status": "success"}
     assert called_kwargs == {
         "item_id": "item-2",
@@ -175,7 +175,7 @@ def test_handle_checkout_completed_missing_metadata_returns_error(monkeypatch, f
 
     assert result == {"status": "error", "error": "missing_metadata", "retry": False}
     assert called is False
-    stripe.PaymentLink.retrieve.assert_not_called()
+    fake_stripe.v1.payment_links.retrieve.assert_not_called()
 
 
 def test_handle_checkout_completed_payment_link_lookup_raises_falls_through_to_missing_metadata(
@@ -183,7 +183,7 @@ def test_handle_checkout_completed_payment_link_lookup_raises_falls_through_to_m
 ):
     """If the PaymentLink retrieve() call itself raises, the exception is swallowed
     (logged as a warning) and we fall through to the missing_metadata error path."""
-    fake_stripe.PaymentLink.retrieve.side_effect = Exception("stripe api down")
+    fake_stripe.v1.payment_links.retrieve.side_effect = Exception("stripe api down")
 
     called = False
 
@@ -210,7 +210,7 @@ def test_handle_checkout_completed_payment_link_lookup_raises_falls_through_to_m
 def test_handle_checkout_completed_payment_link_metadata_none_falls_through(monkeypatch, fake_stripe):
     """PaymentLink.retrieve() succeeds but its .metadata is falsy (None) ->
     `metadata = plink.metadata or {}` covers the `or {}` branch, still missing item_id/user_id."""
-    fake_stripe.PaymentLink.retrieve.return_value = _payment_link(None)
+    fake_stripe.v1.payment_links.retrieve.return_value = _payment_link(None)
 
     monkeypatch.setattr(webhooks, "fulfill_purchase", lambda **kwargs: {"status": "success"})
 
@@ -239,7 +239,7 @@ def test_handle_checkout_completed_missing_user_id_only(monkeypatch, fake_stripe
     result = webhooks.handle_checkout_completed(event)
 
     assert result == {"status": "error", "error": "missing_metadata", "retry": False}
-    stripe.PaymentLink.retrieve.assert_not_called()
+    fake_stripe.v1.payment_links.retrieve.assert_not_called()
 
 
 def test_handle_checkout_completed_defaults_item_name_and_buyer_email(monkeypatch):

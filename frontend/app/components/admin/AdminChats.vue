@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { SplitterItem } from '@nuxt/ui'
 import type { ChatSummary } from '~/utils/adminChat'
+import { getErrorMessage } from '~/utils/error'
 
 const { t } = useI18n()
 const { call } = useAdminApi()
@@ -106,8 +107,7 @@ async function markRead(userId: string, read: boolean) {
     chat.admin_last_read_at = res?.admin_last_read_at ?? null
   } catch (err) {
     chat.unread = previous
-    const e = err as { data?: { detail?: string }, message?: string }
-    toast.add({ title: t('admin.chatsSection.markFailed'), description: e.data?.detail || e.message, color: 'error' })
+    toast.add({ title: t('admin.chatsSection.markFailed'), description: getErrorMessage(err, t('common.unexpectedError')), color: 'error' })
   } finally {
     markingRead.value = null
   }
@@ -139,8 +139,7 @@ async function toggleArchive(userId: string, archived: boolean) {
     }
   } catch (err) {
     chat.archived = previous
-    const e = err as { data?: { detail?: string }, message?: string }
-    toast.add({ title: t('admin.chatsSection.archiveFailed'), description: e.data?.detail || e.message, color: 'error' })
+    toast.add({ title: t('admin.chatsSection.archiveFailed'), description: getErrorMessage(err, t('common.unexpectedError')), color: 'error' })
   } finally {
     archiving.value = null
   }
@@ -216,8 +215,7 @@ async function toggleAi() {
       color: target ? 'success' : 'warning'
     })
   } catch (err) {
-    const e = err as { data?: { detail?: string }, message?: string }
-    toast.add({ title: 'AI toggle failed', description: e.data?.detail || e.message, color: 'error' })
+    toast.add({ title: 'AI toggle failed', description: getErrorMessage(err, t('common.unexpectedError')), color: 'error' })
   } finally {
     togglingAi.value = false
   }
@@ -296,8 +294,7 @@ async function open(userId: string) {
     messages.value = res.messages || []
     scrollToBottom()
   } catch (err) {
-    const e = err as { data?: { detail?: string }, message?: string }
-    toast.add({ title: 'Failed to load chat', description: e.data?.detail || e.message, color: 'error' })
+    toast.add({ title: 'Failed to load chat', description: getErrorMessage(err, t('common.unexpectedError')), color: 'error' })
   } finally {
     loadingMsgs.value = false
   }
@@ -313,8 +310,7 @@ async function send() {
     reply.value = ''
     scrollToBottom()
   } catch (err) {
-    const e = err as { data?: { detail?: string }, message?: string }
-    toast.add({ title: 'Send failed', description: e.data?.detail || e.message, color: 'error' })
+    toast.add({ title: 'Send failed', description: getErrorMessage(err, t('common.unexpectedError')), color: 'error' })
   } finally {
     sending.value = false
   }

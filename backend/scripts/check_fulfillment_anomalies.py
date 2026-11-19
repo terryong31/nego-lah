@@ -15,12 +15,9 @@ from datetime import UTC, datetime, timedelta
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import sentry_sdk
-import stripe
 
 from core.connector import admin_supabase
-from core.env import STRIPE_API_KEY
-
-stripe.api_key = STRIPE_API_KEY
+from core.stripe_client import get_stripe_client
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -78,12 +75,13 @@ def check_anomalies():
             if age > timedelta(hours=24):
                 if payment_intent_id and payment_intent_id.startswith("pi_"):
                     try:
-                        pi = stripe.PaymentIntent.retrieve(payment_intent_id)
+                        client = get_stripe_client()
+                        pi = client.v1.payment_intents.retrieve(payment_intent_id)
 
                         if pi.status == "succeeded":
                             latest_charge = pi.latest_charge
                             if latest_charge:
-                                charge = stripe.Charge.retrieve(latest_charge)
+                                charge = client.v1.charges.retrieve(latest_charge)
                                 if not charge.refunded:
                                     msg = (
                                         f"🚨 SLA Violation / Stuck Refund: Order {order_id} (buyer {buyer_id}) stuck in pending_info >24h. "

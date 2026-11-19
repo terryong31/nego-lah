@@ -229,20 +229,20 @@ def test_create_checkout_success(patch_supabase, fake_supabase, fake_stripe, mon
     patch_supabase("core.connector", admin=fake_supabase)
     _set_item_lookup(fake_supabase, item=ITEM)
 
-    fake_stripe.Product.create.return_value = MagicMock(id="prod_123")
-    fake_stripe.Price.create.return_value = MagicMock(id="price_123")
-    fake_stripe.PaymentLink.create.return_value = MagicMock(id="plink_123", url="https://buy.stripe.com/test")
+    fake_stripe.v1.products.create.return_value = MagicMock(id="prod_123")
+    fake_stripe.v1.prices.create.return_value = MagicMock(id="price_123")
+    fake_stripe.v1.payment_links.create.return_value = MagicMock(id="plink_123", url="https://buy.stripe.com/test")
 
     result = _checkout(item_id="item-1", agreed_price=80.0)
 
     assert "Payment link created for RM80.00" in result
     assert "https://buy.stripe.com/test" in result
-    fake_stripe.Product.create.assert_called_once()
-    fake_stripe.Price.create.assert_called_once()
-    fake_stripe.PaymentLink.create.assert_called_once()
-    assert fake_stripe.PaymentLink.create.call_args.kwargs["metadata"]["item_name"] == "Cool Widget"
+    fake_stripe.v1.products.create.assert_called_once()
+    fake_stripe.v1.prices.create.assert_called_once()
+    fake_stripe.v1.payment_links.create.assert_called_once()
+    assert fake_stripe.v1.payment_links.create.call_args.kwargs["params"]["metadata"]["item_name"] == "Cool Widget"
     # Confirm the unit_amount conversion to cents was performed correctly.
-    assert fake_stripe.Price.create.call_args.kwargs["unit_amount"] == 8000
+    assert fake_stripe.v1.prices.create.call_args.kwargs["params"]["unit_amount"] == 8000
 
     # store_pending_payment really ran against the safe in-memory fake Redis.
     # (We read the key directly rather than via `get_pending_payment`, since that
@@ -263,7 +263,7 @@ def test_create_checkout_stripe_error_returns_message(patch_supabase, fake_supab
     patch_supabase("core.connector", admin=fake_supabase)
     _set_item_lookup(fake_supabase, item=ITEM)
 
-    fake_stripe.Product.create.side_effect = Exception("stripe is down")
+    fake_stripe.v1.products.create.side_effect = Exception("stripe is down")
 
     result = _checkout(item_id="item-1", agreed_price=80.0)
 

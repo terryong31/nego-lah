@@ -219,14 +219,12 @@ def confirm_payment(
     """
     import stripe
 
-    from core.env import STRIPE_API_KEY
+    from core.stripe_client import get_stripe_client
     from domains.billing.fulfillment import fulfill_purchase
     from domains.billing.stripe_compat import stripe_get
 
     # Enforce the authenticated user; cannot confirm on behalf of another user.
     user_id = get_user_id_from_body_or_token(user_id, token_user_id)
-
-    stripe.api_key = STRIPE_API_KEY
 
     logger.info(f"📦 CONFIRM-PAYMENT item={item_id} user={user_id} session={session_id}")
 
@@ -243,8 +241,8 @@ def confirm_payment(
 
     # Verify the session with Stripe — this is the proof of payment.
     try:
-        session = stripe.checkout.Session.retrieve(session_id)
-    except stripe.error.InvalidRequestError:
+        session = get_stripe_client().v1.checkout.sessions.retrieve(session_id)
+    except stripe.InvalidRequestError:
         logger.error(f"❌ Could not verify session {session_id}")
         raise HTTPException(status_code=400, detail="Invalid Stripe session") from None
 

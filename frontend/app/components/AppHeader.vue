@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { loginRedirect, resolveAvatarUrl } from '~/utils/auth'
+import { getErrorMessage } from '~/utils/error'
 
 const { user, logout } = useAuth()
 const router = useRouter()
@@ -64,7 +65,7 @@ const dropdownItems = computed(() => {
             // does what it says — the toast just admits the server did not hear.
             toast.add({
               title: t('header.logoutFailed'),
-              description: err instanceof Error ? err.message : '',
+              description: getErrorMessage(err, t('common.unexpectedError')),
               color: 'error'
             })
           }

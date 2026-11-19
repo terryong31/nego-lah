@@ -7,6 +7,7 @@ import {
   type PasswordChangeForm
 } from '~/utils/schemas'
 import { resolveAvatarUrl, resolveUserId } from '~/utils/auth'
+import { getErrorMessage } from '~/utils/error'
 
 definePageMeta({
   middleware: 'auth'
@@ -88,10 +89,9 @@ async function onProfileSave() {
   }
 }
 
-/** FastAPI puts the human-readable reason in `detail`; keep it, don't bury it. */
+/** FastAPI puts the human-readable reason in `detail`; keep 4xx reasons, hide 5xx/raw errors. */
 function apiError(err: unknown): string {
-  const e = err as { data?: { detail?: string }, message?: string }
-  return e?.data?.detail || e?.message || t('profile.somethingWentWrong')
+  return getErrorMessage(err, t('common.unexpectedError'))
 }
 
 // Change Email

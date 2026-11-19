@@ -148,13 +148,14 @@ describe('pages/checkout/success.vue', () => {
       })
     })
 
-    it('falls back to err.message when there is no data.detail', async () => {
+    it('falls back to a generic message when there is no data.detail', async () => {
       callMock.mockRejectedValue(new Error('Network error'))
 
       const wrapper = await mountAt({ item_id: 'item-1', session_id: 'sess-1' })
       await flushPromises()
 
-      expect(wrapper.text()).toContain('Network error')
+      expect(wrapper.text()).toContain('Payment confirmation failed.')
+      expect(wrapper.text()).not.toContain('Network error')
     })
 
     it('falls back to a generic message when neither data.detail nor message are present', async () => {

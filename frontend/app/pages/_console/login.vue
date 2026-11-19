@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { DEFAULT_ERROR_MESSAGE, getErrorMessage, isServerError } from '~/utils/error'
+
 definePageMeta({ layout: false })
 useSeoMeta({ title: 'Admin', robots: 'noindex, nofollow' })
 
@@ -39,8 +41,11 @@ async function submitPassword() {
     step.value = 'otp'
     toast.add({ title: 'Check your email', description: res.message, color: 'info' })
   } catch (err) {
-    const e = err as { data?: { detail?: string } }
-    toast.add({ title: 'Login failed', description: e.data?.detail || 'Invalid credentials', color: 'error' })
+    toast.add({
+      title: 'Login failed',
+      description: isServerError(err) ? DEFAULT_ERROR_MESSAGE : getErrorMessage(err, 'Invalid credentials'),
+      color: 'error'
+    })
   } finally {
     // Siteverify tokens are single-use, so the one we just spent is dead
     // whichever way the request went. Spending it resets the widget so it
@@ -64,8 +69,11 @@ async function submitOtp() {
     toast.add({ title: 'Welcome back', color: 'success' })
     await navigateTo('/_console')
   } catch (err) {
-    const e = err as { data?: { detail?: string } }
-    toast.add({ title: 'Verification failed', description: e.data?.detail || 'Invalid or expired code', color: 'error' })
+    toast.add({
+      title: 'Verification failed',
+      description: isServerError(err) ? DEFAULT_ERROR_MESSAGE : getErrorMessage(err, 'Invalid or expired code'),
+      color: 'error'
+    })
     code.value = []
   } finally {
     loading.value = false

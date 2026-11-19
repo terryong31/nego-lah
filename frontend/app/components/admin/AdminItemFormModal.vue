@@ -4,6 +4,7 @@ import type { AdminItem } from '~/utils/adminItem'
 import { adminItemSchema } from '~/utils/schemas'
 import { itemImageUrls } from '~/utils/adminItem'
 import { downscaleImage } from '~/utils/downscaleImage'
+import { getErrorMessage } from '~/utils/error'
 import { extractTrilingualData } from '~/utils/trilingual'
 
 // Create / edit a listing.
@@ -18,6 +19,7 @@ import { extractTrilingualData } from '~/utils/trilingual'
 
 const emit = defineEmits<{ saved: [] }>()
 
+const { t } = useI18n()
 const { call } = useAdminApi()
 const toast = useToast()
 const { analyze, isAnalyzing, progress, stageMessage } = useItemAnalysis()
@@ -223,8 +225,7 @@ async function detectAndContinue() {
     autofilled.value = true
     toast.add({ title: 'Analysis complete', description: 'Item details have been auto-filled', color: 'success' })
   } catch (err) {
-    const e = err as { data?: { detail?: string }, message?: string }
-    toast.add({ title: 'Analysis failed', description: e.data?.detail || e.message, color: 'warning' })
+    toast.add({ title: 'Analysis failed', description: getErrorMessage(err, t('common.unexpectedError')), color: 'warning' })
   } finally {
     // A failed analysis is not a dead end — the admin can still fill it in.
     step.value = 'details'
@@ -382,8 +383,7 @@ async function submitItem() {
     open.value = false
     emit('saved')
   } catch (err) {
-    const e = err as { data?: { detail?: string }, message?: string }
-    toast.add({ title: isEditing.value ? 'Update failed' : 'Create failed', description: e.data?.detail || e.message, color: 'error' })
+    toast.add({ title: isEditing.value ? 'Update failed' : 'Create failed', description: getErrorMessage(err, t('common.unexpectedError')), color: 'error' })
   } finally {
     saving.value = false
   }

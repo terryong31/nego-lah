@@ -408,7 +408,7 @@ describe('pages/profile.vue', () => {
       expect(vm.profileLoading).toBe(false)
     })
 
-    it('falls back to err.message when the failure has no API detail', async () => {
+    it('falls back to a generic message when the failure has no API detail', async () => {
       wrapper = await mountSuspended(ProfilePage)
       const vm = wrapper.vm as VmAny
 
@@ -417,7 +417,24 @@ describe('pages/profile.vue', () => {
 
       expect(toastAddMock).toHaveBeenCalledWith({
         title: 'Failed to update profile',
-        description: 'network exploded',
+        description: 'Something went wrong. Please try again.',
+        color: 'error'
+      })
+    })
+
+    it('falls back to a generic message on a 500 FetchError', async () => {
+      wrapper = await mountSuspended(ProfilePage)
+      const vm = wrapper.vm as VmAny
+
+      callMock.mockRejectedValueOnce(Object.assign(
+        new Error('[PUT] "https://api.negolah.my/user/reactive-uid/profile": 500 Internal Server Error'),
+        { statusCode: 500 }
+      ))
+      await vm.onProfileSave()
+
+      expect(toastAddMock).toHaveBeenCalledWith({
+        title: 'Failed to update profile',
+        description: 'Something went wrong. Please try again.',
         color: 'error'
       })
     })
@@ -499,7 +516,7 @@ describe('pages/profile.vue', () => {
       expect(vm.emailLoading).toBe(false)
     })
 
-    it('shows an error toast with err.message on failure', async () => {
+    it('shows an error toast with a generic message on unhandled failure', async () => {
       wrapper = await mountSuspended(ProfilePage)
       const vm = wrapper.vm as VmAny
       callMock.mockRejectedValueOnce(new Error('email already in use'))
@@ -508,7 +525,7 @@ describe('pages/profile.vue', () => {
 
       expect(toastAddMock).toHaveBeenCalledWith({
         title: 'Failed to update email',
-        description: 'email already in use',
+        description: 'Something went wrong. Please try again.',
         color: 'error'
       })
       expect(vm.emailLoading).toBe(false)
@@ -523,7 +540,7 @@ describe('pages/profile.vue', () => {
 
       expect(toastAddMock).toHaveBeenCalledWith({
         title: 'Failed to update email',
-        description: 'Something went wrong',
+        description: 'Something went wrong. Please try again.',
         color: 'error'
       })
     })
@@ -647,7 +664,7 @@ describe('pages/profile.vue', () => {
       expect(vm.passwordLoading).toBe(false)
     })
 
-    it('shows an error toast with err.message on failure', async () => {
+    it('shows an error toast with a generic message on unhandled failure', async () => {
       wrapper = await mountSuspended(ProfilePage)
       const vm = wrapper.vm as VmAny
       callMock.mockRejectedValueOnce(new Error('incorrect current password'))
@@ -658,7 +675,7 @@ describe('pages/profile.vue', () => {
 
       expect(toastAddMock).toHaveBeenCalledWith({
         title: 'Failed to update password',
-        description: 'incorrect current password',
+        description: 'Something went wrong. Please try again.',
         color: 'error'
       })
       expect(vm.passwordLoading).toBe(false)
@@ -675,7 +692,7 @@ describe('pages/profile.vue', () => {
 
       expect(toastAddMock).toHaveBeenCalledWith({
         title: 'Failed to update password',
-        description: 'Something went wrong',
+        description: 'Something went wrong. Please try again.',
         color: 'error'
       })
     })
@@ -850,7 +867,7 @@ describe('pages/profile.vue', () => {
 
       expect(toastAddMock).toHaveBeenCalledWith({
         title: 'Failed to delete account',
-        description: 'cannot delete: active orders',
+        description: 'Something went wrong. Please try again.',
         color: 'error'
       })
       expect(authStub.clearSession).not.toHaveBeenCalled()
@@ -892,7 +909,7 @@ describe('pages/profile.vue', () => {
 
       expect(toastAddMock).toHaveBeenCalledWith({
         title: 'Failed to delete account',
-        description: 'Something went wrong',
+        description: 'Something went wrong. Please try again.',
         color: 'error'
       })
     })

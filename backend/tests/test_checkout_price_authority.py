@@ -38,9 +38,9 @@ def checkout(monkeypatch, fake_supabase, patch_supabase, fake_stripe):
     fake_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = MagicMock(data=[LAPTOP])
     monkeypatch.setattr("domains.billing.payment_state.get_pending_payment", lambda uid, iid: None)
     monkeypatch.setattr("domains.billing.payment_state.store_pending_payment", lambda **kw: None)
-    fake_stripe.Product.create.return_value = MagicMock(id="prod_1")
-    fake_stripe.Price.create.return_value = MagicMock(id="price_1")
-    fake_stripe.PaymentLink.create.return_value = MagicMock(id="pl_1", url="https://buy.stripe.com/x")
+    fake_stripe.v1.products.create.return_value = MagicMock(id="prod_1")
+    fake_stripe.v1.prices.create.return_value = MagicMock(id="price_1")
+    fake_stripe.v1.payment_links.create.return_value = MagicMock(id="pl_1", url="https://buy.stripe.com/x")
 
     def _run(agreed_price, standing=None):
         monkeypatch.setattr("domains.billing.pricing.active_negotiated_price", lambda uid, iid: standing)

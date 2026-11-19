@@ -148,6 +148,22 @@ describe('pages/_console/login.vue', () => {
         color: 'error'
       })
     })
+
+    it('shows a generic error message instead of POST 500 on a 500 server failure', async () => {
+      callMock.mockRejectedValue(Object.assign(
+        new Error('[POST] "https://api.negolah.my/admin/auth/login": 500 Internal Server Error'),
+        { statusCode: 500 }
+      ))
+      wrapper = await mountSuspended(LoginPage)
+
+      await fillPassword(wrapper)
+
+      expect(toastAddMock).toHaveBeenCalledWith({
+        title: 'Login failed',
+        description: 'Something went wrong. Please try again.',
+        color: 'error'
+      })
+    })
   })
 
   describe('submitOtp', () => {
@@ -202,6 +218,24 @@ describe('pages/_console/login.vue', () => {
       expect(toastAddMock).toHaveBeenCalledWith({
         title: 'Verification failed',
         description: 'Invalid or expired code',
+        color: 'error'
+      })
+    })
+
+    it('shows a generic error message instead of POST 500 when OTP verification hits 500', async () => {
+      wrapper = await mountSuspended(LoginPage)
+      await goToOtpStep(wrapper)
+
+      callMock.mockRejectedValue(Object.assign(
+        new Error('[POST] "https://api.negolah.my/admin/auth/verify-2fa": 500 Internal Server Error'),
+        { statusCode: 500 }
+      ))
+
+      await fillOtp(wrapper, '123456')
+
+      expect(toastAddMock).toHaveBeenCalledWith({
+        title: 'Verification failed',
+        description: 'Something went wrong. Please try again.',
         color: 'error'
       })
     })

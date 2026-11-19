@@ -1,11 +1,10 @@
 import stripe
 
-from core.env import STRIPE_API_KEY, STRIPE_WEBHOOK_SECRET
+from core.env import STRIPE_WEBHOOK_SECRET
 from core.logger import logger
+from core.stripe_client import get_stripe_client
 from domains.billing.fulfillment import fulfill_purchase
 from domains.billing.stripe_compat import stripe_get
-
-stripe.api_key = STRIPE_API_KEY
 
 
 def handle_checkout_completed(event) -> dict:
@@ -27,7 +26,7 @@ def handle_checkout_completed(event) -> dict:
     payment_link_id = stripe_get(session, "payment_link")
     if payment_link_id and not stripe_get(metadata, "item_id"):
         try:
-            plink = stripe.PaymentLink.retrieve(payment_link_id)
+            plink = get_stripe_client().v1.payment_links.retrieve(payment_link_id)
             metadata = stripe_get(plink, "metadata") or {}
         except Exception as e:
             logger.warning(f"⚠️ Error fetching PaymentLink metadata: {e}")
@@ -72,11 +71,11 @@ def verify_webhook(payload: bytes, sig_header: str):
     Returns the event if valid, None if invalid.
     """
     try:
-        event = stripe.Webhook.construct_event(payload, sig_header, STRIPE_WEBHOOK_SECRET)
+        event = get_stripe_client().construct_event(payload, sig_header, STRIPE_WEBHOOK_SECRET)
         return event
     except ValueError:
         logger.error("❌ Invalid webhook payload")
         return None
-    except stripe.error.SignatureVerificationError:
+    except stripe.SignatureVerificationError:
         logger.error("❌ Invalid webhook signature")
         return None

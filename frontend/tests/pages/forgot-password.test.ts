@@ -94,7 +94,7 @@ describe('pages/forgot-password.vue', () => {
   })
 
   describe('submission failure', () => {
-    it('shows a "Request failed" toast and keeps the form visible', async () => {
+    it('shows a "Request failed" toast with a generic message on unhandled error and keeps the form visible', async () => {
       authStub.forgotPassword.mockRejectedValue(new Error('Rate limit exceeded'))
       const wrapper = await mountSuspended(ForgotPasswordPage)
 
@@ -102,7 +102,7 @@ describe('pages/forgot-password.vue', () => {
 
       expect(toastAddMock).toHaveBeenCalledWith({
         title: 'Request failed',
-        description: 'Rate limit exceeded',
+        description: 'Something went wrong. Please try again.',
         color: 'error'
       })
       expect(wrapper.text()).not.toContain('Email sent')
@@ -117,7 +117,7 @@ describe('pages/forgot-password.vue', () => {
 
       expect(toastAddMock).toHaveBeenCalledWith({
         title: 'Request failed',
-        description: 'Something went wrong',
+        description: 'Something went wrong. Please try again.',
         color: 'error'
       })
       expect(wrapper.text()).not.toContain('Email sent')

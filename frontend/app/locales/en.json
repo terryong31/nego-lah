@@ -27,7 +27,8 @@
     "actions": "Actions",
     "all": "All",
     "na": "-",
-    "selectLanguage": "Select language"
+    "selectLanguage": "Select language",
+    "unexpectedError": "Something went wrong. Please try again."
   },
   "nav": {
     "home": "Home",

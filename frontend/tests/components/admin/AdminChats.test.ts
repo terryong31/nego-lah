@@ -397,7 +397,7 @@ describe('components/admin/AdminChats.vue', () => {
     await chatButton!.trigger('click')
     await flushPromises()
 
-    callMock.mockImplementationOnce(() => Promise.reject({ message: 'Network error' }))
+    callMock.mockImplementationOnce(() => Promise.reject(new Error('[POST] "https://api.negolah.my/admin/chats/u1/message": 500 Internal Server Error')))
 
     const textarea = wrapper.find('textarea')
     await textarea.setValue('This will fail')
@@ -406,7 +406,7 @@ describe('components/admin/AdminChats.vue', () => {
 
     expect(toastAdd).toHaveBeenCalledWith(expect.objectContaining({
       title: 'Send failed',
-      description: 'Network error',
+      description: 'Something went wrong. Please try again.',
       color: 'error'
     }))
 

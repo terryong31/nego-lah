@@ -363,11 +363,32 @@ describe('pages/items/[id].vue', () => {
 
       expect(toastAddMock).toHaveBeenCalledWith({
         title: 'Checkout failed',
-        description: 'Card declined',
+        description: 'Unable to start transaction',
         color: 'error'
       })
       // Only the initial fetch + the failed checkout call — no refresh-triggered refetch.
       expect(callMock).toHaveBeenCalledTimes(2)
+    })
+
+    it('shows a generic error toast instead of a raw POST 500 message', async () => {
+      userRef.value = { id: 'u1', email: 'a@b.com' }
+      const item = makeItem({ item_id: 'item-1' })
+
+      callMock.mockImplementationOnce(() => Promise.resolve(item))
+      const wrapper = await mountAtItem()
+
+      callMock.mockImplementationOnce(() => Promise.reject(Object.assign(
+        new Error('[POST] "https://api.negolah.my/payment/checkout": 500 Internal Server Error'),
+        { statusCode: 500, data: { detail: 'Checkout failed. Please try again.' } }
+      )))
+
+      await wrapper.vm.handleBuyNow()
+
+      expect(toastAddMock).toHaveBeenCalledWith({
+        title: 'Checkout failed',
+        description: 'Unable to start transaction',
+        color: 'error'
+      })
     })
 
     it('falls back to a generic message when the thrown error is not an Error instance', async () => {
@@ -401,7 +422,7 @@ describe('pages/items/[id].vue', () => {
 
       expect(toastAddMock).toHaveBeenCalledWith({
         title: 'Checkout failed',
-        description: 'No checkout URL returned',
+        description: 'Unable to start transaction',
         color: 'error'
       })
     })

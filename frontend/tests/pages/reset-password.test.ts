@@ -94,7 +94,7 @@ describe('pages/reset-password.vue', () => {
   })
 
   describe('submission failure', () => {
-    it('shows an "Update failed" toast with the Supabase error message and does not redirect', async () => {
+    it('shows an "Update failed" toast with a generic message on unhandled error and does not redirect', async () => {
       authStub.resetPassword.mockRejectedValue(new Error('Auth session missing'))
       const wrapper = await mountSuspended(ResetPasswordPage)
       const pushSpy = spyOnRouterPush(wrapper)
@@ -103,7 +103,7 @@ describe('pages/reset-password.vue', () => {
 
       expect(toastAddMock).toHaveBeenCalledWith({
         title: 'Update failed',
-        description: 'Auth session missing',
+        description: 'Something went wrong. Please try again.',
         color: 'error'
       })
       expect(pushSpy).not.toHaveBeenCalled()
@@ -118,7 +118,7 @@ describe('pages/reset-password.vue', () => {
 
       expect(toastAddMock).toHaveBeenCalledWith({
         title: 'Update failed',
-        description: 'Something went wrong',
+        description: 'Something went wrong. Please try again.',
         color: 'error'
       })
       expect(pushSpy).not.toHaveBeenCalled()

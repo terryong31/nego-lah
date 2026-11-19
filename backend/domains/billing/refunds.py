@@ -1,10 +1,8 @@
 import stripe
 
 from core.connector import admin_supabase
-from core.env import STRIPE_API_KEY
 from core.logger import logger
-
-stripe.api_key = STRIPE_API_KEY
+from core.stripe_client import get_stripe_client
 
 
 def process_refund(item_id: str, reason: str = None) -> dict:
@@ -53,12 +51,14 @@ def process_refund(item_id: str, reason: str = None) -> dict:
     # first refund and the DB writes below run, instead of Stripe answering
     # "already refunded" and leaving the item sold (audit SEC-11).
     try:
-        refund = stripe.Refund.create(
-            payment_intent=payment_id,
-            reason=reason or "requested_by_customer",
-            idempotency_key=f"admin_refund_{payment_id}",
+        refund = get_stripe_client().v1.refunds.create(
+            params={
+                "payment_intent": payment_id,
+                "reason": reason or "requested_by_customer",
+            },
+            options={"idempotency_key": f"admin_refund_{payment_id}"},
         )
-    except stripe.error.StripeError as e:
+    except stripe.StripeError as e:
         logger.error(f"❌ Stripe refund failed for item {item_id}: {e}")
         return {"success": False, "error": str(e)}
 

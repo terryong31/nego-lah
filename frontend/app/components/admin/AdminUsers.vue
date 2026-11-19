@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { TableColumn } from '@nuxt/ui'
+import { getErrorMessage } from '~/utils/error'
 
 const { t } = useI18n()
 const { call } = useAdminApi()
@@ -31,8 +32,7 @@ async function toggleBan(u: AdminUser) {
     u.is_banned = !u.is_banned
     toast.add({ title: u.is_banned ? 'User banned' : 'User unbanned', color: 'success' })
   } catch (err) {
-    const e = err as { data?: { detail?: string }, message?: string }
-    toast.add({ title: 'Action failed', description: e.data?.detail || e.message, color: 'error' })
+    toast.add({ title: 'Action failed', description: getErrorMessage(err, t('common.unexpectedError')), color: 'error' })
   } finally {
     busy.value = null
   }
@@ -46,9 +46,8 @@ async function toggleAi(u: AdminUser) {
     await call(`/users/${u.id}/ai`, { method: 'PUT', body: { ai_enabled: u.ai_enabled } })
     toast.add({ title: u.ai_enabled ? 'AI enabled' : 'AI disabled', color: 'success' })
   } catch (err) {
-    const e = err as { data?: { detail?: string }, message?: string }
     u.ai_enabled = originalState
-    toast.add({ title: 'Action failed', description: e.data?.detail || e.message, color: 'error' })
+    toast.add({ title: 'Action failed', description: getErrorMessage(err, t('common.unexpectedError')), color: 'error' })
   }
 }
 
@@ -82,8 +81,7 @@ async function saveProfile() {
     toast.add({ title: 'Profile updated', color: 'success' })
     editOpen.value = false
   } catch (err) {
-    const e = err as { data?: { detail?: string }, message?: string }
-    toast.add({ title: 'Update failed', description: e.data?.detail || e.message, color: 'error' })
+    toast.add({ title: 'Update failed', description: getErrorMessage(err, t('common.unexpectedError')), color: 'error' })
   } finally {
     saving.value = false
   }
@@ -98,8 +96,7 @@ async function remove(u: AdminUser) {
     toast.add({ title: 'User deleted', color: 'success' })
     await refresh()
   } catch (err) {
-    const e = err as { data?: { detail?: string }, message?: string }
-    toast.add({ title: 'Delete failed', description: e.data?.detail || e.message, color: 'error' })
+    toast.add({ title: 'Delete failed', description: getErrorMessage(err, t('common.unexpectedError')), color: 'error' })
   } finally {
     busy.value = null
   }

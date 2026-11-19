@@ -432,7 +432,7 @@ describe('pages/chat.vue', () => {
       expect(callMock).not.toHaveBeenCalled()
     })
 
-    it('shows a toast with the error message when the fetch fails, and stops the spinner', async () => {
+    it('shows a toast with a generic message when the fetch fails, and stops the spinner', async () => {
       const wrapper = await mountWithFirstPage()
       callMock.mockImplementation((path: string) => {
         if (path === '/chat/history/user-1?limit=20&offset=20') return Promise.reject(new Error('boom'))
@@ -441,7 +441,11 @@ describe('pages/chat.vue', () => {
 
       await vm(wrapper).loadMore()
 
-      expect(toastAddMock).toHaveBeenCalledWith({ title: 'Failed to load older messages', description: 'boom', color: 'error' })
+      expect(toastAddMock).toHaveBeenCalledWith({
+        title: 'Failed to load older messages',
+        description: 'Something went wrong. Please try again.',
+        color: 'error'
+      })
       expect(vm(wrapper).loadingMore).toBe(false)
     })
 
@@ -454,7 +458,11 @@ describe('pages/chat.vue', () => {
 
       await vm(wrapper).loadMore()
 
-      expect(toastAddMock).toHaveBeenCalledWith({ title: 'Failed to load older messages', description: 'Something went wrong', color: 'error' })
+      expect(toastAddMock).toHaveBeenCalledWith({
+        title: 'Failed to load older messages',
+        description: 'Something went wrong. Please try again.',
+        color: 'error'
+      })
     })
   })
 
@@ -1129,41 +1137,40 @@ describe('pages/chat.vue', () => {
 
       await vm(wrapper).handleBuyNow()
 
-      expect(toastAddMock).toHaveBeenCalledWith({ title: 'Checkout failed', description: 'No checkout URL returned', color: 'error' })
+      expect(toastAddMock).toHaveBeenCalledWith({ title: 'Checkout failed', description: 'Unable to start transaction', color: 'error' })
       expect(vm(wrapper).buyLoading).toBe(false)
     })
 
-    it('shows the Error\'s message when the checkout call rejects with an Error', async () => {
+    it('shows a generic fallback when the checkout call rejects with a raw Error or 500 FetchError', async () => {
       const wrapper = await mountWithContextItem()
       callMock.mockImplementation((path: string) => {
-        if (path === '/payment/checkout') return Promise.reject(new Error('Card declined'))
+        if (path === '/payment/checkout') {
+          return Promise.reject(Object.assign(
+            new Error('[POST] "https://api.negolah.my/payment/checkout": 500 Internal Server Error'),
+            { statusCode: 500, data: { detail: 'Checkout failed. Please try again.' } }
+          ))
+        }
         return Promise.resolve({ messages: [] })
       })
 
       await vm(wrapper).handleBuyNow()
 
-      expect(toastAddMock).toHaveBeenCalledWith({ title: 'Checkout failed', description: 'Card declined', color: 'error' })
-    })
-
-    it('falls back to a generic message when the rejection is not an Error instance (e.g. a raw 401/403 response object)', async () => {
-      const wrapper = await mountWithContextItem()
-      callMock.mockImplementation((path: string) => {
-        if (path === '/payment/checkout') return Promise.reject({ statusCode: 401, data: { detail: 'Unauthorized' } })
-        return Promise.resolve({ messages: [] })
-      })
-
-      await vm(wrapper).handleBuyNow()
-
-      // Note: handleBuyNow has no login/redirect branch of its own — chat.vue
-      // never calls navigateTo('/login') here. That redirect only happens
-      // inside the real useApi() 401 interceptor (mocked away in this suite),
-      // so from handleBuyNow's own point of view every rejection — 401, 403,
-      // 409 "already sold", or otherwise — that isn't a real Error instance
-      // just falls through to this generic fallback toast.
       expect(toastAddMock).toHaveBeenCalledWith({ title: 'Checkout failed', description: 'Unable to start transaction', color: 'error' })
     })
 
-    it('a 409 "item already sold" style rejection is not special-cased — same generic fallback toast', async () => {
+    it('surfaces the 4xx API detail when provided and falls back otherwise', async () => {
+      const wrapper = await mountWithContextItem()
+      callMock.mockImplementation((path: string) => {
+        if (path === '/payment/checkout') return Promise.reject({ statusCode: 401 })
+        return Promise.resolve({ messages: [] })
+      })
+
+      await vm(wrapper).handleBuyNow()
+
+      expect(toastAddMock).toHaveBeenCalledWith({ title: 'Checkout failed', description: 'Unable to start transaction', color: 'error' })
+    })
+
+    it('surfaces the 409 detail message when the item is already sold', async () => {
       const wrapper = await mountWithContextItem()
       callMock.mockImplementation((path: string) => {
         if (path === '/payment/checkout') return Promise.reject({ statusCode: 409, data: { detail: 'Item already sold' } })
@@ -1172,7 +1179,7 @@ describe('pages/chat.vue', () => {
 
       await vm(wrapper).handleBuyNow()
 
-      expect(toastAddMock).toHaveBeenCalledWith({ title: 'Checkout failed', description: 'Unable to start transaction', color: 'error' })
+      expect(toastAddMock).toHaveBeenCalledWith({ title: 'Checkout failed', description: 'Item already sold', color: 'error' })
     })
 
     it('the "Buy" button in the item header calls handleBuyNow', async () => {

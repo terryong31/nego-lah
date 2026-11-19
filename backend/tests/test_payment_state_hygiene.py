@@ -84,7 +84,7 @@ def test_store_failure_is_logged_not_printed(monkeypatch, caplog, capsys):
 
 def test_stripe_cleanup_failure_is_logged_not_printed(fake_stripe, caplog, capsys):
     _store()
-    fake_stripe.PaymentLink.modify.side_effect = RuntimeError("stripe exploded")
+    fake_stripe.v1.payment_links.update.side_effect = RuntimeError("stripe exploded")
 
     with caplog.at_level(logging.ERROR):
         assert payment_state.delete_pending_payment("user-1", "item-1") is True

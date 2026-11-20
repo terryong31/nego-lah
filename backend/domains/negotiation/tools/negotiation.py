@@ -4,6 +4,11 @@ from langchain_core.tools import tool
 
 from core.logger import logger
 
+# Hard upper bound on buyer-earned extra discounts (SPEC-116 / SEC-18).
+# The scoring guide only awards 0%, 5%, or 10%; clamping in code prevents
+# prompt injection from supplying 100% and forcing acceptance at the floor.
+MAX_EXTRA_DISCOUNT_PERCENT = 10.0
+
 
 def _round_to_step(value: float, step: float) -> float:
     """Round `value` to the nearest multiple of `step`, halves rounding up.
@@ -74,6 +79,18 @@ def evaluate_offer(
         Recommendation on whether to accept, counter, or reject the offer
     """
 
+    # SPEC-116 / SEC-18: reject non-finite offers and clamp extra_discount_percent
+    # before any arithmetic so prompt injection cannot force acceptance at floor
+    # or trigger NaN/Inf edge cases.
+    if not math.isfinite(offered_price):
+        logger.warning(f"⚠️ Rejected non-finite offered_price: {offered_price!r}")
+        return "ERROR: Invalid offer price."
+
+    if not math.isfinite(extra_discount_percent) or extra_discount_percent < 0:
+        extra_discount_percent = 0.0
+    elif extra_discount_percent > MAX_EXTRA_DISCOUNT_PERCENT:
+        extra_discount_percent = MAX_EXTRA_DISCOUNT_PERCENT
+
     # Service role, not the anon key: `min_price` is revoked from anon /
     # authenticated at the column level (SPEC-036), so the floor is only
     # readable by a client that bypasses RLS.
@@ -140,9 +157,12 @@ def evaluate_offer(
     except Exception as e:  # noqa: BLE001 — a cache hiccup must not break a negotiation
         logger.warning(f"⚠️ Could not resolve standing price, anchoring to listed: {e}")
 
+    # SPEC-116 / SEC-18: anchor strictly to server-authoritative prices
+    # (`listed_price` and Redis `standing_price`). The LLM-supplied
+    # `current_price` parameter is kept for tool-schema compatibility but must
+    # NOT lower the anchor, because a prompt-injected value like `current_price=1`
+    # would otherwise collapse the anchor to `min_price`.
     candidates = [listed_price]
-    if current_price and current_price > 0:
-        candidates.append(float(current_price))
     if standing_price is not None:
         candidates.append(float(standing_price))
 

@@ -12,13 +12,16 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 
 from core import bus
+from core.cache import cache_ban_status
 from core.images import MAX_AVATAR_EDGE, process_upload
 from core.logger import logger
 from core.media import media_store, media_url, new_key
 from core.schemas import BanRequest, UserProfileUpdateRequest
 from core.uploads import MAX_AVATAR_IMAGE_BYTES
+from core.url import is_safe_http_url
 from domains.identity.admin_session import verify_admin, write_audit
 from domains.identity.services import IdentityService
+from domains.identity.user_session import revoke_other_sessions
 
 from .profiles import resolve_avatar_url
 
@@ -89,7 +92,10 @@ def update_user_profile(user_id: str, request: UserProfileUpdateRequest, admin: 
         updates["display_name"] = request.display_name
 
     if request.avatar_url is not None:
-        updates["avatar_url"] = request.avatar_url
+        cleaned_url = request.avatar_url.strip()
+        if cleaned_url and not is_safe_http_url(cleaned_url):
+            raise HTTPException(status_code=400, detail="Avatar URL must be a valid http(s) URL")
+        updates["avatar_url"] = cleaned_url
 
     admin_supabase.table("user_profiles").upsert(updates).execute()
     write_audit(admin.get("user_id"), admin.get("email"), "user.profile_update", user_id, admin.get("ip"))
@@ -200,10 +206,12 @@ def ban_user(user_id: str, request: BanRequest, admin: dict = Depends(verify_adm
     except Exception as e:
         logger.error(f"Failed to set Supabase auth ban for {user_id}: {e}")
 
-    # Drop the cached ban status so the change takes effect on the next request.
+    # Drop the cached ban status and revoke live Redis sessions immediately when banning (SEC-21).
     from core.cache import invalidate_ban_status
 
     invalidate_ban_status(user_id)
+    if request.is_banned:
+        revoke_other_sessions(user_id, keep_sid=None)
 
     write_audit(
         admin.get("user_id"),
@@ -232,6 +240,17 @@ def admin_delete_user(user_id: str, admin: dict = Depends(verify_admin)):
     except Exception as e:
         logger.error(f"Error deleting auth user {user_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to delete user") from e
+
+    # SPEC-116 (SEC-21): terminate every live Redis session, block any in-flight
+    # bearer JWTs until expiry, and purge public avatars (mirroring self-delete).
+    revoke_other_sessions(user_id, keep_sid=None)
+    cache_ban_status(user_id, True, ttl=2 * 3600)
+    try:
+        keys = media_store.list(f"avatars/{user_id}/") + media_store.list(f"avatars/{user_id}_")
+        if keys:
+            media_store.delete(keys)
+    except Exception as e:
+        logger.warning(f"Avatar cleanup failed for admin-deleted user {user_id}: {e}")
 
     write_audit(admin.get("user_id"), admin.get("email"), "user.delete", user_id, admin.get("ip"))
     return {"message": "User deleted successfully"}

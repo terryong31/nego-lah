@@ -41,6 +41,7 @@ from core.security import verify_turnstile
 from domains.identity.auth_middleware import verify_user_token
 from domains.identity.user_session import (
     clear_pkce_cookie,
+    clear_recovery_flag,
     clear_session_cookies,
     new_pkce_pair,
     open_session_for,
@@ -57,6 +58,10 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 # mistype more and a lockout here costs a sale.
 _LOGIN_MAX, _LOGIN_WINDOW = 10, 900
 _LOGIN_ACCOUNT_MAX = 30
+# Audit SEC-23: backstop register and password-recovery email dispatch if
+# Turnstile is degraded or bypassed in non-prod.
+_REGISTER_MAX, _REGISTER_WINDOW = 5, 900
+_FORGOT_MAX, _FORGOT_WINDOW = 5, 900
 
 _CALLBACK_URL = f"{API_BASE_URL}/auth/callback"
 
@@ -147,18 +152,22 @@ def login(payload: AuthCredentialsRequest, request: Request, response: Response)
 
 
 @router.post("/register", dependencies=[Depends(verify_turnstile)])
-def register(payload: AuthCredentialsRequest):
+def register(payload: AuthCredentialsRequest, request: Request):
     """Create an account. Confirmation happens through the emailed link.
 
     No session is opened here even when Supabase returns one (it does when email
     confirmation is disabled): sign-in is `/auth/login`'s job, and keeping the
     two apart means there is exactly one place that mints a cookie.
     """
+    email = payload.email.strip().lower()
+    if not check_rate_limit(f"register:{email}:{get_client_ip(request)}", _REGISTER_MAX, _REGISTER_WINDOW):
+        raise HTTPException(status_code=429, detail="Too many registration attempts. Please wait a few minutes.")
+
     client = new_user_client()
     try:
         client.auth.sign_up(
             {
-                "email": payload.email.strip().lower(),
+                "email": email,
                 "password": payload.password,
                 "options": {"email_redirect_to": _CALLBACK_URL},
             }
@@ -270,12 +279,12 @@ def callback(
         except (TypeError, ValueError):
             verifier, stored_next = None, None
 
-    def _leave(path: str, session=None) -> RedirectResponse:
+    def _leave(path: str, session=None, *, is_recovery: bool = False) -> RedirectResponse:
         """One exit: 302 into the SPA, session attached if we have one, verifier
         expired either way — it is single-use by construction."""
         redirect = RedirectResponse(url=f"{FRONTEND_URL}{path}", status_code=302)
         if session is not None:
-            open_session_for(redirect, session)
+            open_session_for(redirect, session, is_recovery=is_recovery)
         clear_pkce_cookie(redirect)
         return redirect
 
@@ -305,7 +314,7 @@ def callback(
     if not supabase_session or not getattr(supabase_session, "access_token", None):
         return _leave("/login?error=link_invalid")
 
-    return _leave(_landing_for(type, stored_next), supabase_session)
+    return _leave(_landing_for(type, stored_next), supabase_session, is_recovery=(type == "recovery"))
 
 
 # ---------------------------------------------------------------------------
@@ -314,16 +323,20 @@ def callback(
 
 
 @router.post("/password/forgot", dependencies=[Depends(verify_turnstile)])
-def password_forgot(payload: AuthEmailRequest):
+def password_forgot(payload: AuthEmailRequest, request: Request):
     """Send a recovery link. Always reports success.
 
     Whether the address has an account is not this endpoint's to disclose, so the
     response and its timing do not vary.
     """
+    email = payload.email.strip().lower()
+    if not check_rate_limit(f"forgot:{email}:{get_client_ip(request)}", _FORGOT_MAX, _FORGOT_WINDOW):
+        raise HTTPException(status_code=429, detail="Too many password reset requests. Please wait a few minutes.")
+
     client = new_user_client()
     try:
         client.auth.reset_password_email(
-            payload.email.strip().lower(),
+            email,
             {"redirect_to": _CALLBACK_URL},
         )
     except Exception as e:
@@ -344,6 +357,10 @@ def password_reset(payload: AuthPasswordResetRequest, request: Request, user_id:
     stored = read_session(sid) if sid else None
     if not stored:
         raise HTTPException(status_code=401, detail="No recovery session")
+    # SPEC-116 (SEC-17): an ordinary login/OAuth session must not bypass
+    # `current_password` verification on PUT /user/{id}/password.
+    if not stored.get("is_recovery"):
+        raise HTTPException(status_code=403, detail="Password reset requires a recovery link")
 
     if len(payload.new_password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
@@ -361,7 +378,7 @@ def password_reset(payload: AuthPasswordResetRequest, request: Request, user_id:
         except Exception as e:
             logger.debug(f"Best-effort sign_out failed (ignored): {e}")
 
-    # Audit SEC-10: a reset usually means the old password got out, so every
-    # other session goes. The recovery session that made the change stays.
+    # Single-use recovery authority + evict every other session (SEC-10 / SEC-17).
+    clear_recovery_flag(sid)
     revoke_other_sessions(user_id, keep_sid=sid)
     return {"updated": True, "at": int(time.time())}

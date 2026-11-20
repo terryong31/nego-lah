@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { resolveUserId } from '~/utils/auth'
+import { isSafeHttpUrl } from '~/utils/url'
 
 definePageMeta({
   middleware: 'auth'
@@ -134,8 +135,8 @@ function formatDate(dateStr: string) {
 
         <template #tracking_number-cell="{ row }">
           <ULink
-            v-if="row.original.tracking_url && trackingLabel(row.original)"
-            :to="row.original.tracking_url"
+            v-if="isSafeHttpUrl(row.original.tracking_url) && trackingLabel(row.original)"
+            :to="row.original.tracking_url!"
             target="_blank"
             rel="noopener noreferrer"
             class="inline-flex items-center gap-1.5 text-primary"

@@ -939,25 +939,20 @@ async def test_confirm_payment_unknown_fulfillment_status_500(client, auth_user,
     assert response.json()["detail"] == "Could not confirm payment"
 
 
-async def test_confirm_payment_item_id_falls_back_to_query_param(client, auth_user, fake_stripe, monkeypatch):
-    """metadata has no item_id, but the query param supplies it -- covers the
-    `metadata.get('item_id') or item_id` fallback branch."""
+async def test_confirm_payment_item_id_does_not_fall_back_to_query_param(client, auth_user, fake_stripe, monkeypatch):
+    """SPEC-116 / SEC-16: when Stripe metadata lacks item_id, fail closed rather
+    than trusting a caller-supplied query parameter."""
     auth_user("buyer-1")
     session = _make_stripe_session(payment_status="paid", metadata={"user_id": "buyer-1"})
     fake_stripe.v1.checkout.sessions.retrieve.return_value = session
 
-    captured = {}
-
-    def fake_fulfill_purchase(**kwargs):
-        captured.update(kwargs)
-        return {"status": "fulfilled", "order_id": "order-9"}
-
-    monkeypatch.setattr(fulfillment, "fulfill_purchase", fake_fulfill_purchase)
+    fulfill_mock = MagicMock()
+    monkeypatch.setattr(fulfillment, "fulfill_purchase", fulfill_mock)
 
     response = await client.post(
         "/payment/confirm-payment",
         params={"session_id": "cs_1", "item_id": "item-from-query"},
     )
 
-    assert response.status_code == 200
-    assert captured["item_id"] == "item-from-query"
+    assert response.status_code == 400
+    fulfill_mock.assert_not_called()

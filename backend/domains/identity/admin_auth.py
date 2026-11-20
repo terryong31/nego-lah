@@ -8,7 +8,7 @@ allowlist.
 
 from fastapi import APIRouter, Depends, Request, Response
 
-from core.csrf import generate_csrf_token, set_csrf_cookie
+from core.csrf import generate_csrf_token, set_csrf_cookie, verify_csrf_token
 from core.schemas import Admin2FARequest, AdminLoginRequest
 from core.security import verify_turnstile
 from domains.identity.admin_session import (
@@ -51,7 +51,7 @@ def admin_verify_2fa(request: Admin2FARequest, req: Request, response: Response)
     return {"valid": True, "email": result["email"]}
 
 
-@router.post("/auth/logout")
+@router.post("/auth/logout", dependencies=[Depends(verify_csrf_token)])
 def admin_logout(req: Request, response: Response, admin: dict = Depends(verify_admin)):
     """Invalidate the current admin session."""
     write_audit(admin.get("user_id"), admin.get("email"), "logout", None, admin.get("ip"))

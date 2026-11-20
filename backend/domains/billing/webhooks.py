@@ -1,10 +1,28 @@
 import stripe
 
+from core import stripe_client
 from core.env import STRIPE_WEBHOOK_SECRET
 from core.logger import logger
-from core.stripe_client import get_stripe_client
 from domains.billing.fulfillment import fulfill_purchase
 from domains.billing.stripe_compat import stripe_get
+
+
+def resolve_session_metadata(session) -> dict:
+    """Resolve authoritative Stripe metadata for a Checkout Session.
+
+    Stripe propagates PaymentLink metadata onto newly created Checkout Sessions;
+    this also checks the underlying PaymentLink as a defensive fallback if a
+    session's own metadata lacks `item_id` (SPEC-116 / SEC-16).
+    """
+    metadata = stripe_get(session, "metadata") or {}
+    payment_link_id = stripe_get(session, "payment_link")
+    if payment_link_id and not stripe_get(metadata, "item_id"):
+        try:
+            plink = stripe_client.get_stripe_client().v1.payment_links.retrieve(payment_link_id)
+            metadata = stripe_get(plink, "metadata") or {}
+        except Exception as e:
+            logger.warning(f"⚠️ Error fetching PaymentLink metadata: {e}")
+    return metadata
 
 
 def handle_checkout_completed(event) -> dict:
@@ -19,17 +37,7 @@ def handle_checkout_completed(event) -> dict:
     ask Stripe to retry.
     """
     session = stripe_get(stripe_get(event, "data"), "object")
-
-    metadata = stripe_get(session, "metadata") or {}
-
-    # PaymentLinks don't propagate metadata onto the Session — fetch from the link.
-    payment_link_id = stripe_get(session, "payment_link")
-    if payment_link_id and not stripe_get(metadata, "item_id"):
-        try:
-            plink = get_stripe_client().v1.payment_links.retrieve(payment_link_id)
-            metadata = stripe_get(plink, "metadata") or {}
-        except Exception as e:
-            logger.warning(f"⚠️ Error fetching PaymentLink metadata: {e}")
+    metadata = resolve_session_metadata(session)
 
     item_id = stripe_get(metadata, "item_id")
     user_id = stripe_get(metadata, "user_id")
@@ -71,7 +79,7 @@ def verify_webhook(payload: bytes, sig_header: str):
     Returns the event if valid, None if invalid.
     """
     try:
-        event = get_stripe_client().construct_event(payload, sig_header, STRIPE_WEBHOOK_SECRET)
+        event = stripe_client.get_stripe_client().construct_event(payload, sig_header, STRIPE_WEBHOOK_SECRET)
         return event
     except ValueError:
         logger.error("❌ Invalid webhook payload")

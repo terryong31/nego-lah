@@ -69,12 +69,13 @@ async def verify_turnstile(
                 logger.warning(f"Turnstile verification failed: {outcome.get('error-codes')}")
                 raise HTTPException(status_code=403, detail="Turnstile verification failed")
 
-            # Check hostname allowlist if configured
+            # Check hostname allowlist if configured (fail closed when missing — SEC-24)
             expected_hostnames = {
                 h.strip().lower() for h in os.getenv("TURNSTILE_HOSTNAMES", "").split(",") if h.strip()
             }
-            if expected_hostnames and outcome.get("hostname"):
-                if outcome.get("hostname").lower() not in expected_hostnames:
+            if expected_hostnames:
+                actual_hostname = (outcome.get("hostname") or "").strip().lower()
+                if not actual_hostname or actual_hostname not in expected_hostnames:
                     logger.warning(
                         f"Turnstile hostname mismatch: {outcome.get('hostname')} not in {expected_hostnames}"
                     )

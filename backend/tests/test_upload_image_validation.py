@@ -334,7 +334,9 @@ async def test_admin_avatar_base64_fallback_uses_the_sniffed_type(
     )
 
     assert resp.status_code == 200
-    assert resp.json()["avatar_url"].startswith("data:image/gif;base64,")
+    # SPEC-116 / SEC-20: GIF is decoded and re-encoded to JPEG rather than
+    # passed through raw, and the declared `text/html` is never used.
+    assert resp.json()["avatar_url"].startswith("data:image/jpeg;base64,")
 
 
 async def test_admin_avatar_enforces_a_size_ceiling(

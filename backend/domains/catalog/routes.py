@@ -1,7 +1,7 @@
 import asyncio
 import json
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 
 from core import bus
 from domains.catalog.items import (
@@ -85,7 +85,7 @@ async def get_all_items(request: Request, keyword: str | None = None) -> list[di
 
 
 @router.get("/featured")
-async def get_featured(request: Request, limit: int = 6) -> list[dict]:
+async def get_featured(request: Request, limit: int = Query(default=6, ge=1, le=50)) -> list[dict]:
     """
     Get the most-interacted listings for the home page.
 

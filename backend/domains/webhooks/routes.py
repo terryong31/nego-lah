@@ -2,6 +2,7 @@ import base64
 import email as email_lib
 import html
 import json
+import re
 from email import policy as email_policy
 
 import httpx
@@ -16,8 +17,14 @@ from core.env import (
     RESEND_WEBHOOK_SECRET,
 )
 from core.logger import logger
+from core.url import is_safe_http_url
 
 router = APIRouter(prefix="/webhooks", tags=["Webhooks"])
+
+# SPEC-116 / SEC-23: prevent path traversal in Resend email_id URL interpolation
+# and cap raw email downloads so a single inbound message cannot OOM a 2 GB host.
+_EMAIL_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+MAX_INBOUND_RAW_BYTES = 25 * 1024 * 1024
 
 
 @router.post("/resend")
@@ -57,6 +64,9 @@ async def resend_webhook(request: Request):
     sender = data.get("from", "")
     subject = data.get("subject", "(no subject)")
     email_id = data.get("email_id")
+    if not isinstance(email_id, str) or not _EMAIL_ID_RE.match(email_id):
+        logger.warning("⚠️ Rejecting Resend webhook with invalid email_id")
+        raise HTTPException(status_code=400, detail="Invalid email_id")
     # "to" is a list — inbound receiving is domain-wide, so this is the only
     # place we learn whether the mail was sent to contact@, support@, etc.
     recipients = data.get("to") or []
@@ -99,9 +109,23 @@ async def resend_webhook(request: Request):
                 a for a in (email_content.get("attachments") or []) if a.get("content_disposition") != "inline"
             ]
             download_url = (email_content.get("raw") or {}).get("download_url")
-            if real_attachments and download_url:
+            if real_attachments and download_url and is_safe_http_url(download_url):
                 raw_resp = await client.get(download_url, timeout=30)
                 raw_resp.raise_for_status()
+                raw_headers = getattr(raw_resp, "headers", None)
+                declared_len: int | None = None
+                if raw_headers is not None and hasattr(raw_headers, "get"):
+                    raw_cl = raw_headers.get("content-length")
+                    if isinstance(raw_cl, (int, str)):
+                        try:
+                            declared_len = int(raw_cl)
+                        except ValueError:
+                            declared_len = None
+                if (declared_len is not None and declared_len > MAX_INBOUND_RAW_BYTES) or (
+                    len(raw_resp.content) > MAX_INBOUND_RAW_BYTES
+                ):
+                    logger.warning("⚠️ Rejecting oversized Resend raw email payload")
+                    raise HTTPException(status_code=413, detail="Inbound email payload too large")
                 msg = email_lib.message_from_bytes(raw_resp.content, policy=email_policy.default)
                 for part in msg.iter_attachments():
                     # Inline images are already embedded in the html above — skip

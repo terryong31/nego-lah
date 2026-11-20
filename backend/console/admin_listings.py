@@ -77,7 +77,7 @@ async def analyze_item_image_stream(images: list[UploadFile] = File(...), langua
                 await queue.put({"stage": "done", "progress": 100, "message": "Done", "result": data})
             except Exception as e:
                 logger.error(f"Error analyzing image: {e}")
-                await queue.put({"stage": "error", "progress": 100, "message": f"Failed to analyze image: {e}"})
+                await queue.put({"stage": "error", "progress": 100, "message": "Failed to analyze image"})
             finally:
                 await queue.put(None)
 
@@ -147,7 +147,7 @@ async def analyze_item_image(images: list[UploadFile] = File(...), language: str
 
     except Exception as e:
         logger.error(f"Error analyzing image: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to analyze image: {str(e)}") from e
+        raise HTTPException(status_code=500, detail="Failed to analyze image") from e
 
 
 # =====================

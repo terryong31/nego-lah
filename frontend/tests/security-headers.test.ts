@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { contentSecurityPolicy } from '../build/csp'
+import { isSafeHttpUrl } from '../app/utils/url'
 
 describe('SPEC-050 — Security Headers & RFC 9116 security.txt', () => {
   const publicDir = resolve(__dirname, '../public')
@@ -53,5 +54,28 @@ describe('audit SEC-4 — one CSP, served as written', () => {
 
   it('still lets the dev server reach the local API', () => {
     expect(contentSecurityPolicy({ dev: true })).toMatch(/http:\/\/localhost:8000/)
+  })
+
+  it('enforces frame-ancestors none and form-action self (SPEC-116 / SEC-19)', () => {
+    const prod = contentSecurityPolicy({ dev: false })
+    expect(prod).toContain('frame-ancestors \'none\'')
+    expect(prod).toContain('form-action \'self\'')
+  })
+})
+
+describe('SPEC-116 / SEC-19 — external URL scheme allowlist', () => {
+  it('accepts http and https URLs', () => {
+    expect(isSafeHttpUrl('https://www.jtexpress.my/tracking/123')).toBe(true)
+    expect(isSafeHttpUrl('http://tracking.example.com/abc')).toBe(true)
+  })
+
+  it('rejects dangerous or malformed URLs', () => {
+    expect(isSafeHttpUrl('javascript:alert(1)')).toBe(false)
+    expect(isSafeHttpUrl('data:text/html,<script>alert(1)</script>')).toBe(false)
+    expect(isSafeHttpUrl('vbscript:msgbox(1)')).toBe(false)
+    expect(isSafeHttpUrl('ftp://example.com/file')).toBe(false)
+    expect(isSafeHttpUrl('')).toBe(false)
+    expect(isSafeHttpUrl(null)).toBe(false)
+    expect(isSafeHttpUrl(undefined)).toBe(false)
   })
 })

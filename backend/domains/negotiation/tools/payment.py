@@ -166,7 +166,7 @@ Please continue negotiating with the seller for a fair price."""
         price = client.v1.prices.create(
             params={
                 "product": product.id,
-                "unit_amount": int(agreed_price * 100),  # Convert to cents
+                "unit_amount": round(agreed_price * 100),  # Convert to cents
                 "currency": "myr",
             }
         )

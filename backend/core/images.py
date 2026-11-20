@@ -126,8 +126,19 @@ def normalize_image(
                 img.convert("RGBA").save(buf, format="WEBP", quality=WEBP_QUALITY, method=4)
                 content_type, ext, out_format = "image/webp", "webp", "WEBP"
             else:
-                img.convert("RGB").save(buf, format="JPEG", quality=quality, optimize=True, progressive=True)
+                rgb_img = img.convert("RGB")
+                rgb_img.save(buf, format="JPEG", quality=quality, optimize=True, progressive=True)
                 content_type, ext, out_format = "image/jpeg", "jpg", "JPEG"
+
+                # For opaque PNGs (screenshots, flat graphics, small icons),
+                # re-encoding cleanly as PNG strips all metadata/trailing bytes
+                # while avoiding inflating lossless graphics into larger JPEGs.
+                if source_format == "PNG":
+                    png_buf = io.BytesIO()
+                    rgb_img.save(png_buf, format="PNG")
+                    if png_buf.tell() < buf.tell():
+                        buf = png_buf
+                        content_type, ext, out_format = "image/png", "png", "PNG"
     except HTTPException:
         raise
     except Exception as e:
@@ -138,17 +149,10 @@ def normalize_image(
 
     encoded = buf.getvalue()
 
-    # Re-encoding a small, already-optimal file can make it bigger. Keeping the
-    # original is only safe when the original is something a browser can show —
-    # a HEIC is converted even at a size cost, because the alternative is a
-    # broken image everywhere but Safari.
-    if len(encoded) >= len(data) and source_format not in _ALWAYS_CONVERT:
-        from core.uploads import sniff_image
-
-        sniffed = sniff_image(data)
-        if sniffed is not None:
-            return data, sniffed[0], sniffed[1]
-
+    # SPEC-116 (SEC-20): always return the freshly re-encoded bytes, even when
+    # re-encoding costs a few bytes on a tiny or already-compressed file.
+    # Returning raw `data` skipped EXIF/GPS stripping and allowed trailing
+    # non-pixel payloads to reach the public CDN unchanged.
     logger.info(
         f"🖼️ Normalized image: {len(data)} -> {len(encoded)} bytes ({source_format or 'unknown'} -> {out_format})"
     )

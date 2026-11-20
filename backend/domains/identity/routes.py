@@ -386,6 +386,7 @@ def delete_account(
     # next token refresh failed, and could still write rows for a user that no
     # longer exists.
     clear_session_cookies(request, response)
+    revoke_other_sessions(user_id, keep_sid=None)
     cache_ban_status(user_id, True, ttl=_DELETED_ACCOUNT_BLOCK_SECONDS)
     _purge_avatars(user_id)
 

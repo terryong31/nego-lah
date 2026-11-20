@@ -251,22 +251,37 @@ def confirm_payment(
         logger.error(f"❌ Session not paid: {payment_status}")
         raise HTTPException(status_code=400, detail="Payment not completed")
 
-    metadata = stripe_get(session, "metadata") or {}
-    # Trust Stripe's metadata for item/user, falling back to the request.
-    item_id = stripe_get(metadata, "item_id") or item_id
+    from domains.billing.webhooks import resolve_session_metadata
+
+    metadata = resolve_session_metadata(session)
+    # SPEC-116 (SEC-16): fail closed — authoritative Stripe metadata only.
+    # Never fall back to client-supplied `item_id` or skip buyer verification.
+    stripe_item_id = stripe_get(metadata, "item_id")
     session_user_id = stripe_get(metadata, "user_id")
 
-    # The authenticated caller must match the buyer recorded on the session.
-    if session_user_id and session_user_id != user_id:
-        logger.error("❌ Session buyer does not match authenticated user")
-        raise HTTPException(status_code=403, detail="Session does not belong to this user")
-    user_id = session_user_id or user_id
-
-    if not item_id:
+    if not stripe_item_id:
         raise HTTPException(status_code=400, detail="item_id is required")
 
+    if not session_user_id:
+        raise HTTPException(status_code=400, detail="Session metadata is missing buyer identity")
+
+    # The authenticated caller must match the buyer recorded on the session.
+    if session_user_id != user_id:
+        logger.error("❌ Session buyer does not match authenticated user")
+        raise HTTPException(status_code=403, detail="Session does not belong to this user")
+
+    item_id = stripe_item_id
     payment_intent = stripe_get(session, "payment_intent")
     amount = (stripe_get(session, "amount_total") or 0) / 100
+
+    # Defensive floor check: refuse fulfillment if the paid amount is below the item's floor.
+    live_item = CatalogService.get_item_with_floor_price(item_id)
+    if live_item:
+        floor_price = CatalogService.floor_price(live_item)
+        if floor_price > 0 and amount < floor_price - 0.01:
+            logger.warning(f"❌ Confirm-payment underpaid: RM{amount:.2f} < floor RM{floor_price:.2f} for {item_id}")
+            raise HTTPException(status_code=400, detail="Paid amount is below the minimum item price")
+
     item_name = stripe_get(metadata, "item_name")
     if (not item_name or item_name.strip().lower() == "item") and item_id:
         item_name = CatalogService.get_item_name(item_id) or item_name

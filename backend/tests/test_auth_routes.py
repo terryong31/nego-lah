@@ -308,7 +308,7 @@ async def test_reset_password_requires_the_recovery_session(client, fake_auth, a
 
 async def test_reset_password_updates_through_the_recovery_session(client, fake_auth, auth_user):
     auth_user("user-1")
-    sid = create_session("user-1", "access-1", "refresh-1", int(time.time()) + 3600)
+    sid = create_session("user-1", "access-1", "refresh-1", int(time.time()) + 3600, is_recovery=True)
 
     res = await client.post(
         "/auth/password/reset",
@@ -327,7 +327,7 @@ async def test_reset_password_signs_out_every_other_session(client, fake_auth, a
     auth_user("user-1")
     expires = int(time.time()) + 3600
     attacker = create_session("user-1", "access-0", "refresh-0", expires)
-    sid = create_session("user-1", "access-1", "refresh-1", expires)
+    sid = create_session("user-1", "access-1", "refresh-1", expires, is_recovery=True)
 
     res = await client.post(
         "/auth/password/reset",
@@ -345,7 +345,7 @@ async def test_a_failed_reset_signs_nobody_out(client, fake_auth, auth_user):
     auth_user("user-1")
     expires = int(time.time()) + 3600
     other = create_session("user-1", "access-0", "refresh-0", expires)
-    sid = create_session("user-1", "access-1", "refresh-1", expires)
+    sid = create_session("user-1", "access-1", "refresh-1", expires, is_recovery=True)
     fake_auth.auth.update_user.side_effect = Exception("weak password")
 
     res = await client.post(
@@ -361,7 +361,7 @@ async def test_a_failed_reset_signs_nobody_out(client, fake_auth, auth_user):
 
 async def test_reset_password_rejects_a_short_password(client, fake_auth, auth_user):
     auth_user("user-1")
-    sid = create_session("user-1", "access-1", "refresh-1", int(time.time()) + 3600)
+    sid = create_session("user-1", "access-1", "refresh-1", int(time.time()) + 3600, is_recovery=True)
 
     res = await client.post(
         "/auth/password/reset",

@@ -2,6 +2,7 @@
 import { computed, h, reactive, ref, resolveComponent } from 'vue'
 import type { DropdownMenuItem, TableColumn } from '@nuxt/ui'
 import { getErrorMessage } from '~/utils/error'
+import { isSafeHttpUrl } from '~/utils/url'
 
 const UButton = resolveComponent('UButton')
 
@@ -438,7 +439,7 @@ const columns = computed<TableColumn<Order>[]>(() => [
                 {{ row.original.tracking_number || '—' }}
               </div>
               <div
-                v-if="row.original.tracking_url"
+                v-if="isSafeHttpUrl(row.original.tracking_url)"
                 class="pt-1"
               >
                 <UButton
@@ -446,7 +447,7 @@ const columns = computed<TableColumn<Order>[]>(() => [
                   variant="link"
                   class="p-0"
                   icon="i-lucide-external-link"
-                  :to="row.original.tracking_url"
+                  :to="row.original.tracking_url!"
                   target="_blank"
                   rel="noopener noreferrer"
                   :label="$t('admin.ordersSection.trackParcel')"

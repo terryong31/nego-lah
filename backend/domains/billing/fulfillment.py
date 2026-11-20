@@ -311,9 +311,29 @@ def fulfill_purchase(
 
     # --- Claim failed: already sold. Ours (duplicate) or someone else's? ----
     if item_row and item_row.get("status") == "sold" and item_row.get("buyer_id") == user_id:
-        # Already fulfilled to this buyer (duplicate delivery / concurrent path).
-        logger.info(f"ℹ️ Payment {payment_intent} already fulfilled to buyer — no-op")
-        return {"status": "duplicate", "order_id": order_id}
+        # SPEC-116 (SEC-24): distinguish a retried webhook for the winning
+        # payment from a SECOND distinct PaymentIntent by the same buyer.
+        other_winning_order = False
+        try:
+            other = (
+                admin_supabase.table("orders")
+                .select("id, stripe_payment_id")
+                .eq("item_id", item_id)
+                .eq("buyer_id", user_id)
+                .neq("stripe_payment_id", payment_intent)
+                .neq("status", "refunded")
+                .limit(1)
+                .execute()
+            )
+            other_winning_order = isinstance(getattr(other, "data", None), list) and len(other.data) > 0
+        except Exception as e:
+            logger.debug(f"Could not check prior orders for same-buyer duplicate check: {e}")
+
+        if not other_winning_order:
+            # Already fulfilled to this buyer (duplicate delivery / concurrent path).
+            logger.info(f"ℹ️ Payment {payment_intent} already fulfilled to buyer — no-op")
+            return {"status": "duplicate", "order_id": order_id}
+        logger.warning(f"⚠️ Duplicate charge by same buyer {user_id} on {item_id} — refunding {payment_intent}")
 
     # Lost the race to a different buyer (or item gone). Refund this payment.
     logger.warning(f"⚠️ Item {item_id} went to another buyer — refunding {payment_intent}")

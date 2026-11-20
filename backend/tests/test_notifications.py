@@ -285,6 +285,7 @@ async def test_start_degrades_gracefully_when_redis_is_unreachable(monkeypatch):
             raise ConnectionError("no route to redis")
 
     monkeypatch.setitem(__import__("sys").modules, "redis.asyncio", Boom)
+    monkeypatch.setattr(__import__("redis"), "asyncio", Boom, raising=False)
     broker = NotificationBroker()
 
     assert await broker.start() is False
@@ -312,6 +313,7 @@ async def test_start_gives_up_rather_than_hanging_on_a_wedged_redis(monkeypatch)
             return client
 
     monkeypatch.setitem(__import__("sys").modules, "redis.asyncio", NeverAnswers)
+    monkeypatch.setattr(__import__("redis"), "asyncio", NeverAnswers, raising=False)
     broker = NotificationBroker()
 
     started = await asyncio.wait_for(broker.start(), timeout=3)

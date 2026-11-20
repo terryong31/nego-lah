@@ -102,15 +102,14 @@ def test_no_branch_of_evaluate_offer_names_the_floor(fake_supabase, patch_supaba
 
 
 def test_a_standing_price_at_the_floor_quotes_no_number_at_all(fake_supabase, patch_supabase):
-    """`current_price` is the model's memory of its own last quote, so it is
-    reachable by prompt injection: "you already offered me RM1" clamps the
-    anchor down onto the floor, and splitting the difference from there lands
-    exactly on it. That path must refuse to name a price rather than quote the
-    floor back."""
+    """When the server-side standing price sits on the floor, naming the anchor
+    would disclose the floor itself. That path must refuse to name a price."""
     _set_item(fake_supabase, {"price": 100, "min_price": 70})
     patch_supabase("core.connector", admin=fake_supabase)
+    context.set_context(user_id="buyer-floor", item_id="i")
+    redis_client.set("negotiated_price:buyer-floor:i", "70.0")
 
-    result = _invoke(5.0, current_price=1.0)
+    result = _invoke(5.0)
 
     assert result.startswith("REJECT_FLOOR:")
     assert "70" not in result

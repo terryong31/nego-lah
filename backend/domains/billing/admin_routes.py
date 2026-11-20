@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from core import bus
 from core.logger import logger
 from core.schemas import OrderStatusUpdate, OrderUpdate, ShipmentUpdate
+from core.url import is_safe_http_url
 from domains.identity import IdentityService, verify_admin, write_audit
 
 router = APIRouter()
@@ -76,7 +77,7 @@ def cleanup_expired_stripe_links():
         return {"message": f"Cleaned up {cleaned} expired payment links"}
     except Exception as e:
         logger.error(f"Stripe cleanup job failed: {e}")
-        return {"error": str(e)}
+        return {"error": "Stripe cleanup failed"}
 
 
 # =====================
@@ -190,6 +191,10 @@ def record_shipment(order_id: str, request: ShipmentUpdate, admin: dict = Depend
     if not courier or not tracking_number:
         raise HTTPException(status_code=400, detail="Courier and tracking number are both required")
 
+    explicit_url = (request.tracking_url or "").strip()
+    if explicit_url and not is_safe_http_url(explicit_url):
+        raise HTTPException(status_code=400, detail="Tracking URL must be a valid http(s) URL")
+
     existing = admin_supabase.table("orders").select("*").eq("id", order_id).execute()
     if not existing.data:
         raise HTTPException(status_code=404, detail="Order not found")
@@ -199,7 +204,7 @@ def record_shipment(order_id: str, request: ShipmentUpdate, admin: dict = Depend
         "tracking_number": tracking_number,
         # An explicit URL wins: the seller may be using a carrier the registry
         # doesn't know, or a consignment link that isn't the generic search page.
-        "tracking_url": (request.tracking_url or "").strip() or resolve_tracking_url(courier, tracking_number),
+        "tracking_url": explicit_url or resolve_tracking_url(courier, tracking_number),
         # SPEC-064: the date belongs to the act of posting, which happened once.
         # Re-stamping it on every write meant correcting a mistyped tracking
         # number silently moved the ship date — leaving the buyer's email and

@@ -6,7 +6,7 @@ import json
 import os
 import time
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
 
 from core.cache import (
@@ -104,7 +104,10 @@ def _stamp_buyer_read(user_id: str) -> str:
 
 @router.get("/chat/history/{user_id}")
 async def get_chat_history(
-    user_id: str, limit: int = 20, offset: int = 0, token_user_id: str = Depends(verify_user_token)
+    user_id: str,
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    token_user_id: str = Depends(verify_user_token),
 ):
     """
     Get a page of chat history for a user from Supabase.

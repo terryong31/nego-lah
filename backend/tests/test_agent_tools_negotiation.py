@@ -209,39 +209,44 @@ def test_offer_exceeds_listed_price_is_accept(fake_supabase, patch_supabase):
 
 
 def test_offer_matches_prior_anchor_is_accept(fake_supabase, patch_supabase):
-    """current_price=85 becomes the anchor (clamped into [min_price, listed]);
-    an offer meeting it exactly (and above min_price) is a plain ACCEPT."""
+    """Server-side standing price 85 becomes the anchor (clamped into
+    [min_price, listed]); an offer meeting it exactly (and above min_price) is
+    a plain ACCEPT."""
     _set_item(fake_supabase, {"price": 100, "min_price": 70})
     patch_supabase("core.connector", admin=fake_supabase)
+    context.set_context(user_id="buyer-1", item_id="i")
+    redis_client.set("negotiated_price:buyer-1:i", "85.0")
 
-    result = _invoke_offer(item_id="i", offered_price=85.0, current_price=85.0)
+    result = _invoke_offer(item_id="i", offered_price=85.0)
 
     assert result == "ACCEPT: Offer of RM85.0 matches or beats your current price of RM85.00. Take the deal."
 
 
 def test_extra_discount_lowers_threshold_enough_to_accept_below_anchor(fake_supabase, patch_supabase):
-    """With no prior counter (anchor == listed price == 100), a 20% extra
-    discount lowers adjusted_threshold to 80, so an offer of 80 (below the
-    anchor, above min_price) is accepted via the threshold branch rather than
-    countered."""
+    """With no prior counter (anchor == listed price == 100), a 10% extra
+    discount (max allowed per SPEC-116 / SEC-18) lowers adjusted_threshold to
+    90, so an offer of 90 (below the anchor, above min_price) is accepted via
+    the threshold branch rather than countered."""
     _set_item(fake_supabase, {"price": 100, "min_price": 50})
     patch_supabase("core.connector", admin=fake_supabase)
 
-    result = _invoke_offer(item_id="i", offered_price=80.0, extra_discount_percent=20)
+    result = _invoke_offer(item_id="i", offered_price=90.0, extra_discount_percent=10)
 
-    assert result == "ACCEPT: Offer of RM80.0 matches or beats your current price of RM100.00. Take the deal."
+    assert result == "ACCEPT: Offer of RM90.0 matches or beats your current price of RM100.00. Take the deal."
 
 
 # --- evaluate_offer: ACCEPT_FLOOR -------------------------------------------
 
 
 def test_offer_at_anchor_equal_to_min_price_is_accept_floor(fake_supabase, patch_supabase):
-    """current_price=70 clamps the anchor up to min_price (70); an offer of
+    """Server-side standing price 70 sits at min_price (70); an offer of
     exactly 70 both meets the anchor and sits at the absolute floor."""
     _set_item(fake_supabase, {"price": 100, "min_price": 70})
     patch_supabase("core.connector", admin=fake_supabase)
+    context.set_context(user_id="buyer-1", item_id="i")
+    redis_client.set("negotiated_price:buyer-1:i", "70.0")
 
-    result = _invoke_offer(item_id="i", offered_price=70.0, current_price=70.0)
+    result = _invoke_offer(item_id="i", offered_price=70.0)
 
     assert result == (
         "ACCEPT_FLOOR: Offer of RM70.0 hits the absolute minimum. "
@@ -249,18 +254,16 @@ def test_offer_at_anchor_equal_to_min_price_is_accept_floor(fake_supabase, patch
     )
 
 
-def test_large_extra_discount_clamps_threshold_to_min_price_triggers_accept_floor(fake_supabase, patch_supabase):
-    """A 50% extra discount would push adjusted_threshold to 50, but it's
-    clamped up to min_price (70). An offer of exactly 70 meets that clamped
-    threshold and equals the floor -> ACCEPT_FLOOR, even though the anchor
-    (unset current_price -> listed price 100) was not met."""
-    _set_item(fake_supabase, {"price": 100, "min_price": 70})
+def test_large_extra_discount_clamps_to_10_percent_and_threshold_clamps_to_min_price(fake_supabase, patch_supabase):
+    """SPEC-116 / SEC-18: extra_discount_percent is clamped to 10% max, and
+    adjusted_threshold still clamps up to min_price (95 here) -> ACCEPT_FLOOR."""
+    _set_item(fake_supabase, {"price": 100, "min_price": 95})
     patch_supabase("core.connector", admin=fake_supabase)
 
-    result = _invoke_offer(item_id="i", offered_price=70.0, extra_discount_percent=50)
+    result = _invoke_offer(item_id="i", offered_price=95.0, extra_discount_percent=50)
 
     assert result == (
-        "ACCEPT_FLOOR: Offer of RM70.0 hits the absolute minimum. "
+        "ACCEPT_FLOOR: Offer of RM95.0 hits the absolute minimum. "
         "Tell buyer: 'This is the lowest I can go, friend! Take it or leave it \U0001f605'"
     )
 
@@ -298,12 +301,15 @@ def test_offer_within_one_step_of_the_anchor_is_held_not_countered(fake_supabase
 
 
 def test_counter_anchors_to_the_prior_standing_price_in_whole_rm_steps(fake_supabase, patch_supabase):
-    """SPEC-047 worked example: after coming down to RM90, an RM70 offer is
-    countered at RM85 -- 25% of the RM20 gap, on a natural RM5 increment."""
+    """SPEC-047 worked example: after coming down to RM90 (stored server-side),
+    an RM70 offer is countered at RM85 -- 25% of the RM20 gap, on a natural RM5
+    increment."""
     _set_item(fake_supabase, {"price": 100, "min_price": 60})
     patch_supabase("core.connector", admin=fake_supabase)
+    context.set_context(user_id="buyer-1", item_id="i")
+    redis_client.set("negotiated_price:buyer-1:i", "90.0")
 
-    result = _invoke_offer(item_id="i", offered_price=70.0, current_price=90.0)
+    result = _invoke_offer(item_id="i", offered_price=70.0)
 
     assert result == (
         "COUNTER: Offer of RM70.0 is below your price of RM90. Counter with RM85 (must stay ≤ RM90 — never go back up)."
@@ -415,13 +421,15 @@ def test_anchor_clamps_down_to_listed_price_when_current_price_exceeds_it(fake_s
     )
 
 
-def test_anchor_clamps_up_to_min_price_when_current_price_is_below_it(fake_supabase, patch_supabase):
-    """current_price=50 is below the min_price floor (70) -- the anchor must
-    clamp UP to min_price, not stay at the (invalid) lower value."""
+def test_anchor_clamps_up_to_min_price_when_standing_price_is_below_it(fake_supabase, patch_supabase):
+    """Server-side standing price 50 is below the min_price floor (70) -- the
+    anchor must clamp UP to min_price, not stay at the (invalid) lower value."""
     _set_item(fake_supabase, {"price": 100, "min_price": 70})
     patch_supabase("core.connector", admin=fake_supabase)
+    context.set_context(user_id="buyer-1", item_id="i")
+    redis_client.set("negotiated_price:buyer-1:i", "50.0")
 
-    result = _invoke_offer(item_id="i", offered_price=75.0, current_price=50.0)
+    result = _invoke_offer(item_id="i", offered_price=75.0)
 
     assert result == "ACCEPT: Offer of RM75.0 matches or beats your current price of RM70.00. Take the deal."
 
@@ -478,8 +486,9 @@ def test_accept_below_listed_price_commits_price_and_sets_pending_discount(fake_
     _set_item(fake_supabase, {"price": 100, "min_price": 70})
     patch_supabase("core.connector", admin=fake_supabase)
     context.set_context(user_id="user-1", item_id="i")
+    redis_client.set("negotiated_price:user-1:i", "75.0")
 
-    result = _invoke_offer(item_id="i", offered_price=75.0, current_price=50.0)
+    result = _invoke_offer(item_id="i", offered_price=75.0)
 
     assert result.startswith("ACCEPT:")
     assert redis_client.get("negotiated_price:user-1:i") == "75.0"
@@ -553,7 +562,7 @@ def test_no_user_id_in_context_skips_redis_write_and_pending_discount(fake_supab
     patch_supabase("core.connector", admin=fake_supabase)
     context.set_context(user_id=None, item_id="i")
 
-    result = _invoke_offer(item_id="i", offered_price=75.0, current_price=50.0)
+    result = _invoke_offer(item_id="i", offered_price=90.0, extra_discount_percent=10)
 
     assert result.startswith("ACCEPT:")
     assert redis_client.get("negotiated_price:user-1:i") is None

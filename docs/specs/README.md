@@ -152,5 +152,6 @@ tests that prove it. No non-trivial change starts without one (see [`AGENTS.md`]
 | [SPEC-113](SPEC-113-dependabot-security-and-ci-remediation.md) | Dependabot Security Advisory & CI Remediation | complete |
 | [SPEC-114](SPEC-114-stripe-v1-client-and-generic-error-toasts.md) | StripeClient v1 Checkout Fix & Generic Frontend Error Toasts | complete |
 | [SPEC-115](SPEC-115-remove-archived-langchain-community.md) | Remove Archived langchain-community & Refresh LangChain Stack | complete |
+| [SPEC-116](SPEC-116-white-box-audit-2026-11-20.md) | White-Box Security Audit Remediation (2026-11-20) | complete |
 <!-- END GENERATED -->
 <!-- vale on -->

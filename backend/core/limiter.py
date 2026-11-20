@@ -13,6 +13,8 @@ NOTIFICATION_STREAM_LIMIT = os.getenv("NOTIFICATION_STREAM_RATE_LIMIT", "2000/mi
 CHECKOUT_LIMIT = os.getenv("CHECKOUT_RATE_LIMIT", "600/minute")
 ACCOUNT_LIMIT = os.getenv("ACCOUNT_RATE_LIMIT", "1000/minute")
 CHAT_STREAM_LIMIT = os.getenv("CHAT_STREAM_RATE_LIMIT", "300/minute")
+AUTH_LIMIT = os.getenv("AUTH_RATE_LIMIT", "120/minute")
+ADMIN_AUTH_LIMIT = os.getenv("ADMIN_AUTH_RATE_LIMIT", "60/minute")
 DEFAULT_LIMIT = os.getenv("DEFAULT_RATE_LIMIT", "10000/minute")
 
 
@@ -36,6 +38,10 @@ def parse_rate_limit(limit_str: str) -> tuple[int, int]:
 
 def resolve_route_limit(path: str) -> tuple[str, str]:
     """Map request path to bucket name and rate limit string."""
+    if path.startswith("/admin/auth"):
+        return "admin_auth", ADMIN_AUTH_LIMIT
+    if path.startswith("/auth"):
+        return "auth", AUTH_LIMIT
     if path.startswith("/chat/stream"):
         return "chat_stream", CHAT_STREAM_LIMIT
     if path.startswith("/payment/checkout"):

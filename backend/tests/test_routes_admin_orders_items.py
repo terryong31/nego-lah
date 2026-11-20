@@ -91,7 +91,7 @@ async def test_cleanup_stripe_exception_returns_error_dict(client, admin_user, m
     # The route catches the exception itself and returns a 200 with an "error"
     # key rather than raising an HTTPException -- documenting current behavior.
     assert response.status_code == 200
-    assert response.json() == {"error": "stripe unreachable"}
+    assert response.json() == {"error": "Stripe cleanup failed"}
 
 
 # ---------------------------------------------------------------------------
@@ -630,7 +630,8 @@ async def test_analyze_image_stream_reports_a_pipeline_failure_as_an_error_event
     assert response.status_code == 200
     events = _sse_events(response.text)
     assert events[-1]["stage"] == "error"
-    assert "gemini exploded" in events[-1]["message"]
+    assert events[-1]["message"] == "Failed to analyze image"
+    assert "gemini exploded" not in events[-1]["message"]
 
 
 # ---------------------------------------------------------------------------

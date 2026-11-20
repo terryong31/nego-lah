@@ -37,6 +37,8 @@ export function contentSecurityPolicy({ dev }: { dev: boolean }): string {
     `connect-src ${connect.join(' ')}`,
     'frame-src \'self\' https://challenges.cloudflare.com https://js.stripe.com',
     'object-src \'none\'',
-    'base-uri \'self\''
+    'base-uri \'self\'',
+    'frame-ancestors \'none\'',
+    'form-action \'self\''
   ].join('; ') + ';'
 }

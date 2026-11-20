@@ -70,7 +70,14 @@ def _key(sid: str) -> str:
     return f"{_SESS_KEY}{sid}"
 
 
-def create_session(user_id: str, access_token: str, refresh_token: str, expires_at: int) -> str:
+def create_session(
+    user_id: str,
+    access_token: str,
+    refresh_token: str,
+    expires_at: int,
+    *,
+    is_recovery: bool = False,
+) -> str:
     """Persist a Supabase session behind a fresh opaque id and return the id."""
     sid = secrets.token_urlsafe(32)
     redis_client.setex(
@@ -82,12 +89,21 @@ def create_session(user_id: str, access_token: str, refresh_token: str, expires_
                 "access_token": access_token,
                 "refresh_token": refresh_token,
                 "expires_at": int(expires_at or 0),
+                "is_recovery": bool(is_recovery),
             }
         ),
     )
     redis_client.zadd(f"{_SIDS_KEY}{user_id}", {sid: time.time()})
     redis_client.expire(f"{_SIDS_KEY}{user_id}", USER_SESSION_TTL)
     return sid
+
+
+def clear_recovery_flag(sid: str) -> None:
+    """Drop single-use recovery authority after a password reset (SPEC-116 / SEC-17)."""
+    session = read_session(sid)
+    if session and session.get("is_recovery"):
+        session["is_recovery"] = False
+        _save_session(sid, session)
 
 
 def read_session(sid: str) -> dict | None:
@@ -158,8 +174,8 @@ def _refresh(sid: str, session: dict) -> dict:
             time.sleep(_WAIT_STEP)
             fresh = read_session(sid)
             if fresh is None:
-                # Signed out (or revoked) while we waited.
-                return session
+                # Signed out (or revoked) while we waited — fail closed (SEC-21).
+                return {}
             if fresh.get("expires_at", 0) - time.time() > _REFRESH_SKEW:
                 return fresh
         # The winner never landed a result. Fall through with what we have: the
@@ -283,7 +299,7 @@ def _expire_legacy_cookie(response: Response) -> None:
         response.delete_cookie(key=USER_COOKIE_NAME, path=USER_COOKIE_PATH, domain=LEGACY_SESSION_COOKIE_DOMAIN)
 
 
-def open_session_for(response: Response, supabase_session) -> str:
+def open_session_for(response: Response, supabase_session, *, is_recovery: bool = False) -> str:
     """Store a fresh Supabase session and hand the browser its opaque id."""
     user = getattr(supabase_session, "user", None)
     user_id = getattr(user, "id", None)
@@ -295,6 +311,7 @@ def open_session_for(response: Response, supabase_session) -> str:
         access_token=supabase_session.access_token,
         refresh_token=getattr(supabase_session, "refresh_token", ""),
         expires_at=int(getattr(supabase_session, "expires_at", 0) or 0),
+        is_recovery=is_recovery,
     )
     set_session_cookies(response, sid)
     return sid

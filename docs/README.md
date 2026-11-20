@@ -45,7 +45,7 @@ updated when the system moves on; a later record supersedes them instead.
 |--------|-----------|
 | [ADRs](adr/README.md) | One significant architectural decision each, with context and consequences. |
 | [Specs](specs/README.md) | The contract for one change: acceptance criteria, design, tests. [SPEC-000](specs/SPEC-000-system-architecture.md) is the original blueprint. |
-| [Audits](audits/) | Findings from a review at a date: [non-functional, 2026-10-06](audits/2026-10-06-non-functional-audit.md); [documentation, 2026-10-07](audits/2026-10-07-documentation-audit.md). |
+| [Audits](audits/) | Findings from a review at a date: [non-functional, 2026-10-06](audits/2026-10-06-non-functional-audit.md); [documentation, 2026-10-07](audits/2026-10-07-documentation-audit.md); [security, 2026-10-27](audits/2026-10-27-comprehensive-white-box-audit.md); [security, 2026-11-20](audits/2026-11-20-white-box-security-audit.md). |
 
 ## How the docs stay correct
 

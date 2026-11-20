@@ -101,13 +101,14 @@ def test_a_model_argument_above_the_standing_price_cannot_raise_the_anchor(item)
     assert "150" in result
 
 
-def test_a_model_argument_below_the_standing_price_still_wins(item):
-    """The agent may have quoted lower in the same turn than the cache records."""
+def test_a_model_argument_below_the_standing_price_cannot_override_server_anchor(item):
+    """SPEC-116 / SEC-18: prompt-injected `current_price` below the server
+    standing price must be ignored so the model cannot collapse the anchor."""
     with _standing(165.0):
         result = _offer(120.0, current_price=140.0)
 
-    assert "140" in result
-    assert "165" not in result
+    assert "165" in result
+    assert "140" not in result
 
 
 # ---------------------------------------------------------------------------

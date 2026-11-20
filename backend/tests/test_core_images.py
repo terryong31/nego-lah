@@ -173,15 +173,21 @@ def test_metadata_including_gps_is_dropped():
 # ---------------------------------------------------------------------------
 
 
-def test_keeps_the_original_when_re_encoding_would_be_bigger():
-    """An already heavily-compressed JPEG must not be inflated by re-encoding it
-    at our quality — and the returned type must still describe what we kept."""
+def test_always_re_encodes_to_strip_metadata_even_when_bigger():
+    """SPEC-116 / SEC-20: never pass raw upload bytes through untouched, even
+    when re-encoding a low-quality JPEG is larger — EXIF/GPS and trailing data
+    must always be stripped."""
     buf = io.BytesIO()
-    photographic((300, 300)).save(buf, format="JPEG", quality=20)
+    img = photographic((300, 300))
+    exif = img.getexif()
+    exif[271] = "CameraSecret"
+    img.save(buf, format="JPEG", quality=20, exif=exif)
     data = buf.getvalue()
+    assert b"CameraSecret" in data
 
     out, content_type, ext = normalize_image(data)
-    assert out == data
+    assert out != data
+    assert b"CameraSecret" not in out
     assert (content_type, ext) == ("image/jpeg", "jpg")
 
 

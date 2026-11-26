@@ -258,7 +258,7 @@ def try_acquire_local_llm_lease() -> str | None:
     try:
         acquired = redis_client.set(LOCAL_LLM_LEASE_KEY, token, nx=True, ex=LEASE_TTL_SECONDS)
     except Exception as e:
-        logger.warning(f"⚠️ Redis unavailable for local LLM lease, overflowing to cloud: {e}")
+        logger.warning(f"Redis unavailable for local LLM lease, overflowing to cloud: {e}")
         return None
     return token if acquired else None
 
@@ -275,7 +275,7 @@ def release_local_llm_lease(token: str | None) -> None:
     try:
         redis_client.eval(RELEASE_LEASE_SCRIPT, 1, LOCAL_LLM_LEASE_KEY, token)
     except Exception as e:
-        logger.warning(f"⚠️ Failed to release local LLM lease (TTL will reclaim it): {e}")
+        logger.warning(f"Failed to release local LLM lease (TTL will reclaim it): {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -299,16 +299,16 @@ async def resolve_provider() -> tuple[ProviderInfo, str | None]:
         return cloud_provider_info(), None
 
     if not await is_local_llm_available():
-        logger.warning("⚠️ Local LLM endpoint unreachable or tunnel down. Overflowing to Gemini.")
+        logger.warning("Local LLM endpoint unreachable or tunnel down. Overflowing to Gemini.")
         return cloud_provider_info(), None
 
     lease_token = try_acquire_local_llm_lease()
     if lease_token is None:
-        logger.info("🔁 Local Qwen busy generating — overflowing this turn to Gemini (0ms wait).")
+        logger.info("Local Qwen busy generating — overflowing this turn to Gemini (0ms wait).")
         return cloud_provider_info(), None
 
     info = local_provider_info()
-    logger.info(f"🧠 Routing turn to Local Multimodal LLM: {info.model} on {info.hardware}")
+    logger.info(f"Routing turn to Local Multimodal LLM: {info.model} on {info.hardware}")
     return info, lease_token
 
 
@@ -431,11 +431,11 @@ def get_chat_model(
     if provider in ("local", "auto"):
         is_up = is_local_llm_available_sync() if use_sync_probe else False
         if is_up:
-            logger.info(f"🧠 Routing to Local Multimodal LLM: {_local_config()[1]}")
+            logger.info(f"Routing to Local Multimodal LLM: {_local_config()[1]}")
             return _build_local_model(temperature)
-        logger.warning("⚠️ Local LLM endpoint unreachable or tunnel down. Falling back to Gemini.")
+        logger.warning("Local LLM endpoint unreachable or tunnel down. Falling back to Gemini.")
 
-    logger.info(f"✨ Routing to Google Gemini: {_gemini_model_name()}")
+    logger.info(f"Routing to Google Gemini: {_gemini_model_name()}")
     return _build_gemini_model(temperature)
 
 
@@ -449,9 +449,9 @@ async def aget_chat_model(temperature: float = 0.7, force_provider: str | None =
 
     if provider in ("local", "auto"):
         if await is_local_llm_available():
-            logger.info(f"🧠 Routing to Local Multimodal LLM: {_local_config()[1]}")
+            logger.info(f"Routing to Local Multimodal LLM: {_local_config()[1]}")
             return _build_local_model(temperature)
-        logger.warning("⚠️ Local LLM endpoint unreachable or tunnel down. Falling back to Gemini.")
+        logger.warning("Local LLM endpoint unreachable or tunnel down. Falling back to Gemini.")
 
-    logger.info(f"✨ Routing to Google Gemini: {_gemini_model_name()}")
+    logger.info(f"Routing to Google Gemini: {_gemini_model_name()}")
     return _build_gemini_model(temperature)

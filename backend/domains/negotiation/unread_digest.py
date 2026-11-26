@@ -69,10 +69,10 @@ def queue_unread_message(user_id: str, content: str, item_name: str | None = Non
     try:
         depth = redis_client.rpush(_key(user_id), entry)
         redis_client.expire(_key(user_id), DIGEST_TTL_SECONDS)
-        logger.info(f"📥 Queued unread message for {user_id} (pending: {depth})")
+        logger.info(f"Queued unread message for {user_id} (pending: {depth})")
         return int(depth or 0)
     except Exception as e:
-        logger.warning(f"⚠️ Could not queue unread message for {user_id}: {e}")
+        logger.warning(f"Could not queue unread message for {user_id}: {e}")
         return 0
 
 
@@ -86,7 +86,7 @@ def mark_conversation_seen(user_id: str) -> bool:
         had_pending = bool(redis_client.llen(_key(user_id)))
         if had_pending:
             redis_client.delete(_key(user_id))
-            logger.info(f"👀 {user_id} read the chat; pending digest dropped")
+            logger.info(f"{user_id} read the chat; pending digest dropped")
         return had_pending
     except Exception as e:
         logger.debug(f"Could not clear unread digest for {user_id}: {e}")
@@ -130,7 +130,7 @@ def due_digest_user_ids(now: float | None = None) -> list[str]:
             if float(entry.get("queued_at") or 0) <= cutoff:
                 due.append(key[len(DIGEST_KEY_PREFIX) :])
     except Exception as e:
-        logger.warning(f"⚠️ Could not scan unread digests: {e}")
+        logger.warning(f"Could not scan unread digests: {e}")
     return due
 
 
@@ -147,7 +147,7 @@ def drain_digest(user_id: str) -> list[dict]:
         pipe.delete(_key(user_id))
         raw_entries = pipe.execute()[0] or []
     except Exception as e:
-        logger.warning(f"⚠️ Could not drain unread digest for {user_id}: {e}")
+        logger.warning(f"Could not drain unread digest for {user_id}: {e}")
         return []
 
     entries = [e for e in (_decode(r) for r in raw_entries) if e is not None]
@@ -179,7 +179,7 @@ def flush_due_digests() -> int:
                 # Already drained, deliberately: an address we cannot resolve
                 # will not resolve on the next sweep either, and re-queuing it
                 # would retry forever every 60 seconds.
-                logger.warning(f"⚠️ No email for {user_id}; dropped {len(messages)} queued message(s)")
+                logger.warning(f"No email for {user_id}; dropped {len(messages)} queued message(s)")
                 continue
 
             from core.email_service import send_unread_digest_email
@@ -191,5 +191,5 @@ def flush_due_digests() -> int:
                 sent += 1
         except Exception as e:
             # One buyer's failure must not abandon the rest of this sweep.
-            logger.warning(f"⚠️ Failed to flush unread digest for {user_id}: {e}")
+            logger.warning(f"Failed to flush unread digest for {user_id}: {e}")
     return sent

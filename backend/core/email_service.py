@@ -89,17 +89,17 @@ def _send_email_via_smtp(to_email: str, subject: str, html_content: str) -> bool
     try:
         with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10.0) as server:
             server.send_message(message)
-        logger.info(f"📧 Email '{subject}' delivered to {to_email} via SMTP ({SMTP_HOST}:{SMTP_PORT})")
+        logger.info(f"Email '{subject}' delivered to {to_email} via SMTP ({SMTP_HOST}:{SMTP_PORT})")
         return True
     except Exception as err:
-        logger.warning(f"⚠️ SMTP send to {to_email!r} via {SMTP_HOST}:{SMTP_PORT} failed: {err}")
+        logger.warning(f"SMTP send to {to_email!r} via {SMTP_HOST}:{SMTP_PORT} failed: {err}")
         return False
 
 
 def _send_email_via_resend(to_email: str, subject: str, html_content: str) -> bool:
     """Send an email via Resend API from the single verified domain sender."""
     if not RESEND_API_KEY:
-        logger.warning("⚠️ RESEND_API_KEY is not configured; skipping email delivery.")
+        logger.warning("RESEND_API_KEY is not configured; skipping email delivery.")
         return False
 
     # SPEC-074 Phase 2: one sender — the verified domain address. The old
@@ -107,7 +107,7 @@ def _send_email_via_resend(to_email: str, subject: str, html_content: str) -> bo
     # address, which only ever delivered to the account owner; dev mail goes to
     # Mailpit now, so a missing sender fails closed instead.
     if not RESEND_FORWARD_FROM:
-        logger.error("❌ RESEND_FORWARD_FROM is not configured; refusing to send via Resend.")
+        logger.error("RESEND_FORWARD_FROM is not configured; refusing to send via Resend.")
         return False
 
     headers = {
@@ -115,7 +115,7 @@ def _send_email_via_resend(to_email: str, subject: str, html_content: str) -> bo
         "Content-Type": "application/json",
     }
 
-    logger.info(f"📧 _send_email_via_resend — to={to_email!r} subject={subject!r} sender={RESEND_FORWARD_FROM!r}")
+    logger.info(f"_send_email_via_resend — to={to_email!r} subject={subject!r} sender={RESEND_FORWARD_FROM!r}")
 
     payload = {
         "from": RESEND_FORWARD_FROM,
@@ -127,13 +127,13 @@ def _send_email_via_resend(to_email: str, subject: str, html_content: str) -> bo
         with httpx.Client(timeout=10.0) as http_client:
             resp = http_client.post("https://api.resend.com/emails", headers=headers, json=payload)
             if resp.status_code < 300:
-                logger.info(f"📧 Email '{subject}' delivered to {to_email} via Resend")
+                logger.info(f"Email '{subject}' delivered to {to_email} via Resend")
                 return True
-            logger.warning(f"⚠️ Resend send → {to_email!r} returned HTTP {resp.status_code}: {resp.text}")
+            logger.warning(f"Resend send → {to_email!r} returned HTTP {resp.status_code}: {resp.text}")
     except Exception as err:
-        logger.warning(f"⚠️ Resend send to {to_email!r} failed: {err}")
+        logger.warning(f"Resend send to {to_email!r} failed: {err}")
 
-    logger.error(f"❌ Resend send failed for {to_email!r} (subject: {subject!r})")
+    logger.error(f"Resend send failed for {to_email!r} (subject: {subject!r})")
     return False
 
 

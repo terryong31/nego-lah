@@ -51,7 +51,7 @@ async def resend_webhook(request: Request):
     except (WebhookVerificationError, ValueError):
         # ValueError also covers malformed (non-base64) signature/header values that
         # the svix/standardwebhooks library doesn't wrap in WebhookVerificationError.
-        logger.warning("⚠️ Resend webhook signature verification failed: invalid signature or headers")
+        logger.warning("Resend webhook signature verification failed: invalid signature or headers")
         raise HTTPException(status_code=400, detail="Invalid webhook signature") from None
 
     event = json.loads(payload)
@@ -65,7 +65,7 @@ async def resend_webhook(request: Request):
     subject = data.get("subject", "(no subject)")
     email_id = data.get("email_id")
     if not isinstance(email_id, str) or not _EMAIL_ID_RE.match(email_id):
-        logger.warning("⚠️ Rejecting Resend webhook with invalid email_id")
+        logger.warning("Rejecting Resend webhook with invalid email_id")
         raise HTTPException(status_code=400, detail="Invalid email_id")
     # "to" is a list — inbound receiving is domain-wide, so this is the only
     # place we learn whether the mail was sent to contact@, support@, etc.
@@ -80,7 +80,7 @@ async def resend_webhook(request: Request):
     # once (e.g. support@ + admin@ + contact@ all in "to"). Tag all of them
     # rather than just the first — one forwarded copy still goes out either way.
     recipient_tag = ", ".join(allowed_recipients)
-    logger.info(f"📧 Inbound email received — to={recipient_tag} from={sender} subject={subject!r}")
+    logger.info(f"Inbound email received — to={recipient_tag} from={sender} subject={subject!r}")
 
     try:
         async with httpx.AsyncClient() as client:
@@ -124,7 +124,7 @@ async def resend_webhook(request: Request):
                 if (declared_len is not None and declared_len > MAX_INBOUND_RAW_BYTES) or (
                     len(raw_resp.content) > MAX_INBOUND_RAW_BYTES
                 ):
-                    logger.warning("⚠️ Rejecting oversized Resend raw email payload")
+                    logger.warning("Rejecting oversized Resend raw email payload")
                     raise HTTPException(status_code=413, detail="Inbound email payload too large")
                 msg = email_lib.message_from_bytes(raw_resp.content, policy=email_policy.default)
                 for part in msg.iter_attachments():
@@ -142,7 +142,7 @@ async def resend_webhook(request: Request):
                             "content_type": part.get_content_type(),
                         }
                     )
-                logger.info(f"📎 Forwarding {len(outbound_attachments)} attachment(s)")
+                logger.info(f"Forwarding {len(outbound_attachments)} attachment(s)")
 
             send_payload = {
                 "from": RESEND_FORWARD_FROM,
@@ -164,7 +164,7 @@ async def resend_webhook(request: Request):
             )
             response.raise_for_status()
     except httpx.HTTPError as e:
-        logger.error(f"❌ Failed to fetch/forward inbound email: {e}")
+        logger.error(f"Failed to fetch/forward inbound email: {e}")
         raise HTTPException(status_code=503, detail="Forwarding failed, retry") from e
 
     return {"status": "success"}

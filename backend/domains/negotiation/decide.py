@@ -173,7 +173,7 @@ def build_brief(
     try:
         standing = BillingService.get_active_negotiated_price(user_id, item_id)
     except Exception as e:  # noqa: BLE001 — a cache hiccup must not block a turn
-        logger.warning(f"⚠️ Decider could not resolve standing price: {e}")
+        logger.warning(f"Decider could not resolve standing price: {e}")
 
     listed = item.get("price")
     return TurnBrief(
@@ -233,7 +233,7 @@ async def decide_turn(brief: TurnBrief) -> TurnDecision:
     try:
         result = await decider_model().ainvoke(build_messages(brief))
     except Exception as e:  # noqa: BLE001
-        logger.warning(f"⚠️ Decider pass failed, answering without a tool: {e}")
+        logger.warning(f"Decider pass failed, answering without a tool: {e}")
         return TurnDecision(tool=None)
 
     calls = getattr(result, "tool_calls", None) or []
@@ -243,5 +243,5 @@ async def decide_turn(brief: TurnBrief) -> TurnDecision:
     call = calls[0]
     name = call.get("name") if isinstance(call, dict) else getattr(call, "name", None)
     args = (call.get("args") if isinstance(call, dict) else getattr(call, "args", None)) or {}
-    logger.info(f"🧭 Decider routed turn to `{name}` with {args}")
+    logger.info(f"Decider routed turn to `{name}` with {args}")
     return TurnDecision(tool=name, args=args)

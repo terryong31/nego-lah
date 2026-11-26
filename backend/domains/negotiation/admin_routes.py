@@ -220,7 +220,7 @@ def set_chat_read_state(
     except Exception as e:
         # Surfaced rather than swallowed: a click that silently does nothing is
         # exactly the bug this spec exists to fix.
-        logger.warning(f"⚠️ Failed to write read state for {user_id}: {e}")
+        logger.warning(f"Failed to write read state for {user_id}: {e}")
         raise HTTPException(status_code=503, detail="Could not update read state") from e
 
     write_audit(admin.get("user_id"), admin.get("email"), "chat.read", user_id, admin.get("ip"))
@@ -246,7 +246,7 @@ def set_chat_archived(
     except Exception as e:
         # Same rule as the read watermark: a click that silently does nothing is
         # the bug, not the error message.
-        logger.warning(f"⚠️ Failed to write archive state for {user_id}: {e}")
+        logger.warning(f"Failed to write archive state for {user_id}: {e}")
         raise HTTPException(status_code=503, detail="Could not update archive state") from e
 
     action = "chat.archive" if request.archived else "chat.unarchive"
@@ -267,7 +267,7 @@ def admin_send_message(user_id: str, request: AdminMessageRequest, admin: dict =
     try:
         _stamp_read(user_id, conversation_memory.read_watermark(user_id, "human"))
     except Exception as e:
-        logger.warning(f"⚠️ Failed to stamp read state on reply for {user_id}: {e}")
+        logger.warning(f"Failed to stamp read state on reply for {user_id}: {e}")
 
     # Push it to the buyer's open tab (SPEC-094: the authenticated broker, not
     # a public Supabase Realtime topic).
@@ -276,7 +276,7 @@ def admin_send_message(user_id: str, request: AdminMessageRequest, admin: dict =
 
         broadcast_to_chat(user_id, request.message, role="ai", source="admin")
     except Exception as e:
-        logger.warning(f"⚠️ Broadcast to chat failed: {e}")
+        logger.warning(f"Broadcast to chat failed: {e}")
 
     # Queue for the digest if the buyer has no live SSE stream. The stream
     # itself was already fed by broadcast_to_chat above (source="admin") --
@@ -293,7 +293,7 @@ def admin_send_message(user_id: str, request: AdminMessageRequest, admin: dict =
 
             queue_unread_message(user_id, request.message)
     except Exception as e:
-        logger.warning(f"⚠️ Notification delivery error: {e}")
+        logger.warning(f"Notification delivery error: {e}")
 
     write_audit(admin.get("user_id"), admin.get("email"), "chat.message", user_id, admin.get("ip"))
     return {"message": "Message sent successfully"}

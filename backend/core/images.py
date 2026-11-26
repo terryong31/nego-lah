@@ -36,14 +36,14 @@ try:
 except Exception as e:  # pragma: no cover - only on a broken install
     Image = None
     ImageOps = None
-    logger.warning(f"⚠️ Pillow unavailable; image normalization disabled: {e}")
+    logger.warning(f"Pillow unavailable; image normalization disabled: {e}")
 
 try:
     import pillow_heif
 
     pillow_heif.register_heif_opener()
 except Exception as e:  # pragma: no cover - only on a broken install
-    logger.warning(f"⚠️ pillow-heif unavailable; HEIC uploads cannot be converted: {e}")
+    logger.warning(f"pillow-heif unavailable; HEIC uploads cannot be converted: {e}")
 
 # Long-edge ceilings. 2048 is comfortably above what the storefront ever renders
 # (the largest card is a few hundred CSS pixels, doubled for retina) while still
@@ -144,7 +144,7 @@ def normalize_image(
     except Exception as e:
         # A payload that passed the magic-byte gate but will not decode is a
         # bad *request*, not a server fault — 400, and never a stack trace.
-        logger.warning(f"⚠️ Rejected an undecodable image upload: {e}")
+        logger.warning(f"Rejected an undecodable image upload: {e}")
         raise HTTPException(status_code=400, detail="That image could not be read.") from e
 
     encoded = buf.getvalue()
@@ -154,7 +154,7 @@ def normalize_image(
     # Returning raw `data` skipped EXIF/GPS stripping and allowed trailing
     # non-pixel payloads to reach the public CDN unchanged.
     logger.info(
-        f"🖼️ Normalized image: {len(data)} -> {len(encoded)} bytes ({source_format or 'unknown'} -> {out_format})"
+        f"Normalized image: {len(data)} -> {len(encoded)} bytes ({source_format or 'unknown'} -> {out_format})"
     )
     return encoded, content_type, ext
 

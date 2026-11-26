@@ -33,7 +33,7 @@ def _publish(user_id: str, payload: dict[str, Any]) -> None:
     except Exception as e:
         # A dropped realtime event is a cosmetic failure: the message itself is
         # already persisted, and the next page load renders it.
-        logger.warning(f"❌ Broadcast error: {e}")
+        logger.warning(f"Broadcast error: {e}")
 
 
 def broadcast_to_chat(user_id: str, content: str, role: str = "ai", source: str = "ai"):
@@ -48,7 +48,7 @@ def broadcast_to_chat(user_id: str, content: str, role: str = "ai", source: str 
             "notify": source not in _SILENT_SOURCES,
         },
     )
-    logger.info(f"📡 Broadcasted message to user {user_id}")
+    logger.info(f"Broadcasted message to user {user_id}")
 
 
 def broadcast_typing(user_id: str, role: str):

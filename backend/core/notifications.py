@@ -96,7 +96,7 @@ class NotificationBroker:
             return True
 
         if not REDIS_URL:
-            logger.info("🔔 Notification broker running in-process (no REDIS_URL configured)")
+            logger.info("Notification broker running in-process (no REDIS_URL configured)")
             return False
 
         try:
@@ -120,10 +120,10 @@ class NotificationBroker:
                 timeout=CONNECT_TIMEOUT_SECONDS,
             )
             self._listener = asyncio.create_task(self._listen())
-            logger.info("🔔 Notification broker connected to Redis pub/sub (multi-worker fan-out)")
+            logger.info("Notification broker connected to Redis pub/sub (multi-worker fan-out)")
             return True
         except Exception as e:
-            logger.warning(f"⚠️ Notification broker falling back to in-process delivery: {e}")
+            logger.warning(f"Notification broker falling back to in-process delivery: {e}")
             await self._close_redis()
             return False
 
@@ -166,9 +166,9 @@ class NotificationBroker:
                 try:
                     await self._pubsub.subscribe(channel_for(user_id))
                 except Exception as e:
-                    logger.warning(f"⚠️ Could not subscribe to {channel_for(user_id)}: {e}")
+                    logger.warning(f"Could not subscribe to {channel_for(user_id)}: {e}")
 
-        logger.info(f"🔔 User {user_id} subscribed to notification stream (local: {len(self._subscribers[user_id])})")
+        logger.info(f"User {user_id} subscribed to notification stream (local: {len(self._subscribers[user_id])})")
         return queue
 
     async def unsubscribe(self, user_id: str, queue: asyncio.Queue):
@@ -182,7 +182,7 @@ class NotificationBroker:
                     if self.distributed:
                         with contextlib.suppress(Exception):
                             await self._pubsub.unsubscribe(channel_for(user_id))
-        logger.info(f"🔕 User {user_id} unsubscribed from notification stream")
+        logger.info(f"User {user_id} unsubscribed from notification stream")
 
     def has_subscribers(self, user_id: str) -> bool:
         """Return True if this user has a live stream on ANY worker.
@@ -221,10 +221,10 @@ class NotificationBroker:
                 from core.cache import redis_client
 
                 redis_client.publish(channel_for(user_id), json.dumps(payload))
-                logger.info(f"📢 Published notification to {channel_for(user_id)}")
+                logger.info(f"Published notification to {channel_for(user_id)}")
                 return
             except Exception as e:
-                logger.warning(f"⚠️ Redis publish failed, delivering in-process: {e}")
+                logger.warning(f"Redis publish failed, delivering in-process: {e}")
 
         self.deliver_local(user_id, payload)
 
@@ -240,10 +240,10 @@ class NotificationBroker:
                     q.get_nowait()
                 with contextlib.suppress(asyncio.QueueFull):
                     q.put_nowait(payload)
-                logger.warning(f"⚠️ Notification queue full for user {user_id}; dropped oldest event")
+                logger.warning(f"Notification queue full for user {user_id}; dropped oldest event")
             except Exception as e:
-                logger.warning(f"⚠️ Failed to deliver to queue for user {user_id}: {e}")
-        logger.info(f"📬 Delivered notification to user {user_id} ({len(queues)} local connections)")
+                logger.warning(f"Failed to deliver to queue for user {user_id}: {e}")
+        logger.info(f"Delivered notification to user {user_id} ({len(queues)} local connections)")
 
     # ------------------------------------------------------------------
     # Listener
@@ -263,20 +263,20 @@ class NotificationBroker:
                     try:
                         payload = json.loads(message.get("data") or "{}")
                     except (TypeError, ValueError):
-                        logger.warning(f"⚠️ Discarding malformed notification on {channel}")
+                        logger.warning(f"Discarding malformed notification on {channel}")
                         continue
                     self.deliver_local(user_id, payload)
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                logger.warning(f"🔁 Notification pub/sub dropped ({e}); reconnecting")
+                logger.warning(f"Notification pub/sub dropped ({e}); reconnecting")
             else:
                 # `listen()` is `while self.subscribed:` -- with no channels left
                 # it RETURNS rather than raising, so this is a disconnect that
                 # never throws. Falling straight back into `while True` would
                 # re-enter it with nothing to await: a hot spin that pegs the
                 # event loop, blocks even SIGTERM, and never reconnects.
-                logger.warning("🔁 Notification pub/sub ended with no active subscription; reconnecting")
+                logger.warning("Notification pub/sub ended with no active subscription; reconnecting")
 
             # Reached from both paths, so neither can respin without awaiting.
             await asyncio.sleep(RECONNECT_DELAY_SECONDS)
@@ -292,10 +292,10 @@ class NotificationBroker:
                     await self._pubsub.aclose()
             self._pubsub = self._redis.pubsub(ignore_subscribe_messages=True)
             await self._pubsub.subscribe(KEEPALIVE_CHANNEL, *self._active_channels())
-            logger.info("🔔 Notification pub/sub reconnected")
+            logger.info("Notification pub/sub reconnected")
             return True
         except Exception as e:
-            logger.warning(f"⚠️ Notification pub/sub reconnect failed: {e}")
+            logger.warning(f"Notification pub/sub reconnect failed: {e}")
             return False
 
 

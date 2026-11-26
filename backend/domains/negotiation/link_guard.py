@@ -57,7 +57,7 @@ def issued_payment_urls(user_id: str | None, item_id: str | None) -> set[str]:
             if url:
                 urls.add(str(url))
     except Exception as e:  # noqa: BLE001 — fail closed
-        logger.warning(f"⚠️ Could not resolve issued payment links, stripping all: {e}")
+        logger.warning(f"Could not resolve issued payment links, stripping all: {e}")
         return set()
 
     return urls
@@ -74,7 +74,7 @@ def sanitize_payment_links(text: str, user_id: str | None, item_id: str | None) 
         url = match.group(2)
         if url in allowed:
             return match.group(0)
-        logger.warning(f"🚫 Stripped a payment link the server never issued: {url}")
+        logger.warning(f"Stripped a payment link the server never issued: {url}")
         return STRIPPED_NOTICE
 
     return PAY_LINK_RE.sub(replace, text)

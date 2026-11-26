@@ -114,7 +114,7 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None))
     from domains.billing.webhooks import handle_checkout_completed, verify_webhook
 
     payload = await request.body()
-    logger.info("\n🔔 WEBHOOK RECEIVED")
+    logger.info("Stripe webhook received")
     logger.info(f"Stripe-Signature header present: {stripe_signature is not None}")
     logger.info(f"Payload size: {len(payload)} bytes")
 
@@ -124,17 +124,17 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None))
     event = await asyncio.to_thread(verify_webhook, payload, stripe_signature)
 
     if not event:
-        logger.warning("⚠️ Stripe webhook signature verification failed: invalid signature")
+        logger.warning("Stripe webhook signature verification failed: invalid signature")
         raise HTTPException(status_code=400, detail="Invalid webhook signature")
 
     event_type = event["type"]
-    logger.info(f"✅ Event verified: {event_type}")
+    logger.info(f"Event verified: {event_type}")
 
     # Handle different event types
     if event_type in ("checkout.session.completed", "payment_link.completed"):
-        logger.info(f"📦 Processing {event_type}")
+        logger.info(f"Processing {event_type}")
         result = await asyncio.to_thread(handle_checkout_completed, event)
-        logger.info(f"📦 Result: {result}")
+        logger.info(f"Result: {result}")
 
         # If fulfilment hit a transient error, return 5xx so Stripe retries.
         # "duplicate" / "race_lost" are terminal successes — ack with 200.
@@ -226,7 +226,7 @@ def confirm_payment(
     # Enforce the authenticated user; cannot confirm on behalf of another user.
     user_id = get_user_id_from_body_or_token(user_id, token_user_id)
 
-    logger.info(f"📦 CONFIRM-PAYMENT item={item_id} user={user_id} session={session_id}")
+    logger.info(f"CONFIRM-PAYMENT item={item_id} user={user_id} session={session_id}")
 
     # Without a verifiable Stripe session we cannot prove payment. Do NOT write
     # anything — just report whether the webhook has already marked it sold so
@@ -243,12 +243,12 @@ def confirm_payment(
     try:
         session = get_stripe_client().v1.checkout.sessions.retrieve(session_id)
     except stripe.InvalidRequestError:
-        logger.error(f"❌ Could not verify session {session_id}")
+        logger.error(f"Could not verify session {session_id}")
         raise HTTPException(status_code=400, detail="Invalid Stripe session") from None
 
     payment_status = stripe_get(session, "payment_status")
     if payment_status != "paid":
-        logger.error(f"❌ Session not paid: {payment_status}")
+        logger.error(f"Session not paid: {payment_status}")
         raise HTTPException(status_code=400, detail="Payment not completed")
 
     from domains.billing.webhooks import resolve_session_metadata
@@ -267,7 +267,7 @@ def confirm_payment(
 
     # The authenticated caller must match the buyer recorded on the session.
     if session_user_id != user_id:
-        logger.error("❌ Session buyer does not match authenticated user")
+        logger.error("Session buyer does not match authenticated user")
         raise HTTPException(status_code=403, detail="Session does not belong to this user")
 
     item_id = stripe_item_id
@@ -279,7 +279,7 @@ def confirm_payment(
     if live_item:
         floor_price = CatalogService.floor_price(live_item)
         if floor_price > 0 and amount < floor_price - 0.01:
-            logger.warning(f"❌ Confirm-payment underpaid: RM{amount:.2f} < floor RM{floor_price:.2f} for {item_id}")
+            logger.warning(f"Confirm-payment underpaid: RM{amount:.2f} < floor RM{floor_price:.2f} for {item_id}")
             raise HTTPException(status_code=400, detail="Paid amount is below the minimum item price")
 
     item_name = stripe_get(metadata, "item_name")

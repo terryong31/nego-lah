@@ -70,9 +70,9 @@ async def _payment_cleanup_loop():
                 # Run the blocking Redis/Stripe work off the event loop.
                 cleaned = await asyncio.to_thread(cleanup_expired_payments)
                 if cleaned:
-                    logger.info(f"🧹 Payment cleanup released {cleaned} abandoned link(s)")
+                    logger.info(f"Payment cleanup released {cleaned} abandoned link(s)")
         except Exception as e:
-            logger.error(f"❌ Payment cleanup loop error: {e}")
+            logger.error(f"Payment cleanup loop error: {e}")
         await asyncio.sleep(CLEANUP_INTERVAL_SECONDS)
 
 
@@ -95,9 +95,9 @@ async def _unread_digest_loop():
             # Redis reads plus a synchronous Resend call — always off the loop.
             sent = await asyncio.to_thread(flush_due_digests)
             if sent:
-                logger.info(f"📧 Sent {sent} unread-message digest(s)")
+                logger.info(f"Sent {sent} unread-message digest(s)")
         except Exception as e:
-            logger.error(f"❌ Unread digest loop error: {e}")
+            logger.error(f"Unread digest loop error: {e}")
         await asyncio.sleep(UNREAD_DIGEST_SWEEP_SECONDS)
 
 
@@ -125,10 +125,10 @@ async def lifespan(_app: FastAPI):
     if not os.environ.get("VERCEL"):
         if os.environ.get("DISABLE_PAYMENT_CLEANUP") != "1":
             task = asyncio.create_task(_payment_cleanup_loop())
-            logger.info("🧹 Payment cleanup worker started")
+            logger.info("Payment cleanup worker started")
         if os.environ.get("DISABLE_UNREAD_DIGEST") != "1":
             digest_task = asyncio.create_task(_unread_digest_loop())
-            logger.info("📧 Unread-message digest worker started")
+            logger.info("Unread-message digest worker started")
     try:
         yield
     finally:

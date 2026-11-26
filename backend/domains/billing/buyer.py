@@ -29,5 +29,5 @@ def account_email(user_id: str | None) -> str | None:
         if isinstance(res, dict):
             return res.get("email") or (res.get("user") or {}).get("email")
     except Exception as e:
-        logger.error(f"❌ Could not resolve account email for buyer {user_id}: {e}")
+        logger.error(f"Could not resolve account email for buyer {user_id}: {e}")
     return None

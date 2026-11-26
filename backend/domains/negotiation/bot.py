@@ -119,7 +119,7 @@ async def transfer_to_human(reason: str, summary: str = "") -> str:
     if not ctx_user_id:
         return "Unable to transfer: user context missing."
 
-    logger.info(f"🤝 Transferring chat for user {ctx_user_id} to human. Reason: {reason}")
+    logger.info(f"Transferring chat for user {ctx_user_id} to human. Reason: {reason}")
 
     # 1. Update chat_settings to disable AI and flag admin intervention
     try:
@@ -129,7 +129,7 @@ async def transfer_to_human(reason: str, summary: str = "") -> str:
             {"user_id": ctx_user_id, "ai_enabled": False, "admin_intervening": True, "updated_at": "now()"}
         ).execute()
     except Exception as e:
-        logger.warning(f"⚠️ Failed to update chat_settings for human transfer: {e}")
+        logger.warning(f"Failed to update chat_settings for human transfer: {e}")
 
     # 2. Hand the separator to the turn runner (SPEC-070). Writing it here put
     # it in the transcript above the farewell the agent is still composing, and
@@ -157,7 +157,7 @@ async def transfer_to_human(reason: str, summary: str = "") -> str:
             summary=summary,
         )
     except Exception as e:
-        logger.warning(f"⚠️ Failed to send human transfer email alert: {e}")
+        logger.warning(f"Failed to send human transfer email alert: {e}")
 
     handoff = (
         "I have transferred our chat to Terry (our human seller) and sent him an alert. "
@@ -369,13 +369,13 @@ async def run_decision(decision: TurnDecision) -> str | None:
         return None
 
     if decision.tool not in _TOOLS_BY_NAME:
-        logger.warning(f"⚠️ Decider named an unknown tool `{decision.tool}` — answering without it.")
+        logger.warning(f"Decider named an unknown tool `{decision.tool}` — answering without it.")
         return None
 
     try:
         return await execute_decision(decision)
     except Exception as e:  # noqa: BLE001 — a dead tool must not drop the turn
-        logger.warning(f"⚠️ Tool `{decision.tool}` failed during a local turn: {e}")
+        logger.warning(f"Tool `{decision.tool}` failed during a local turn: {e}")
         return None
 
 
@@ -712,9 +712,9 @@ async def chat(
     # Invoke Customer Agent (async — frees the loop while the LLM works).
     # The hybrid session pins this turn to one provider (self-hosted M5 if its
     # lease is free, Gemini otherwise) and releases the lease on the way out.
-    logger.info(f"🤖 Customer Agent processing message for user {user_id} (lang={language or 'en'})...")
+    logger.info(f"Customer Agent processing message for user {user_id} (lang={language or 'en'})...")
     async with hybrid_llm_session() as provider:
-        logger.info(f"⚡ Turn served by {provider.provider} ({provider.model})")
+        logger.info(f"Turn served by {provider.provider} ({provider.model})")
 
         if uses_decide_then_speak(provider):
             agent_response, trace = await _run_local_turn(user_id, message, item_id, language, history)
@@ -828,7 +828,7 @@ async def chat_stream(
     # task so the agent run + tools inherit it.
     set_context(user_id=user_id, item_id=item_id, language=language)
 
-    logger.info(f"🤖 Customer Agent streaming response for user {user_id} (lang={language or 'en'})...")
+    logger.info(f"Customer Agent streaming response for user {user_id} (lang={language or 'en'})...")
 
     collected = []
     # Text withheld mid-stream because it may be the start of a payment link

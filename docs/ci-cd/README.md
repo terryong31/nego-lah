@@ -58,7 +58,7 @@ To optimize build speed and compute usage, `.github/workflows/deploy.yml` utiliz
 - **Not zero-downtime.** There is one backend container, so recreating it drops traffic for the restart window (shutdown waits up to 20 s for in-flight agent turns; `stop_grace_period` is 30 s). True zero-downtime needs two replicas behind Caddy, rolled one at a time.
 - **Rollback by hand:** `sudo env BACKEND_IMAGE_TAG=<previous sha> docker compose up -d backend` on the box.
 - **Probes:** `/health` is liveness (the process is up); `/ready` checks Redis and reports whether cross-worker notifications are flowing.
-- **Uptime:** `.github/workflows/uptime.yml` curls `https://negolah.my/` and `https://api.negolah.my/ready` every 10 minutes; a failed run emails whoever last edited that schedule.
+- **Uptime:** Monitored via Sentry uptime/health checks against `https://negolah.my/` and `https://api.negolah.my/ready`.
 - **Revoking every session:** `.github/workflows/ops-revoke-sessions.yml` (manual, `confirm: revoke`, gated by the `production` environment) runs `backend/scripts/revoke_all_sessions.py` against production Redis.
 
 ---

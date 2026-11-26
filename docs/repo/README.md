@@ -31,7 +31,7 @@ nego-lah/
 ├── video/                    Remotion source for the homepage intro (ADR-0031)
 ├── docs/                     this documentation
 ├── scripts/                  host-level scripts (Lightsail firewall)
-├── .github/workflows/        deploy.yml (CI/CD), uptime.yml, ops-revoke-sessions.yml
+├── .github/workflows/        deploy.yml (CI/CD), ops-revoke-sessions.yml
 ├── docker-compose.yml        production stack: Caddy + backend (Redis is managed Upstash)
 ├── Caddyfile                 TLS and reverse proxy
 ├── mise.toml                 tool versions and every task

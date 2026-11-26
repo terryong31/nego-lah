@@ -1,3 +1,4 @@
+<!-- markdownlint-disable MD033 MD041 -->
 <a id="readme-top"></a>
 
 <!-- PROJECT SHIELDS -->
@@ -65,6 +66,7 @@
 Selling preloved items online usually turns into repetitive manual messaging — *"Is this still available?"*, *"Best price bro?"*, and lowball offers that go nowhere. **Nego-Lah** automates the entire buyer conversation and checkout flow on a live single-seller storefront at [negolah.my](https://negolah.my), built as a production testbed for adversarial LLM negotiation, hybrid edge/cloud inference, and payment concurrency.
 
 Core capabilities:
+
 * **Real-Time Multilingual Negotiation:** Streams token-by-token replies over SSE in English, Bahasa Melayu, and Mandarin with natural whole-ringgit concessions.
 * **Server-Enforced Floor Protection:** `min_price` is revoked from public PostgreSQL roles at the column level and never enters an LLM prompt. Pricing math, monotonic price ratchets, and checkout link verification (`link_guard.py`) are enforced deterministically in Python.
 * **Instant In-Chat Stripe Checkout:** Generates locked Stripe Payment Links directly in chat, claims inventory atomically on webhook settlement, and automatically issues idempotent refunds if two buyers race for the same item.
@@ -105,22 +107,29 @@ All toolchains (`uv`, `bun`, `infisical`, `lefthook`) and dev workflows are mana
 ### Installation
 
 1. Clone the repository
+
    ```sh
    git clone https://github.com/terryong31/nego-lah.git
    cd nego-lah
    ```
+
 2. Install pinned runtimes and dependencies
+
    ```sh
    mise install
    (cd frontend && bun install)
    mise run hooks:install
    ```
+
 3. Configure environment variables
+
    ```sh
    cp backend/.env.example backend/.env
    # Or run via Infisical Cloud: infisical run --env=dev -- ...
    ```
+
 4. Start the full local stack (Redis + FastAPI `:8000` + Nuxt `:3000`)
+
    ```sh
    mise run dev
    ```
@@ -147,6 +156,7 @@ mise run db:validate
 ```
 
 Detailed engineering documentation lives in [`docs/`](docs/README.md):
+
 * [System Architecture](docs/architecture/README.md) & [Agent Architecture](docs/architecture/agent.md)
 * [Data Model & Column Security](docs/data/README.md)
 * [API Reference & OpenAPI 3.1 Spec](docs/api/README.md)

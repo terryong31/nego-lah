@@ -59,7 +59,7 @@ def process_refund(item_id: str, reason: str = None) -> dict:
             options={"idempotency_key": f"admin_refund_{payment_id}"},
         )
     except stripe.StripeError as e:
-        logger.error(f"❌ Stripe refund failed for item {item_id}: {e}")
+        logger.error(f"Stripe refund failed for item {item_id}: {e}")
         return {"success": False, "error": str(e)}
 
     # The money has now been refunded on Stripe. The DB writes below MUST be
@@ -82,7 +82,7 @@ def process_refund(item_id: str, reason: str = None) -> dict:
 
         invalidate_item_cache(item_id)
     except Exception as e:
-        logger.warning(f"⚠️ Could not invalidate cache for item {item_id}: {e}")
+        logger.warning(f"Could not invalidate cache for item {item_id}: {e}")
 
     # Update the order and the transaction tied to this exact payment — by
     # item they would also catch an earlier sale of the same item.
@@ -109,6 +109,6 @@ def process_refund(item_id: str, reason: str = None) -> dict:
             "Refund processed on Stripe but the database update was incomplete; manual reconciliation needed."
         )
     else:
-        logger.info(f"✅ Refund processed for item {item_id}. Refund ID: {refund.id}")
+        logger.info(f"Refund processed for item {item_id}. Refund ID: {refund.id}")
 
     return result

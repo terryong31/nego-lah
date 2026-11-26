@@ -74,14 +74,14 @@ def _refund(payment_intent: str, reason: str = "duplicate") -> bool:
             params={"payment_intent": payment_intent, "reason": reason},
             options={"idempotency_key": f"auto_refund_{payment_intent}"},
         )
-        logger.info(f"💸 Auto-refunded payment {payment_intent} ({reason})")
+        logger.info(f"Auto-refunded payment {payment_intent} ({reason})")
         return True
     except stripe.InvalidRequestError as e:
         # e.g. charge already refunded — treat as already-done, not a failure.
         logger.warning(f"↩️ Refund for {payment_intent} not needed/possible: {e}")
         return True
     except Exception as e:
-        logger.error(f"❌ Failed to auto-refund {payment_intent}: {e}")
+        logger.error(f"Failed to auto-refund {payment_intent}: {e}")
         return False
 
 
@@ -140,7 +140,7 @@ def _get_or_create_order(payment_intent, item_id, user_id, amount, item_name):
             if existing.data:
                 r = existing.data[0]
                 return r.get("id"), r.get("status"), r.get("buyer_id")
-        logger.error(f"❌ Order upsert failed for {payment_intent}: {e}")
+        logger.error(f"Order upsert failed for {payment_intent}: {e}")
         return None, None, None
 
 
@@ -151,21 +151,21 @@ def _finalize_won_sale(item_id, user_id, payment_intent, amount, item_name, buye
 
         item_name = CatalogService.get_item_name(item_id, supabase_client=admin_supabase) or item_name
 
-    logger.info(f"✅ Item {item_id} sold to {user_id} (payment {payment_intent})")
+    logger.info(f"Item {item_id} sold to {user_id} (payment {payment_intent})")
 
     try:
         from core.cache import invalidate_item_cache
 
         invalidate_item_cache(item_id)
     except Exception as e:
-        logger.warning(f"⚠️ Cache invalidate failed: {e}")
+        logger.warning(f"Cache invalidate failed: {e}")
 
     try:
         from domains.billing.payment_state import delete_pending_payment
 
         delete_pending_payment(user_id, item_id, cleanup_stripe=True)
     except Exception as e:
-        logger.warning(f"⚠️ Could not delete pending payment: {e}")
+        logger.warning(f"Could not delete pending payment: {e}")
 
     try:
         admin_supabase.table("transactions").insert(
@@ -179,7 +179,7 @@ def _finalize_won_sale(item_id, user_id, payment_intent, amount, item_name, buye
         ).execute()
     except Exception as e:
         if not _is_unique_violation(e):
-            logger.warning(f"⚠️ Could not record transaction: {e}")
+            logger.warning(f"Could not record transaction: {e}")
 
     _send_thank_you(user_id, item_name, amount)
 
@@ -204,7 +204,7 @@ def _finalize_won_sale(item_id, user_id, payment_intent, amount, item_name, buye
         # buyer actually is, in every environment.
 
         logger.info(
-            f"📧 Preparing order emails — buyer={resolved_buyer_email!r} "
+            f"Preparing order emails — buyer={resolved_buyer_email!r} "
             f"order_id={order_id} item={item_name!r} amount=RM{amount:.2f}"
         )
 
@@ -240,7 +240,7 @@ def _finalize_won_sale(item_id, user_id, payment_intent, amount, item_name, buye
         if seller_target:
             send_seller_sale_alert(seller_target, order_info)
     except Exception as mail_err:
-        logger.warning(f"⚠️ Could not send order notifications via email: {mail_err}")
+        logger.warning(f"Could not send order notifications via email: {mail_err}")
 
 
 def fulfill_purchase(
@@ -263,7 +263,7 @@ def fulfill_purchase(
       - "error"      : transient failure (caller should let Stripe retry)
     """
     if not item_id or not user_id:
-        logger.error("❌ fulfill_purchase missing item_id or user_id")
+        logger.error("fulfill_purchase missing item_id or user_id")
         return {"status": "error", "error": "missing_item_or_user"}
 
     # Resolve real item name from DB if missing or generic placeholder
@@ -274,7 +274,7 @@ def fulfill_purchase(
 
     if not payment_intent:
         # Without a PaymentIntent we cannot guarantee idempotency or refund.
-        logger.warning("⚠️ fulfill_purchase called without payment_intent — idempotency degraded")
+        logger.warning("fulfill_purchase called without payment_intent — idempotency degraded")
         payment_intent = f"nopi_{user_id}_{item_id}"
 
     # --- Step 1: ensure the canonical order exists (idempotency anchor) -----
@@ -333,10 +333,10 @@ def fulfill_purchase(
             # Already fulfilled to this buyer (duplicate delivery / concurrent path).
             logger.info(f"ℹ️ Payment {payment_intent} already fulfilled to buyer — no-op")
             return {"status": "duplicate", "order_id": order_id}
-        logger.warning(f"⚠️ Duplicate charge by same buyer {user_id} on {item_id} — refunding {payment_intent}")
+        logger.warning(f"Duplicate charge by same buyer {user_id} on {item_id} — refunding {payment_intent}")
 
     # Lost the race to a different buyer (or item gone). Refund this payment.
-    logger.warning(f"⚠️ Item {item_id} went to another buyer — refunding {payment_intent}")
+    logger.warning(f"Item {item_id} went to another buyer — refunding {payment_intent}")
     refunded = _refund(payment_intent, reason="duplicate")
 
     if not refunded:
@@ -354,7 +354,7 @@ def fulfill_purchase(
     try:
         admin_supabase.table("orders").update({"status": "refunded"}).eq("id", order_id).execute()
     except Exception as e:
-        logger.warning(f"⚠️ Could not mark losing order refunded: {e}")
+        logger.warning(f"Could not mark losing order refunded: {e}")
     broadcast_to_chat(
         user_id,
         "😔 Sorry — that item was bought by someone else moments before your payment. "

@@ -131,12 +131,12 @@ def delete_pending_payment(user_id: str, item_id: str, cleanup_stripe: bool = Tr
             # Deactivate payment link
             if payment.get("payment_link_id"):
                 client.v1.payment_links.update(payment["payment_link_id"], params={"active": False})
-                logger.info(f"✅ Deactivated PaymentLink: {payment['payment_link_id']}")
+                logger.info(f"Deactivated PaymentLink: {payment['payment_link_id']}")
 
             # Archive product
             if payment.get("product_id"):
                 client.v1.products.update(payment["product_id"], params={"active": False})
-                logger.info(f"✅ Archived Product: {payment['product_id']}")
+                logger.info(f"Archived Product: {payment['product_id']}")
 
         except Exception as e:
             # A live PaymentLink left behind in Stripe is exactly the kind of
@@ -180,12 +180,12 @@ def cleanup_expired_payments() -> int:
                 # Deactivate payment link
                 if payment.get("payment_link_id"):
                     client.v1.payment_links.update(payment["payment_link_id"], params={"active": False})
-                    logger.info(f"🧹 Cleaned up expired PaymentLink: {payment['payment_link_id']}")
+                    logger.info(f"Cleaned up expired PaymentLink: {payment['payment_link_id']}")
 
                 # Archive product
                 if payment.get("product_id"):
                     client.v1.products.update(payment["product_id"], params={"active": False})
-                    logger.info(f"🧹 Archived expired Product: {payment['product_id']}")
+                    logger.info(f"Archived expired Product: {payment['product_id']}")
 
                 cleaned += 1
             except Exception as e:
@@ -196,7 +196,7 @@ def cleanup_expired_payments() -> int:
         redis_client.delete(key)
 
     if cleaned > 0:
-        logger.info(f"🧹 Cleaned up {cleaned} expired payment links")
+        logger.info(f"Cleaned up {cleaned} expired payment links")
 
     return cleaned
 

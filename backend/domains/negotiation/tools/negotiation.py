@@ -2,7 +2,12 @@ import math
 
 from langchain_core.tools import tool
 
+from core import cache, connector
 from core.logger import logger
+from domains.billing import BillingService
+from domains.catalog import CatalogService
+from domains.negotiation import context
+from domains.negotiation.config import COUNTER_CONCESSION_RATIO, COUNTER_STEP_RM, DISCOUNT_SCORING_GUIDE
 
 # Hard upper bound on buyer-earned extra discounts (SPEC-116 / SEC-18).
 # The scoring guide only awards 0%, 5%, or 10%; clamping in code prevents
@@ -33,17 +38,9 @@ def assess_discount_eligibility(buyer_reason: str) -> str:
     Returns:
         Assessment with recommended discount percentage (0%, 5%, or 10%)
     """
-    from ..config import DISCOUNT_SCORING_GUIDE
+    logger.info(f"assess_discount_eligibility reason={buyer_reason!r}")
 
-    # LOG: Tool was called
-    logger.info(f"\n{'=' * 50}")
-    logger.info("🎯 ASSESS_DISCOUNT_ELIGIBILITY CALLED")
-    logger.info(f"📝 Buyer's reason: {buyer_reason}")
-    logger.info(f"{'=' * 50}\n")
-
-    # This tool returns the scoring guide for the AI to use in its assessment
-    # The AI will evaluate and decide based on the guide
-    result = f"""
+    return f"""
 Use this guide to assess the buyer's reason:
 {DISCOUNT_SCORING_GUIDE}
 
@@ -56,7 +53,6 @@ Provide your assessment:
 4. Average score:
 5. Recommended extra discount: 0%, 5%, or 10%
 """
-    return result
 
 
 @tool
@@ -78,12 +74,11 @@ def evaluate_offer(
     Returns:
         Recommendation on whether to accept, counter, or reject the offer
     """
-
     # SPEC-116 / SEC-18: reject non-finite offers and clamp extra_discount_percent
     # before any arithmetic so prompt injection cannot force acceptance at floor
     # or trigger NaN/Inf edge cases.
     if not math.isfinite(offered_price):
-        logger.warning(f"⚠️ Rejected non-finite offered_price: {offered_price!r}")
+        logger.warning(f"evaluate_offer rejected non-finite offered_price={offered_price!r}")
         return "ERROR: Invalid offer price."
 
     if not math.isfinite(extra_discount_percent) or extra_discount_percent < 0:
@@ -91,103 +86,50 @@ def evaluate_offer(
     elif extra_discount_percent > MAX_EXTRA_DISCOUNT_PERCENT:
         extra_discount_percent = MAX_EXTRA_DISCOUNT_PERCENT
 
-    # Service role, not the anon key: `min_price` is revoked from anon /
-    # authenticated at the column level (SPEC-036), so the floor is only
-    # readable by a client that bypasses RLS.
-    from core.connector import admin_supabase
+    context_item_id = context.get_item_id()
 
-    # LOG: Tool was called
-    logger.info(f"\n{'=' * 50}")
-    logger.info("💰 EVALUATE_OFFER CALLED")
-    logger.info(f"📦 Item ID: {item_id}")
-    logger.info(f"💵 Offered Price: RM{offered_price}")
-    logger.info(f"🎁 Extra Discount: {extra_discount_percent}%")
-    logger.info(f"🪙 Current Standing Price (from model): RM{current_price}")
-    logger.info(f"{'=' * 50}")
+    # Service role is required because `min_price` is revoked from anon/authenticated (SPEC-036).
+    item = CatalogService.get_item_with_floor_price(item_id, supabase_client=connector.admin_supabase)
 
-    # Retrieve context item_id if available
-    from domains.negotiation.context import get_item_id
-
-    context_item_id = get_item_id()
-
-    from domains.catalog import CatalogService
-
-    item = CatalogService.get_item_with_floor_price(item_id, supabase_client=admin_supabase)
-
-    # Fallback: if lookup failed and context ID exists, try that
     if not item and context_item_id and item_id != context_item_id:
-        logger.info(f"⚠️ Lookup for '{item_id}' failed, falling back to context ID: {context_item_id}")
+        logger.info(f"evaluate_offer lookup failed for item_id={item_id!r}, falling back to context={context_item_id}")
         item_id = context_item_id
-        item = CatalogService.get_item_with_floor_price(item_id, supabase_client=admin_supabase)
+        item = CatalogService.get_item_with_floor_price(item_id, supabase_client=connector.admin_supabase)
 
     if not item:
-        logger.info("❌ Item not found!")
+        logger.info(f"evaluate_offer item not found item_id={item_id!r}")
         return "Cannot evaluate - item not found."
+
     listed_price = float(item.get("price", 0))
     min_price = CatalogService.floor_price(item)  # Absolute floor; listed price when unset (SPEC-105)
 
-    # Apply extra discount to the acceptable threshold (not below min_price)
     discount_amount = listed_price * (extra_discount_percent / 100)
     adjusted_threshold = max(listed_price - discount_amount, min_price)
 
-    # The seller's current standing price — the lowest we've already offered or
-    # agreed to. Counters anchor to THIS, not the listed price, so the
-    # negotiation only ever moves down.
-    #
-    # SPEC-084: the standing price is resolved from the SERVER, not from the
-    # `current_price` argument alone. Asking the model to carry conversational
-    # state in a tool argument did not work — across a full eval run it arrived
-    # as 0 on 13 calls out of 13, so the anchor silently fell back to the listed
-    # price every turn and the agent re-quoted the list price after conceding.
-    # `BillingService.get_active_negotiated_price` is the same resolver the item card and checkout
-    # already use, so all three surfaces now agree on what this buyer was quoted.
-    #
-    # The argument is still honoured, but only ever DOWNWARD: the agent may have
-    # quoted lower within this turn than the cache has recorded, while a
-    # hallucinated high value must not be able to undo a real concession.
-    from domains.negotiation.context import get_user_id
-
-    user_id = get_user_id()
+    # Resolve standing price from server state (SPEC-084) so counters stay monotonic
+    # across turns and ignore LLM-supplied current_price overrides (SPEC-116 / SEC-18).
+    user_id = context.get_user_id()
 
     standing_price = None
     try:
-        from domains.billing import BillingService
-
         standing_price = BillingService.get_active_negotiated_price(user_id, item_id)
     except Exception as e:  # noqa: BLE001 — a cache hiccup must not break a negotiation
-        logger.warning(f"⚠️ Could not resolve standing price, anchoring to listed: {e}")
+        logger.warning(f"evaluate_offer standing price lookup failed, anchoring to listed: {e}")
 
-    # SPEC-116 / SEC-18: anchor strictly to server-authoritative prices
-    # (`listed_price` and Redis `standing_price`). The LLM-supplied
-    # `current_price` parameter is kept for tool-schema compatibility but must
-    # NOT lower the anchor, because a prompt-injected value like `current_price=1`
-    # would otherwise collapse the anchor to `min_price`.
     candidates = [listed_price]
     if standing_price is not None:
         candidates.append(float(standing_price))
 
-    # Clamp into [min_price, listed_price]: nothing may drag the anchor under
-    # the floor, and nothing may lift it above the listing.
+    # Clamp into [min_price, listed_price]
     anchor = min(max(min(candidates), min_price), listed_price)
 
-    # LOG: Price calculations
-    logger.info(f"📊 Listed Price: RM{listed_price}")
-    logger.info(f"🔻 Min Price (floor): RM{min_price}")
-    logger.info(f"🎯 Adjusted Threshold: RM{adjusted_threshold}")
-    logger.info(f"🗄️ Standing Price (from server): {standing_price}")
-    logger.info(f"⚓ Anchor (standing price): RM{anchor}")
-    logger.info(f"{'=' * 50}\n")
+    logger.info(
+        f"evaluate_offer item_id={item_id} offered=RM{offered_price} extra_discount={extra_discount_percent}% "
+        f"listed=RM{listed_price} floor=RM{min_price} standing={standing_price} anchor=RM{anchor}"
+    )
 
     def make_counter() -> float | None:
-        # SPEC-047: concede a rounded fraction of the gap the buyer is still
-        # short of our standing price, so the quote lands on a natural
-        # increment (…, 85, 90, 95) like a real haggle — not the arithmetic
-        # midpoint that produced RM94.32. Returns None when the rounded
-        # concession is zero (buyer already within one step) — the caller then
-        # holds instead of countering. Never below what they offered, never
-        # back up to our own standing price, always a whole ringgit.
-        from domains.negotiation.config import COUNTER_CONCESSION_RATIO, COUNTER_STEP_RM
-
+        # SPEC-047: concede a rounded fraction of the gap on natural RM increments.
         gap = anchor - offered_price
         concession = _round_to_step(gap * COUNTER_CONCESSION_RATIO, COUNTER_STEP_RM)
         if concession <= 0:
@@ -195,14 +137,11 @@ def evaluate_offer(
         candidate = float(round(anchor - concession))
         return candidate if offered_price < candidate < anchor else None
 
-    # The price we end up offering, if any. Set by whichever branch produces a
-    # counter, and committed below so checkout charges what the agent quoted.
     counter: float | None = None
 
     if offered_price >= listed_price:
         result = f"ACCEPT: Offer of RM{offered_price} meets or exceeds listed price of RM{listed_price}."
     elif offered_price >= anchor or offered_price >= adjusted_threshold:
-        # Buyer met (or beat) the price we already agreed to / our discounted threshold — close it.
         if offered_price <= min_price:
             result = f"ACCEPT_FLOOR: Offer of RM{offered_price} hits the absolute minimum. Tell buyer: 'This is the lowest I can go, friend! Take it or leave it 😅'"
         else:
@@ -210,8 +149,6 @@ def evaluate_offer(
     elif offered_price >= min_price:
         counter = make_counter()
         if counter is None:
-            # The rounded concession is zero — the buyer is within one step of
-            # our price. Hold this round rather than shaving off loose change.
             result = (
                 f"HOLD: Offer of RM{offered_price} is close to your price of RM{anchor:.0f}. "
                 f"Restate RM{anchor:.0f} and don't go lower this round."
@@ -222,35 +159,9 @@ def evaluate_offer(
                 f"Counter with RM{counter:.0f} (must stay ≤ RM{anchor:.0f} — never go back up)."
             )
     else:
-        # Below the floor — hold (SPEC-047). A below-floor lowball earns no
-        # concession: the buyer has to come up first. Only a genuine-need case
-        # moves us, and that routes through the threshold branch above (a
-        # positive extra_discount_percent), not here.
-        #
-        # Quote NO number and never name the floor (SPEC-044 A): min_price is
-        # confidential (SPEC-036 revoked the column from anon / authenticated),
-        # and a tool result is the most specific, most recent instruction the
-        # model has — so if it spelled the floor out here, the model would
-        # repeat it. The model has its own last quote in the transcript; the
-        # tool tells it to restate that and hold.
+        # Below the floor — hold without disclosing min_price (SPEC-044, SPEC-047, SPEC-084).
+        # If anchor == min_price, quote no number at all to avoid leaking the floor.
         counter = None
-        # SPEC-084: tell the model WHICH price to hold. "Hold firm at the price
-        # you last quoted" assumed the model could remember its own last quote
-        # from the transcript; it cannot. Given no number it improvised, and
-        # what it improvised was the LISTED price — so a below-floor lowball
-        # after a concession withdrew the concession.
-        #
-        # Naming the anchor here discloses nothing: it is a price this buyer was
-        # already quoted out loud. The exception is an anchor sitting exactly on
-        # `min_price`, where the number IS the floor — that path still quotes
-        # nothing at all (SPEC-044 A, and see
-        # `test_a_standing_price_at_the_floor_quotes_no_number_at_all`).
-        # Phrasing matters here. "Hold firm at RM1150 and do not go lower" was
-        # relayed to the buyer as "I can't go lower than RM1150" — a floor claim
-        # about the LISTED price, which is both the wording the persona bans and
-        # a lie that ends the negotiation while RM150 of room remains. The
-        # instruction is addressed to the agent's own conduct instead: restate,
-        # concede nothing, invite them up.
         if anchor > min_price:
             hold_instruction = (
                 f"Your standing price is still RM{anchor:.0f}. Restate that number and invite them "
@@ -269,26 +180,17 @@ def evaluate_offer(
 
     if user_id and item_id:
         try:
-            from core.cache import redis_client
-
             active_price = None
             if "ACCEPT" in result and offered_price < listed_price:
                 active_price = offered_price
             elif counter is not None:
-                # Keyed off the variable, not the result text: only the COUNTER
-                # branch sets `counter`, and a HOLD / REJECT_FLOOR result
-                # deliberately leaves it None so nothing is committed for a
-                # round where the agent didn't actually move the price.
                 active_price = counter
             if active_price is not None:
-                redis_client.setex(f"negotiated_price:{user_id}:{item_id}", 3 * 86400, str(active_price))
-                # SPEC-041: signal the SSE stream loop to emit a data-discount frame.
-                # ContextVar is isolated per async task so this never bleeds into other users.
-                from domains.negotiation.context import pending_discount
-
-                pending_discount.set(active_price)
+                cache.redis_client.setex(f"negotiated_price:{user_id}:{item_id}", 3 * 86400, str(active_price))
+                # SPEC-041: signal SSE stream to emit a data-discount frame.
+                context.pending_discount.set(active_price)
         except Exception as e:
-            logger.warning(f"⚠️ Could not cache negotiated price: {e}")
+            logger.warning(f"evaluate_offer failed to cache negotiated price: {e}")
 
-    logger.info(f"📋 RESULT: {result}")
+    logger.info(f"evaluate_offer result={result.split(':', 1)[0]} item_id={item_id}")
     return result

@@ -295,11 +295,11 @@ async def _flush_handoff_notice(user_id: str) -> None:
     try:
         await asyncio.to_thread(conversation_memory.add_message, user_id, "system", notice, source="system")
     except Exception as e:
-        logger.warning(f"⚠️ Failed to persist the handoff separator for {user_id}: {e}")
+        logger.warning(f"Failed to persist the handoff separator for {user_id}: {e}")
     try:
         await asyncio.to_thread(broadcast_to_chat, user_id, notice, role="system", source="system")
     except Exception as e:
-        logger.warning(f"⚠️ Failed to broadcast the handoff separator for {user_id}: {e}")
+        logger.warning(f"Failed to broadcast the handoff separator for {user_id}: {e}")
 
 
 async def _run_turn(
@@ -777,7 +777,7 @@ async def mark_read(user_id: str = Depends(verify_user_token)):
     except Exception as e:
         # Surfaced rather than swallowed: a chip that clears on screen and
         # comes back on the next load is worse than one that never cleared.
-        logger.warning(f"⚠️ Failed to stamp the read watermark for {user_id}: {e}")
+        logger.warning(f"Failed to stamp the read watermark for {user_id}: {e}")
         raise HTTPException(status_code=503, detail="Could not update read state") from e
 
     # SPEC-052: reading is reading, whichever door they came through.

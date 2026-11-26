@@ -21,7 +21,7 @@ def resolve_session_metadata(session) -> dict:
             plink = stripe_client.get_stripe_client().v1.payment_links.retrieve(payment_link_id)
             metadata = stripe_get(plink, "metadata") or {}
         except Exception as e:
-            logger.warning(f"⚠️ Error fetching PaymentLink metadata: {e}")
+            logger.warning(f"Error fetching PaymentLink metadata: {e}")
     return metadata
 
 
@@ -54,10 +54,10 @@ def handle_checkout_completed(event) -> dict:
     # Trust the amount Stripe actually charged.
     amount = (stripe_get(session, "amount_total") or 0) / 100
 
-    logger.info(f"💰 PAYMENT COMPLETED — item={item_id} buyer={user_id} amount=RM{amount} pi={payment_intent}")
+    logger.info(f"PAYMENT COMPLETED — item={item_id} buyer={user_id} amount=RM{amount} pi={payment_intent}")
 
     if not item_id or not user_id:
-        logger.error("❌ Missing item_id or user_id in metadata — cannot fulfil")
+        logger.error("Missing item_id or user_id in metadata — cannot fulfil")
         # Nothing we can do server-side; don't ask Stripe to retry forever.
         return {"status": "error", "error": "missing_metadata", "retry": False}
 
@@ -69,7 +69,7 @@ def handle_checkout_completed(event) -> dict:
         item_name=item_name,
         buyer_email=buyer_email,
     )
-    logger.info(f"📦 Fulfillment result: {result.get('status')}")
+    logger.info(f"Fulfillment result: {result.get('status')}")
     return result
 
 
@@ -82,8 +82,8 @@ def verify_webhook(payload: bytes, sig_header: str):
         event = stripe_client.get_stripe_client().construct_event(payload, sig_header, STRIPE_WEBHOOK_SECRET)
         return event
     except ValueError:
-        logger.error("❌ Invalid webhook payload")
+        logger.error("Invalid webhook payload")
         return None
     except stripe.SignatureVerificationError:
-        logger.error("❌ Invalid webhook signature")
+        logger.error("Invalid webhook signature")
         return None
